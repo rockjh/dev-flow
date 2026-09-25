@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+*.whl
+
+npm/skills/
+npm/vendor/
+npm/dist/
+npm/*.tgz

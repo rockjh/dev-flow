@@ -1,0 +1,4 @@
+interface:
+  display_name: "Development Lifecycle Toolkit"
+  short_description: "Run unified API, E2E, and biz-flow workflows"
+  default_prompt: "Use the installed devflow CLI and route only e2e requests to devflow/test/e2e. Read only the references required for the selected e2e workflow. Preserve scoped schemas, locks, ownership, safety, redaction, and artifact rules; stop when evidence is missing, the target is unsafe or ambiguous, or a validation gate fails; return the redacted authoritative report or artifact path with its exit status."

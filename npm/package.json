@@ -1,0 +1,19 @@
+{
+  "name": "dev-flow",
+  "version": "8.0.0",
+  "description": "npm installer for the devflow Python runtime and skills",
+  "license": "UNLICENSED",
+  "bin": {
+    "devflow": "bin/devflow.js"
+  },
+  "scripts": {
+    "prepack": "bash scripts/prepack.sh",
+    "postinstall": "node scripts/install.js"
+  },
+  "files": [
+    "bin/",
+    "skills/",
+    "dist/",
+    "scripts/"
+  ]
+}
