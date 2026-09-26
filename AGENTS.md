@@ -11,7 +11,8 @@ constraints but may not relax them.
   `python -m devflow` calls that same entry point.
 - Shared contracts live in `devflow/core/`; domain modules live in
   `devflow/test_api/`, `devflow/test_e2e/`, and `devflow/doc_biz_flow/`.
-  The installable Skills live under `skills/devflow/<category>/<skill-name>/`.
+  The installable Skills live under `skills/<category>/<skill-name>/`; they are
+  installed under `~/.agents/skills/devflow/<category>/<skill-name>/`.
 - Commands use static registration. Do not add dynamic plugin discovery,
   runtime scanning, compatibility facades, placeholder modules, or a second
   extension mechanism.
@@ -51,7 +52,7 @@ legacy path.
 ## Skill authoring
 
 Every installable Skill is a versioned product surface and must follow the
-rules in this section. The nested `skills/devflow/AGENTS.md` is a convenience
+rules in this section. The nested `skills/AGENTS.md` is a convenience
 for work started inside that directory; it is not a replacement for these
 repository-level rules. A new Skill is complete only when
 its runtime domain, prompt, references, generated assets, npm payload, and
@@ -68,7 +69,7 @@ optional UI metadata.
 
 For every new or changed Skill:
 
-- Use one canonical directory under `skills/devflow/<category>/<skill-name>/`.
+- Use one canonical directory under `skills/<category>/<skill-name>/`.
   The directory name, `SKILL.md` frontmatter `name`, lock `skill` value, and
   generated npm payload must agree exactly. Do not add aliases, legacy paths,
   or a second copy maintained by hand.

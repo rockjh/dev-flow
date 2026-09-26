@@ -55,7 +55,7 @@ def main() -> int:
     target_skills = NPM / "skills"
     if target_skills.exists():
         shutil.rmtree(target_skills)
-    shutil.copytree(ROOT / "skills" / "devflow", target_skills / "devflow")
+    shutil.copytree(ROOT / "skills", target_skills / "devflow")
     payload = sorted(path.relative_to(target_skills).parts[0] for path in target_skills.iterdir())
     if payload != ["devflow"]:
         raise RuntimeError(f"unexpected npm Skill payload: {payload}")

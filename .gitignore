@@ -11,3 +11,4 @@ npm/skills/
 npm/vendor/
 npm/dist/
 npm/*.tgz
+.idea

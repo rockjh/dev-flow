@@ -1,6 +1,6 @@
 # Skill Authoring Rules
 
-These rules apply to every installable Skill below `skills/devflow/` and are
+These rules apply to every installable Skill below `skills/` and are
 in addition to the repository `AGENTS.md`.
 
 ## Required shape
@@ -47,9 +47,10 @@ If a change affects a project root, generated file, lock, schema, redaction,
 or exit behavior, update the CLI contract and tests with the Skill text.
 Never weaken a safety or ownership gate to make a prompt appear successful.
 
-The canonical tree under `skills/devflow/` is the source of truth. The npm
-tree is generated output and must be refreshed by `scripts/release.py`; do not
-hand-edit only the npm copy. Before release, verify that each canonical Skill
+The canonical tree under `skills/` is the source of truth. The npm tree is
+generated output under `npm/skills/devflow/` and must be refreshed by
+`scripts/release.py`; do not hand-edit only the npm copy. Before release, verify
+that each canonical Skill
 has one matching npm copy and that no legacy Skill directory remains.
 
 ## Acceptance checks
