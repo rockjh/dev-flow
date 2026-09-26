@@ -7,7 +7,7 @@ from copy import deepcopy
 from typing import Any
 
 
-API_TEST_SCHEMA_VERSION = "6.2"
+BRU_API_SCHEMA_VERSION = "6.2"
 BIZ_FLOW_SCHEMA_VERSION = "3"
 E2E_GATE_SCHEMA_VERSION = "10"
 E2E_RUNTIME_CLASSIFICATIONS = (
@@ -87,15 +87,15 @@ E2E_RUN_STAGES = (
 
 
 COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
-    "api-test.init": {
+    "bru-api.init": {
         "options": {"--qa-root": "path", "--design-root": "path[]", "--design-file": "path[]"}
     },
-    "api-test.understand": {
+    "bru-api.understand": {
         "options": {
             "--qa-root": "path", "--openapi": "path", "--design-root": "path[]", "--design-file": "path[]",
         }
     },
-    "api-test.generate": {
+    "bru-api.generate": {
         "options": {
             "--qa-root": "path",
             "--openapi": "path",
@@ -112,10 +112,10 @@ COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
             "--timeout": "number",
         }
     },
-    "api-test.materialize": {
+    "bru-api.materialize": {
         "options": {"--qa-root": "path", "--module": "string", "--check": "boolean"}
     },
-    "api-test.check": {
+    "bru-api.check": {
         "options": {
             "--qa-root": "path",
             "--all": "boolean",
@@ -126,7 +126,7 @@ COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "one_of": ["--all", "--module"],
     },
-    "api-test.preflight": {
+    "bru-api.preflight": {
         "options": {
             "--qa-root": "path",
             "--public-path": "string",
@@ -149,7 +149,7 @@ COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
             "--cli-timeout": "number",
         }
     },
-    "api-test.run": {
+    "bru-api.run": {
         "options": {
             "--qa-root": "path",
             "--module": "string",
@@ -159,17 +159,17 @@ COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
             "--clean-mock-data": "boolean",
         }
     },
-    "api-test.mock-data-generate": {
+    "bru-api.mock-data-generate": {
         "options": {
             "--qa-root": "path", "--module": "string[]", "--run-id": "string", "--allow-write": "boolean",
         }
     },
-    "api-test.mock-data-clean": {
+    "bru-api.mock-data-clean": {
         "options": {
             "--qa-root": "path", "--module": "string[]", "--run-id": "string", "--allow-cleanup": "boolean",
         }
     },
-    "api-test.reconcile": {
+    "bru-api.reconcile": {
         "options": {
             "--qa-root": "path",
             "--all": "boolean",
@@ -181,9 +181,9 @@ COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
         "one_of": ["--all", "--module"],
         "required": ["--results", "--preflight-results"],
     },
-    "api-test.aggregate": {"options": {"--qa-root": "path"}},
-    "api-test.worker-start": {"options": {"--qa-root": "path", "--module": "string"}, "required": ["--module"]},
-    "api-test.worker-check": {
+    "bru-api.aggregate": {"options": {"--qa-root": "path"}},
+    "bru-api.worker-start": {"options": {"--qa-root": "path", "--module": "string"}, "required": ["--module"]},
+    "bru-api.worker-check": {
         "options": {
             "--qa-root": "path",
             "--module": "string",
@@ -191,7 +191,7 @@ COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["--module"],
     },
-    "api-test.scripts": {
+    "bru-api.scripts": {
         "arguments": {"action": ["status", "version-init", "version-check", "version-complete"]},
         "options": {
             "--qa-root": "path",
@@ -1115,7 +1115,7 @@ REPORT_SCHEMA: dict[str, Any] = {
     ),
 }
 
-API_TEST_EVIDENCE_SCHEMA = _object({
+BRU_API_EVIDENCE_SCHEMA = _object({
     "source_kind": {"type": "string", "enum": ["design", "openapi", "config", "fixture", "support-source"]},
     "file": NONEMPTY_STRING,
     "symbol": NONEMPTY_STRING,
@@ -1125,7 +1125,7 @@ API_TEST_EVIDENCE_SCHEMA = _object({
     "quote": {"type": "string"},
     "evidence_level": {"type": "string", "enum": ["explicit", "derived", "unknown"]},
 }, ("source_kind", "file", "symbol", "line", "endpoint_scope", "confidence"))
-API_TEST_DESIGN_DOCUMENT_SCHEMA = _object({
+BRU_API_DESIGN_DOCUMENT_SCHEMA = _object({
     "path": NONEMPTY_STRING,
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "sections": {"type": "integer", "minimum": 0},
@@ -1137,7 +1137,7 @@ API_TEST_DESIGN_DOCUMENT_SCHEMA = _object({
     "semantic_only_operations": STRING_LIST,
     "design_version": {"type": ["string", "null"]},
 }, ("path", "sha256", "sections", "semantic_rules", "parser_gap"))
-API_TEST_FLOW_STEP_SCHEMA = _object({
+BRU_API_FLOW_STEP_SCHEMA = _object({
     "rule_id": NONEMPTY_STRING,
     "operation": NONEMPTY_STRING,
     "capture": NONEMPTY_STRING_LIST,
@@ -1150,18 +1150,18 @@ API_TEST_FLOW_STEP_SCHEMA = _object({
     "assert_absent": {},
     "business_assertions": _array({"type": "object", "additionalProperties": True}),
 }, ("rule_id", "operation", "business_assertions"))
-API_TEST_FLOW_SCHEMA = _object({
+BRU_API_FLOW_SCHEMA = _object({
     "id": NONEMPTY_STRING,
     "mode": {"const": "sequential"},
     "source": {"const": "design"},
     "design_rule_ids": NONEMPTY_STRING_LIST,
-    "steps": _array(API_TEST_FLOW_STEP_SCHEMA, minimum=2),
+    "steps": _array(BRU_API_FLOW_STEP_SCHEMA, minimum=2),
     "business_assertions": _array({"type": "object", "additionalProperties": True}),
     "data_transfer": _array({"type": "object", "additionalProperties": True}),
     "final_status": {"type": "string"},
     "cleanup": NONEMPTY_STRING,
 }, ("id", "mode", "source", "design_rule_ids", "steps", "business_assertions", "data_transfer", "final_status"))
-API_TEST_DESIGN_RULE_SCHEMA = _object(
+BRU_API_DESIGN_RULE_SCHEMA = _object(
     {
         "id": NONEMPTY_STRING,
         "method": NONEMPTY_STRING,
@@ -1195,7 +1195,7 @@ API_TEST_DESIGN_RULE_SCHEMA = _object(
         "marker_errors": STRING_LIST,
         "section_line": {"type": "integer", "minimum": 1},
         "section_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "evidence": API_TEST_EVIDENCE_SCHEMA,
+        "evidence": BRU_API_EVIDENCE_SCHEMA,
         "endpoint_id": {"type": ["string", "null"]},
         "evidence_level": {"type": "string", "enum": ["explicit", "derived", "unknown"]},
         "derivation": {"type": "string"},
@@ -1227,23 +1227,23 @@ API_TEST_DESIGN_RULE_SCHEMA = _object(
         "candidate_assertions",
     ),
 )
-API_TEST_DESIGN_RULES_SCHEMA: dict[str, Any] = {
-    "schema_version": API_TEST_SCHEMA_VERSION,
-    "contract": "api-test.design-rules",
-    "path": "test/api-test/constraints/design-rules.yaml",
+BRU_API_DESIGN_RULES_SCHEMA: dict[str, Any] = {
+    "schema_version": BRU_API_SCHEMA_VERSION,
+    "contract": "bru-api.design-rules",
+    "path": "test/bru-api/constraints/design-rules.yaml",
     "document": _object({
         "version": {"const": 1},
         "source": {"const": "design"},
-        "documents": _array(API_TEST_DESIGN_DOCUMENT_SCHEMA),
+        "documents": _array(BRU_API_DESIGN_DOCUMENT_SCHEMA),
         "parser_diagnostics": _array({"type": "object", "additionalProperties": True}),
-        "rules": _array(API_TEST_DESIGN_RULE_SCHEMA),
-        "flows": _array(API_TEST_FLOW_SCHEMA),
+        "rules": _array(BRU_API_DESIGN_RULE_SCHEMA),
+        "flows": _array(BRU_API_FLOW_SCHEMA),
         "flow_candidates": _array({"type": "object", "additionalProperties": True}),
         "exclusions": _array({"type": "object", "additionalProperties": True}),
         "manual_confirmations": _array(_object({
             "rule_id": NONEMPTY_STRING,
             "reasons": NONEMPTY_STRING_LIST,
-            "evidence": API_TEST_EVIDENCE_SCHEMA,
+            "evidence": BRU_API_EVIDENCE_SCHEMA,
             "related_interface": NONEMPTY_STRING,
             "business_rule": NONEMPTY_STRING,
             "design_quote": NONEMPTY_STRING,
@@ -1261,7 +1261,7 @@ API_TEST_DESIGN_RULES_SCHEMA: dict[str, Any] = {
         "understanding": _array(_object({
             "rule_id": NONEMPTY_STRING,
             "business_name": NONEMPTY_STRING,
-            "design_source": API_TEST_EVIDENCE_SCHEMA,
+            "design_source": BRU_API_EVIDENCE_SCHEMA,
             "design_summary": {"type": "string"},
             "candidate_http_method": {"type": ["string", "null"]},
             "candidate_url_path": {"type": ["string", "null"]},
@@ -1308,10 +1308,10 @@ API_TEST_DESIGN_RULES_SCHEMA: dict[str, Any] = {
         "openapi_fingerprint": {"type": "string"},
     }, ("version", "source", "documents", "parser_diagnostics", "rules", "flows", "flow_candidates", "exclusions", "manual_confirmations", "coverage", "understanding", "mapping", "understanding_status", "design_fingerprint", "openapi_fingerprint")),
 }
-API_TEST_DESIGN_REPORT_SCHEMA: dict[str, Any] = {
-    "schema_version": API_TEST_SCHEMA_VERSION,
-    "contract": "api-test.design-generation-report",
-    "path": "test/api-test/artifacts/design-generation-report.json",
+BRU_API_DESIGN_REPORT_SCHEMA: dict[str, Any] = {
+    "schema_version": BRU_API_SCHEMA_VERSION,
+    "contract": "bru-api.design-generation-report",
+    "path": "test/bru-api/artifacts/design-generation-report.json",
     "document": _object({
         "version": {"const": 1},
         "source": {"const": "design"},
@@ -1333,10 +1333,10 @@ API_TEST_DESIGN_REPORT_SCHEMA: dict[str, Any] = {
         "uncovered_mapping", "unexecuted", "gate_failures",
     )),
 }
-API_TEST_LOGIC_SCHEMA: dict[str, Any] = {
-    "schema_version": API_TEST_SCHEMA_VERSION,
-    "contract": "api-test.logic",
-    "path": "test/api-test/contracts/modules/<module>/logic.yaml",
+BRU_API_LOGIC_SCHEMA: dict[str, Any] = {
+    "schema_version": BRU_API_SCHEMA_VERSION,
+    "contract": "bru-api.logic",
+    "path": "test/bru-api/contracts/modules/<module>/logic.yaml",
     "document": _object({
         "version": {"const": 1},
         "module": NONEMPTY_STRING,
@@ -1366,7 +1366,7 @@ API_TEST_LOGIC_SCHEMA: dict[str, Any] = {
             "evidence_quote": {"type": "string"},
             "derivation": {"type": "string"},
             "business_assertions": _array({"type": "object", "additionalProperties": True}),
-            "evidence": _array(API_TEST_EVIDENCE_SCHEMA, minimum=1),
+            "evidence": _array(BRU_API_EVIDENCE_SCHEMA, minimum=1),
             "case_ids": NONEMPTY_STRING_LIST,
         }, (
             "id", "status", "source", "endpoint_id", "openapi_operation", "source_symbol", "condition", "expected_http_status",
@@ -1376,10 +1376,10 @@ API_TEST_LOGIC_SCHEMA: dict[str, Any] = {
         ))),
     }, ("version", "module", "logic")),
 }
-API_TEST_VALUE_RESOLUTION_SCHEMA: dict[str, Any] = {
-    "schema_version": API_TEST_SCHEMA_VERSION,
-    "contract": "api-test.value-resolution",
-    "path": "test/api-test/contracts/modules/<module>/value-resolution.yaml",
+BRU_API_VALUE_RESOLUTION_SCHEMA: dict[str, Any] = {
+    "schema_version": BRU_API_SCHEMA_VERSION,
+    "contract": "bru-api.value-resolution",
+    "path": "test/bru-api/contracts/modules/<module>/value-resolution.yaml",
     "document": _object({
         "version": {"const": 1},
         "module": NONEMPTY_STRING,
@@ -1389,14 +1389,14 @@ API_TEST_VALUE_RESOLUTION_SCHEMA: dict[str, Any] = {
             "status": {"const": "resolved"},
             "value": {},
             "value_source": {"type": "string", "enum": ["config", "fixture", "support-source"]},
-            "evidence": API_TEST_EVIDENCE_SCHEMA,
+            "evidence": BRU_API_EVIDENCE_SCHEMA,
         })),
     }),
 }
-API_TEST_VERSION_LOCK_SCHEMA: dict[str, Any] = {
-    "schema_version": API_TEST_SCHEMA_VERSION,
-    "contract": "api-test.version-lock",
-    "path": "test/api-test/contracts/version-lock.yaml",
+BRU_API_VERSION_LOCK_SCHEMA: dict[str, Any] = {
+    "schema_version": BRU_API_SCHEMA_VERSION,
+    "contract": "bru-api.version-lock",
+    "path": "test/bru-api/contracts/version-lock.yaml",
     "document": _object({
         "version": {"const": 1},
         "status": NONEMPTY_STRING,
@@ -1928,11 +1928,11 @@ BIZ_FLOW_PROGRESS_SCHEMA["contract"] = "biz-flow.progress"
 CONTRACT_SCHEMAS = {
     "e2e.document-baseline": E2E_DOCUMENT_BASELINE_SCHEMA,
     "e2e.document-state": E2E_DOCUMENT_STATE_SCHEMA,
-    "api-test.design-rules": API_TEST_DESIGN_RULES_SCHEMA,
-    "api-test.design-generation-report": API_TEST_DESIGN_REPORT_SCHEMA,
-    "api-test.logic": API_TEST_LOGIC_SCHEMA,
-    "api-test.value-resolution": API_TEST_VALUE_RESOLUTION_SCHEMA,
-    "api-test.version-lock": API_TEST_VERSION_LOCK_SCHEMA,
+    "bru-api.design-rules": BRU_API_DESIGN_RULES_SCHEMA,
+    "bru-api.design-generation-report": BRU_API_DESIGN_REPORT_SCHEMA,
+    "bru-api.logic": BRU_API_LOGIC_SCHEMA,
+    "bru-api.value-resolution": BRU_API_VALUE_RESOLUTION_SCHEMA,
+    "bru-api.version-lock": BRU_API_VERSION_LOCK_SCHEMA,
     "biz-flow.discovery": BIZ_FLOW_DISCOVERY_SCHEMA,
     "biz-flow.module-map": BIZ_FLOW_MODULE_MAP_SCHEMA,
     "biz-flow.index": BIZ_FLOW_INDEX_SCHEMA,
@@ -1960,9 +1960,9 @@ def get_schema(scope: str | None = None) -> dict[str, Any]:
     if scope is None:
         return {
             "domains": {
-                "api-test": {
-                    "schema_version": API_TEST_SCHEMA_VERSION,
-                    "commands": [name.split(".", 1)[1] for name in COMMAND_SCHEMAS if name.startswith("api-test.")],
+                "bru-api": {
+                    "schema_version": BRU_API_SCHEMA_VERSION,
+                    "commands": [name.split(".", 1)[1] for name in COMMAND_SCHEMAS if name.startswith("bru-api.")],
                 },
                 "e2e": {
                     "schema_version": E2E_GATE_SCHEMA_VERSION,
@@ -1979,8 +1979,8 @@ def get_schema(scope: str | None = None) -> dict[str, Any]:
     if scope not in COMMAND_SCHEMAS:
         raise KeyError(scope)
     schema = deepcopy(COMMAND_SCHEMAS[scope])
-    if scope.startswith("api-test."):
-        schema["schema_version"] = API_TEST_SCHEMA_VERSION
+    if scope.startswith("bru-api."):
+        schema["schema_version"] = BRU_API_SCHEMA_VERSION
     elif scope.startswith("biz-flow."):
         schema["schema_version"] = BIZ_FLOW_SCHEMA_VERSION
     else:

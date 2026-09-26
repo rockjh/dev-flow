@@ -19,14 +19,14 @@ class CliContractTests(unittest.TestCase):
         return code, json.loads(stream.getvalue())
 
     def test_scoped_schema_does_not_expand_other_commands(self) -> None:
-        code, result = self.invoke("schema", "api-test.generate")
+        code, result = self.invoke("schema", "bru-api.generate")
         self.assertEqual(0, code)
         self.assertTrue(result["ok"])
         self.assertIn("--openapi", result["data"]["options"])
         self.assertNotIn("domains", result["data"])
 
     def test_design_understanding_command_is_registered_and_persisted(self) -> None:
-        code, schema = self.invoke("schema", "api-test.understand")
+        code, schema = self.invoke("schema", "bru-api.understand")
         self.assertEqual(0, code, schema)
         self.assertIn("--openapi", schema["data"]["options"])
         with tempfile.TemporaryDirectory() as temporary:
@@ -39,10 +39,10 @@ class CliContractTests(unittest.TestCase):
                 "openapi": "3.0.0",
                 "paths": {"/things": {"post": {"responses": {"200": {"description": "ok"}}}}},
             }), encoding="utf-8")
-            code, initialized = self.invoke("api-test", "init", "--qa-root", str(qa_root), "--design-file", str(design))
+            code, initialized = self.invoke("bru-api", "init", "--qa-root", str(qa_root), "--design-file", str(design))
             self.assertEqual(0, code, initialized)
             code, understood = self.invoke(
-                "api-test", "understand", "--qa-root", str(qa_root), "--openapi", str(spec), "--design-file", str(design),
+                "bru-api", "understand", "--qa-root", str(qa_root), "--openapi", str(spec), "--design-file", str(design),
             )
             self.assertEqual(0, code, understood)
             self.assertTrue((qa_root / "constraints" / "design-rules.yaml").is_file())
@@ -53,21 +53,21 @@ class CliContractTests(unittest.TestCase):
             )
 
     def test_mock_data_commands_have_scoped_multi_module_contracts(self) -> None:
-        code, generate = self.invoke("schema", "api-test.mock-data-generate")
+        code, generate = self.invoke("schema", "bru-api.mock-data-generate")
         self.assertEqual(0, code)
         self.assertEqual("string[]", generate["data"]["options"]["--module"])
         self.assertIn("--allow-write", generate["data"]["options"])
-        code, clean = self.invoke("schema", "api-test.mock-data-clean")
+        code, clean = self.invoke("schema", "bru-api.mock-data-clean")
         self.assertEqual(0, code)
         self.assertIn("--run-id", clean["data"]["options"])
         self.assertIn("--allow-cleanup", clean["data"]["options"])
 
-    def test_api_test_persisted_contract_schemas_are_scoped(self) -> None:
+    def test_bru_api_persisted_contract_schemas_are_scoped(self) -> None:
         for scope, source in (
-            ("api-test.design-rules", "design"),
-            ("api-test.logic", None),
-            ("api-test.value-resolution", None),
-            ("api-test.version-lock", None),
+            ("bru-api.design-rules", "design"),
+            ("bru-api.logic", None),
+            ("bru-api.value-resolution", None),
+            ("bru-api.version-lock", None),
         ):
             with self.subTest(scope=scope):
                 code, result = self.invoke("schema", scope)
@@ -84,23 +84,23 @@ class CliContractTests(unittest.TestCase):
             design = root / "design.md"
             design.write_text("# Reviewed design\n", encoding="utf-8")
             code, initialized = self.invoke(
-                "api-test", "init", "--qa-root", str(qa_root), "--design-file", str(design),
+                "bru-api", "init", "--qa-root", str(qa_root), "--design-file", str(design),
             )
             self.assertEqual(0, code, initialized)
-            code, generated = self.invoke("api-test", "mock-data-generate", "--qa-root", str(qa_root))
+            code, generated = self.invoke("bru-api", "mock-data-generate", "--qa-root", str(qa_root))
             self.assertEqual(0, code, generated)
             self.assertTrue(generated["ok"])
             self.assertIn("artifacts\\mock-data", generated["artifact_path"])
-            code, missing = self.invoke("api-test", "mock-data-clean", "--qa-root", str(qa_root))
+            code, missing = self.invoke("bru-api", "mock-data-clean", "--qa-root", str(qa_root))
             self.assertEqual(4, code, missing)
             self.assertEqual("TARGET_NOT_FOUND", missing["error"]["code"])
 
     def test_mock_data_subcommand_help_is_registered(self) -> None:
-        from devflow.test_api.cli import main as api_test_main
+        from devflow.bru_api.cli import main as bru_api_main
 
         stream = io.StringIO()
         with redirect_stdout(stream), self.assertRaises(SystemExit) as exit_context:
-            api_test_main(["mock-data-generate", "--help"])
+            bru_api_main(["mock-data-generate", "--help"])
         self.assertEqual(0, exit_context.exception.code)
         self.assertIn("--module", stream.getvalue())
         self.assertIn("--allow-write", stream.getvalue())
@@ -155,7 +155,7 @@ class CliContractTests(unittest.TestCase):
         code, result = self.invoke("version")
         self.assertEqual(0, code)
         data = result["data"]
-        self.assertNotEqual(data["version"], data["api_test_schema"])
+        self.assertNotEqual(data["version"], data["bru_api_schema"])
         self.assertNotEqual(data["version"], data["e2e_gate_schema"])
 
     def test_e2e_init_writes_assets_without_tool_sources(self) -> None:
@@ -169,14 +169,14 @@ class CliContractTests(unittest.TestCase):
             self.assertTrue((root / "scenarios" / "scenario.template.yaml").is_file())
             self.assertTrue((root / "run-e2e.bat").is_file())
 
-    def test_api_init_writes_flat_assets_without_tool_sources(self) -> None:
+    def bru_api_init_writes_flat_assets_without_tool_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary)
             root = project / "qa"
             design = project / "design.md"
             design.write_text("# Reviewed design\n", encoding="utf-8")
             code, result = self.invoke(
-                "api-test", "init", "--qa-root", str(root), "--design-file", str(design),
+                "bru-api", "init", "--qa-root", str(root), "--design-file", str(design),
             )
             self.assertEqual(0, code, result)
             self.assertEqual(
@@ -192,14 +192,14 @@ class CliContractTests(unittest.TestCase):
             ):
                 self.assertTrue((root / "execution" / name).is_file())
 
-    def test_api_version_lock_can_complete_through_the_public_cli(self) -> None:
+    def bru_api_version_lock_can_complete_through_the_public_cli(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary)
             qa_root = project / "quality-assets"
             design = project / "design.md"
             design.write_text("# Reviewed design\n", encoding="utf-8")
             code, result = self.invoke(
-                "api-test", "init", "--qa-root", str(qa_root), "--design-file", str(design),
+                "bru-api", "init", "--qa-root", str(qa_root), "--design-file", str(design),
             )
             self.assertEqual(0, code, result)
             self.assertIn("status: draft", (qa_root / "contracts" / "version-lock.yaml").read_text(encoding="utf-8"))
@@ -222,7 +222,7 @@ class CliContractTests(unittest.TestCase):
                 "errors": [],
             }), encoding="utf-8")
             code, result = self.invoke(
-                "api-test", "scripts", "version-complete",
+                "bru-api", "scripts", "version-complete",
                 "--qa-root", str(qa_root),
                 "--completion-report", str(report),
             )
@@ -257,7 +257,7 @@ class CliContractTests(unittest.TestCase):
             "checks": {
                 "python": {"ok": True},
                 "git": {"ok": False},
-                "bruno": {"ok": False, "required_for": "api-test.run"},
+                "bruno": {"ok": False, "required_for": "bru-api.run"},
             }
         }
         with patch("devflow.cli.diagnose", return_value=(checks, False)):

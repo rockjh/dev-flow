@@ -14,7 +14,7 @@ def diagnose() -> tuple[dict[str, Any], bool]:
         "PyYAML": {"ok": importlib.util.find_spec("yaml") is not None},
         "pytest": {"ok": importlib.util.find_spec("pytest") is not None},
         "git": {"ok": shutil.which("git") is not None},
-        "bruno": {"ok": shutil.which("bru") is not None, "required_for": "api-test.run"},
+        "bruno": {"ok": shutil.which("bru") is not None, "required_for": "bru-api.run"},
     }
     required = ("python", "PyYAML", "pytest", "git")
     return {"checks": checks}, all(checks[name]["ok"] for name in required)

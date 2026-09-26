@@ -143,4 +143,4 @@ Connection addresses, database/index names, users, passwords, TLS settings, and 
 
 Statements should use parameter binding or exact document IDs and be idempotent where possible.
 
-Each possible creation is journaled before setup begins, then promoted to `created` only after setup verification. This allows a partially failed write to be cleaned without claiming that creation succeeded. Cleanup runs in reverse dependency order after the suite or later through `devflow api-test mock-data-clean`; interrupted runs remain recoverable by run ID. A connection, query, expectation, cleanup, or absence-verification error is a failure, not a manual pass.
+Each possible creation is journaled before setup begins, then promoted to `created` only after setup verification. This allows a partially failed write to be cleaned without claiming that creation succeeded. Cleanup runs in reverse dependency order after the suite or later through `devflow bru-api mock-data-clean`; interrupted runs remain recoverable by run ID. A connection, query, expectation, cleanup, or absence-verification error is a failure, not a manual pass.

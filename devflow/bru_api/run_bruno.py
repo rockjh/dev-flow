@@ -178,7 +178,7 @@ def coverage_command(
 ) -> list[str]:
     command = [
         sys.executable,
-        "-m", "devflow.test_api.check_api_coverage",
+        "-m", "devflow.bru_api.check_api_coverage",
         str(contracts_root),
         str(bruno_root),
         "--openapi", str(openapi),
@@ -345,10 +345,10 @@ def finish_mock_data_run(
         )
     except (MockDataError, OSError, TypeError, ValueError) as exc:
         print(f"ERROR: mock-data cleanup failed: {exc}", file=sys.stderr)
-        print(f"Retry: devflow api-test mock-data-clean --qa-root {qa_root} --run-id {run_id}", file=sys.stderr)
+        print(f"Retry: devflow bru-api mock-data-clean --qa-root {qa_root} --run-id {run_id}", file=sys.stderr)
         return 10
     if result.get("status") == "retained":
-        print(f"Mock data retained. Cleanup: devflow api-test mock-data-clean --qa-root {qa_root} --run-id {run_id}")
+        print(f"Mock data retained. Cleanup: devflow bru-api mock-data-clean --qa-root {qa_root} --run-id {run_id}")
     return 0
 
 
@@ -1022,7 +1022,7 @@ def execute(args: argparse.Namespace, qa_root: Path, execution_log: Path) -> int
     version_check = subprocess.run(
         [
             sys.executable,
-            "-m", "devflow.test_api.check_version_compatibility",
+            "-m", "devflow.bru_api.check_version_compatibility",
             str(app_root),
             str(contracts_root),
             "--phase", "before-execute",
@@ -1088,7 +1088,7 @@ def execute(args: argparse.Namespace, qa_root: Path, execution_log: Path) -> int
         print("[4/6] Running runtime preflight")
         preflight_command = [
             sys.executable,
-            "-m", "devflow.test_api.runtime_preflight",
+            "-m", "devflow.bru_api.runtime_preflight",
             "--execution-config", str(config_path),
             "--env-file", str(env_path),
             "--openapi", str(openapi),
@@ -1212,7 +1212,7 @@ def execute(args: argparse.Namespace, qa_root: Path, execution_log: Path) -> int
         normalize_result = subprocess.run(
             [
                 sys.executable,
-                "-m", "devflow.test_api.normalize_bruno_report",
+                "-m", "devflow.bru_api.normalize_bruno_report",
                 str(raw_report),
                 "--output", str(evidence_path),
                 "--environment", config["active_environment"],
@@ -1298,7 +1298,7 @@ def execute(args: argparse.Namespace, qa_root: Path, execution_log: Path) -> int
             lock_result = subprocess.run(
                 [
                     sys.executable,
-                    "-m", "devflow.test_api.check_version_compatibility",
+                    "-m", "devflow.bru_api.check_version_compatibility",
                     str(app_root),
                     str(contracts_root),
                     "--phase", "complete",

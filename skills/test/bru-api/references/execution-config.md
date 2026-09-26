@@ -13,7 +13,7 @@ sign:
 
 Allowed coverage profiles are `contract-draft` and `full-matrix`. `verified` is an execution result, not a profile. The active Bruno environment lives at `qa/execution/environments/<active_environment>.bru` and may contain variable placeholders and common headers. Store credential values only in the runtime environment, never in contracts or reports.
 
-The generated launchers are thin convenience assets and call the installed `devflow api-test` commands; they contain no Python implementation. Run launchers cover tests plus standalone mock-data generation and cleanup on CMD and Shell. `devflow api-test scripts` reports the installed domain schema and does not synchronize files.
+The generated launchers are thin convenience assets and call the installed `devflow bru-api` commands; they contain no Python implementation. Run launchers cover tests plus standalone mock-data generation and cleanup on CMD and Shell. `devflow bru-api scripts` reports the installed domain schema and does not synchronize files.
 
 Preflight validates the project lock, QA lock, execution configuration, environment syntax, static coverage, target URL, required variables, tool availability, and report destinations before Bruno runs. Authoritative reports remain below `qa/results/`.
 

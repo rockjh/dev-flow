@@ -18,7 +18,7 @@ from .core.envelope import failure, render, success
 from .core.errors import DevflowError, ExitCode, classify_failure
 from .core.redaction import redact
 from .core.schema import (
-    API_TEST_SCHEMA_VERSION,
+    BRU_API_SCHEMA_VERSION,
     BIZ_FLOW_SCHEMA_VERSION,
     E2E_GATE_SCHEMA_VERSION,
     get_schema,
@@ -30,11 +30,11 @@ DOMAINS: dict[str, Callable[[list[str]], int]] = {}
 
 def _domains() -> dict[str, Callable[[list[str]], int]]:
     if not DOMAINS:
-        from .test_api.cli import main as api_test_main
+        from .bru_api.cli import main as bru_api_main
         from .doc_biz_flow.cli import main as biz_flow_main
         from .test_e2e.cli import main as e2e_main
 
-        DOMAINS.update({"api-test": api_test_main, "biz-flow": biz_flow_main, "e2e": e2e_main})
+        DOMAINS.update({"bru-api": bru_api_main, "biz-flow": biz_flow_main, "e2e": e2e_main})
     return DOMAINS
 
 
@@ -61,9 +61,9 @@ def _project_relative_path(arguments: list[str], name: str, project: Path, defau
 
 
 def _prepare_lock(domain: str, command: str, arguments: list[str]) -> tuple[Path | None, str]:
-    if domain == "api-test":
-        root = _option_path(arguments, "--qa-root", "test/api-test")
-        schema_version = API_TEST_SCHEMA_VERSION
+    if domain == "bru-api":
+        root = _option_path(arguments, "--qa-root", "test/bru-api")
+        schema_version = BRU_API_SCHEMA_VERSION
     elif domain == "biz-flow":
         root = _option_path(arguments, "--project", ".")
         schema_version = BIZ_FLOW_SCHEMA_VERSION
@@ -94,8 +94,8 @@ def _summary(stdout: str, stderr: str, *, full: bool) -> dict[str, object]:
 
 
 def _artifact_path(domain: str, command: str, arguments: list[str], stdout: str) -> str:
-    if domain == "api-test" and command in {"understand", "generate"}:
-        path = _option_path(arguments, "--qa-root", "test/api-test") / "artifacts" / "design-generation-report.json"
+    if domain == "bru-api" and command in {"understand", "generate"}:
+        path = _option_path(arguments, "--qa-root", "test/bru-api") / "artifacts" / "design-generation-report.json"
         return str(path) if path.is_file() else ""
     if domain == "e2e" and command == "run":
         path = _option_path(arguments, "--project", ".") / "artifacts" / "e2e-run.json"
@@ -167,7 +167,7 @@ def _run_domain(domain: str, arguments: list[str], *, full: bool) -> tuple[dict[
 
 def _help_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="devflow", description="Shared runtime for development AI skills")
-    parser.add_argument("command", nargs="?", choices=("version", "doctor", "schema", "api-test", "biz-flow", "e2e"))
+    parser.add_argument("command", nargs="?", choices=("version", "doctor", "schema", "bru-api", "biz-flow", "e2e"))
     parser.epilog = "Use 'devflow schema' to list domain commands and 'devflow schema <domain.command>' for one contract."
     return parser
 
@@ -201,7 +201,7 @@ def console_main(argv: list[str] | None = None) -> int:
                 raise DevflowError("INVALID_ARGUMENT", "version accepts no arguments", ExitCode.ARGUMENT)
             document = success("version", {
                 "version": __version__,
-                "api_test_schema": API_TEST_SCHEMA_VERSION,
+                "bru_api_schema": BRU_API_SCHEMA_VERSION,
                 "biz_flow_schema": BIZ_FLOW_SCHEMA_VERSION,
                 "e2e_gate_schema": E2E_GATE_SCHEMA_VERSION,
             })

@@ -68,7 +68,7 @@ rem Optional PATH hints: set BRUNO_NODE_HOME and/or BRUNO_NPM_BIN before running
 if defined BRUNO_NODE_HOME set "PATH=%BRUNO_NODE_HOME%;%PATH%"
 if defined BRUNO_NPM_BIN set "PATH=%BRUNO_NPM_BIN%;%PATH%"
 rem Usage: run.bat runs all modules; add --module "users" or --cli-timeout 90 as needed.
-devflow api-test run --qa-root "%~dp0.." %*
+devflow bru-api run --qa-root "%~dp0.." %*
 exit /b %errorlevel%
 """
 
@@ -80,7 +80,7 @@ if [ -n "${BRUNO_NPM_BIN:-}" ]; then PATH="$BRUNO_NPM_BIN:$PATH"; fi
 export PATH
 # Usage: ./run.sh runs all modules; add --module "users" or --cli-timeout 90 as needed.
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec devflow api-test run --qa-root "$SCRIPT_DIR/.." "$@"
+exec devflow bru-api run --qa-root "$SCRIPT_DIR/.." "$@"
 """
 
 SHARED_RUN_BAT_TEMPLATE = r"""@echo off
@@ -89,7 +89,7 @@ rem Optional PATH hints: set BRUNO_NODE_HOME and/or BRUNO_NPM_BIN before running
 if defined BRUNO_NODE_HOME set "PATH=%BRUNO_NODE_HOME%;%PATH%"
 if defined BRUNO_NPM_BIN set "PATH=%BRUNO_NPM_BIN%;%PATH%"
 rem Usage: run.bat runs all modules; add --module "users" or --cli-timeout 90 as needed.
-devflow api-test run --qa-root "%~dp0.." %*
+devflow bru-api run --qa-root "%~dp0.." %*
 exit /b %errorlevel%
 """
 
@@ -101,13 +101,13 @@ if [ -n "${BRUNO_NPM_BIN:-}" ]; then PATH="$BRUNO_NPM_BIN:$PATH"; fi
 export PATH
 # Usage: ./run.sh runs all modules; add --module "users" or --cli-timeout 90 as needed.
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec devflow api-test run --qa-root "$SCRIPT_DIR/.." "$@"
+exec devflow bru-api run --qa-root "$SCRIPT_DIR/.." "$@"
 """
 
 MOCK_DATA_GENERATE_BAT_TEMPLATE = r"""@echo off
 setlocal
 rem Usage: generate-mock-data.bat handles all modules; repeat --module to select modules.
-devflow api-test mock-data-generate --qa-root "%~dp0.." %*
+devflow bru-api mock-data-generate --qa-root "%~dp0.." %*
 exit /b %errorlevel%
 """
 
@@ -115,13 +115,13 @@ MOCK_DATA_GENERATE_SH_TEMPLATE = """#!/usr/bin/env sh
 set -eu
 # Usage: ./generate-mock-data.sh handles all modules; repeat --module to select modules.
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec devflow api-test mock-data-generate --qa-root "$SCRIPT_DIR/.." "$@"
+exec devflow bru-api mock-data-generate --qa-root "$SCRIPT_DIR/.." "$@"
 """
 
 MOCK_DATA_CLEAN_BAT_TEMPLATE = r"""@echo off
 setlocal
 rem Usage: clean-mock-data.bat cleans the latest run; use --run-id or repeat --module as needed.
-devflow api-test mock-data-clean --qa-root "%~dp0.." %*
+devflow bru-api mock-data-clean --qa-root "%~dp0.." %*
 exit /b %errorlevel%
 """
 
@@ -129,13 +129,13 @@ MOCK_DATA_CLEAN_SH_TEMPLATE = """#!/usr/bin/env sh
 set -eu
 # Usage: ./clean-mock-data.sh cleans the latest run; use --run-id or repeat --module as needed.
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec devflow api-test mock-data-clean --qa-root "$SCRIPT_DIR/.." "$@"
+exec devflow bru-api mock-data-clean --qa-root "$SCRIPT_DIR/.." "$@"
 """
 
 LEGACY_RUN_BAT_TEMPLATE = r"""@echo off
 setlocal
 rem Usage: run.bat runs all modules; run.bat --module "users" runs one module.
-devflow api-test run --qa-root "%~dp0.." %*
+devflow bru-api run --qa-root "%~dp0.." %*
 exit /b %errorlevel%
 """
 
@@ -143,16 +143,16 @@ LEGACY_RUN_SH_TEMPLATE = """#!/usr/bin/env sh
 set -eu
 # Usage: ./run.sh runs all modules; ./run.sh --module "users" runs one module.
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec devflow api-test run --qa-root "$SCRIPT_DIR/.." "$@"
+exec devflow bru-api run --qa-root "$SCRIPT_DIR/.." "$@"
 """
 
 LEGACY_SHARED_RUN_BAT_TEMPLATE = LEGACY_RUN_BAT_TEMPLATE.replace(
-    'devflow api-test',
-    "devflow api-test",
+    'devflow bru-api',
+    "devflow bru-api",
 )
 LEGACY_SHARED_RUN_SH_TEMPLATE = LEGACY_RUN_SH_TEMPLATE.replace(
-    'devflow api-test',
-    "devflow api-test",
+    'devflow bru-api',
+    "devflow bru-api",
 )
 
 EXECUTION_README_TEMPLATE = """# Bruno 执行入口

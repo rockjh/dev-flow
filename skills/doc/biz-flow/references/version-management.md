@@ -9,10 +9,10 @@ Keep two independent locks under `qa/contracts`.
 Initialize and gate the business lock through the shared CLI workflow:
 
 ```bash
-devflow api-test init --qa-root qa --design-root docs/design
-devflow api-test generate --qa-root qa --openapi qa/contracts/openapi.json --design-root docs/design --source-root APP
-devflow api-test preflight --qa-root qa
-devflow api-test run --qa-root qa
+devflow bru-api init --qa-root qa --design-root docs/design
+devflow bru-api generate --qa-root qa --openapi qa/contracts/openapi.json --design-root docs/design --source-root APP
+devflow bru-api preflight --qa-root qa
+devflow bru-api run --qa-root qa
 ```
 
 The shared runtime checks the source/version lock during generation, preflight,
@@ -28,9 +28,9 @@ The runner advances a successful global execution automatically. The same
 version operations are available explicitly without project-local scripts:
 
 ```bash
-devflow api-test scripts version-check --qa-root qa --phase before-generate
-devflow api-test scripts version-check --qa-root qa --phase before-execute
-devflow api-test scripts version-complete --qa-root qa --completion-report qa/results/<strict-report>.json --tests-adapted
+devflow bru-api scripts version-check --qa-root qa --phase before-generate
+devflow bru-api scripts version-check --qa-root qa --phase before-execute
+devflow bru-api scripts version-complete --qa-root qa --completion-report qa/results/<strict-report>.json --tests-adapted
 ```
 
 For a remote `baseUrl`, configure `versionPath` in the active Bruno environment when the deployment exposes a version endpoint. `versionJsonPath`, `versionHeader`, or `expectedVersion` can select a non-standard value. The endpoint must share the `baseUrl` origin, and a failed or mismatched version gate must be resolved before execution.

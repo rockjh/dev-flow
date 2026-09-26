@@ -21,12 +21,12 @@ if str(SRC) not in sys.path:
 
 
 def load_script(name: str):
-    aliases = {"bruno_api_test_generator": "cli", "qa_constraints": "constraints"}
-    return importlib.import_module(f"devflow.test_api.{aliases.get(name, name)}")
+    aliases = {"bruno_bru_api_generator": "cli", "qa_constraints": "constraints"}
+    return importlib.import_module(f"devflow.bru_api.{aliases.get(name, name)}")
 
 
 def generated_project(root: Path, design_text: str | None = None) -> tuple[object, object, Path, Path]:
-    cli = load_script("bruno_api_test_generator")
+    cli = load_script("bruno_bru_api_generator")
     constraints = load_script("qa_constraints")
     qa_root = root / "qa"
     spec = root / "openapi.json"
@@ -76,7 +76,7 @@ class ConstraintGateTests(unittest.TestCase):
             self.assertEqual(discovered.files, (expected.resolve(),))
 
     def test_init_blocks_ambiguous_design_roots_without_writing_assets(self):
-        cli = load_script("bruno_api_test_generator")
+        cli = load_script("bruno_bru_api_generator")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for relative in (Path("docs/design"), Path("design")):
@@ -167,7 +167,7 @@ class ConstraintGateTests(unittest.TestCase):
     def test_source_business_inference_modules_are_removed(self):
         for name in ("analyze_source_logic", "analyze_java_logic", "source_constraints"):
             with self.subTest(module=name):
-                self.assertIsNone(importlib.util.find_spec(f"devflow.test_api.{name}"))
+                self.assertIsNone(importlib.util.find_spec(f"devflow.bru_api.{name}"))
 
     def test_design_exclusions_require_explicit_approval_when_declared(self):
         design_rules = load_script("design_rules")
@@ -198,7 +198,7 @@ class ConstraintGateTests(unittest.TestCase):
             self.assertEqual(document["coverage"]["excluded_endpoints"], 1)
 
     def test_approved_design_exclusion_removes_generated_endpoint_cases(self):
-        cli = load_script("bruno_api_test_generator")
+        cli = load_script("bruno_bru_api_generator")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             qa_root = root / "quality-assets"
@@ -284,10 +284,10 @@ class ConstraintGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             _, _, qa_root, module = generated_project(Path(directory))
             artifacts = {
-                "api-test.design-rules": qa_root / "constraints" / "design-rules.yaml",
-                "api-test.logic": module / "logic.yaml",
-                "api-test.value-resolution": module / "value-resolution.yaml",
-                "api-test.version-lock": qa_root / "contracts" / "version-lock.yaml",
+                "bru-api.design-rules": qa_root / "constraints" / "design-rules.yaml",
+                "bru-api.logic": module / "logic.yaml",
+                "bru-api.value-resolution": module / "value-resolution.yaml",
+                "bru-api.version-lock": qa_root / "contracts" / "version-lock.yaml",
             }
             for scope, path in artifacts.items():
                 with self.subTest(scope=scope):
@@ -539,7 +539,7 @@ class ConstraintGateTests(unittest.TestCase):
             self.assertEqual(query["design_rule_ids"], ["THINGS_PAGE"])
 
     def test_generate_stops_when_design_documents_are_missing(self):
-        cli = load_script("bruno_api_test_generator")
+        cli = load_script("bruno_bru_api_generator")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             spec = root / "openapi.json"
@@ -662,7 +662,7 @@ class ConstraintGateTests(unittest.TestCase):
                     self.assertTrue(any("[MAN-002]" in error and "exceeds 0" in error for error in errors), errors)
 
     def test_design_overrides_source_controller_advice_business_code(self):
-        cli = load_script("bruno_api_test_generator")
+        cli = load_script("bruno_bru_api_generator")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             qa_root = root / "qa"
@@ -730,7 +730,7 @@ class ConstraintGateTests(unittest.TestCase):
             self.assertFalse((qa_root / "contracts" / "exception-profile.yaml").exists())
 
     def test_excel_upload_generates_six_executable_fixture_types(self):
-        cli = load_script("bruno_api_test_generator")
+        cli = load_script("bruno_bru_api_generator")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             qa_root = root / "qa"

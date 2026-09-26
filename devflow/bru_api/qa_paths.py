@@ -14,4 +14,4 @@ GLOBAL_EVIDENCE = GLOBAL_RESULTS / "evidence"
 MODULE_EVIDENCE = MODULE_RESULTS / "evidence"
 LOGS = RESULTS / "logs"
 
-# API domain assets are rooted at test/api-test in generated projects.
+# API domain assets are rooted at test/bru-api in generated projects.

@@ -1943,7 +1943,7 @@ def main() -> int:
         business_version_checked = True
         version_command = [
                 sys.executable,
-                "-m", "devflow.test_api.check_version_compatibility",
+                "-m", "devflow.bru_api.check_version_compatibility",
                 str(qa_root.parent),
                 str(args.contracts_root),
                 "--phase", "before-execute",

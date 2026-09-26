@@ -25,13 +25,13 @@ sys.dont_write_bytecode = True
 
 
 def load_script(name: str):
-    aliases = {"bruno_api_test_generator": "cli", "qa_constraints": "constraints"}
-    return importlib.import_module(f"devflow.test_api.{aliases.get(name, name)}")
+    aliases = {"bruno_bru_api_generator": "cli", "qa_constraints": "constraints"}
+    return importlib.import_module(f"devflow.bru_api.{aliases.get(name, name)}")
 
 
 def module_command(name: str) -> list[str]:
-    aliases = {"bruno_api_test_generator": "cli", "qa_constraints": "constraints"}
-    return [sys.executable, "-m", f"devflow.test_api.{aliases.get(name, name)}"]
+    aliases = {"bruno_bru_api_generator": "cli", "qa_constraints": "constraints"}
+    return [sys.executable, "-m", f"devflow.bru_api.{aliases.get(name, name)}"]
 
 
 def static_preflight_inputs(root: Path) -> tuple[Path, Path]:
@@ -1272,8 +1272,8 @@ class RegressionTests(unittest.TestCase):
             self.assertFalse((root / "bruno" / "environments").exists())
             self.assertTrue((root / "execution" / "run.bat").is_file())
             self.assertTrue((root / "execution" / "run.sh").is_file())
-            self.assertIn("devflow api-test run", (root / "execution" / "run.bat").read_text(encoding="utf-8"))
-            self.assertIn("devflow api-test run", (root / "execution" / "run.sh").read_text(encoding="utf-8"))
+            self.assertIn("devflow bru-api run", (root / "execution" / "run.bat").read_text(encoding="utf-8"))
+            self.assertIn("devflow bru-api run", (root / "execution" / "run.sh").read_text(encoding="utf-8"))
             self.assertEqual(
                 sorted(path.name for path in (root / "execution" / "environments").glob("*.bru")),
                 ["local.bru"],
@@ -2256,7 +2256,7 @@ class RegressionTests(unittest.TestCase):
         self.assertNotEqual(fetcher.contract_identity(first), fetcher.contract_identity(second))
 
     def test_generate_uses_shared_loopback_fetch_when_contract_is_missing(self):
-        cli = load_script("bruno_api_test_generator")
+        cli = load_script("bruno_bru_api_generator")
         with tempfile.TemporaryDirectory() as directory:
             qa_root = Path(directory) / "qa"
             design = Path(directory) / "design.md"
@@ -2270,7 +2270,7 @@ class RegressionTests(unittest.TestCase):
                 ])
             self.assertEqual(code, 2)
             command = run.call_args.args[0]
-            self.assertIn("devflow.test_api.fetch_local_openapi", command)
+            self.assertIn("devflow.bru_api.fetch_local_openapi", command)
             self.assertIn(str(qa_root.resolve() / "contracts" / "openapi.json"), command)
 
     def test_case_documentation_validator_rejects_missing_swimlane(self):
@@ -3900,7 +3900,7 @@ class RegressionTests(unittest.TestCase):
             self.assertEqual(unchanged["assertions"], success["assertions"])
 
     def test_loopback_openapi_provenance_requires_execution(self):
-        cli = load_script("bruno_api_test_generator")
+        cli = load_script("bruno_bru_api_generator")
         self.assertTrue(cli.is_loopback_openapi({"provenance": {"source_url": "http://127.0.0.1:8080/v3/api-docs"}}))
         self.assertTrue(cli.is_loopback_openapi({"provenance": {"source_url": "http://[::1]:8080/openapi"}}))
         self.assertFalse(cli.is_loopback_openapi({"provenance": {"source_url": "https://api.example.com/openapi"}}))
@@ -4000,8 +4000,8 @@ class RegressionTests(unittest.TestCase):
             self.assertFalse((qa_root / "execution" / "plans.yaml").exists())
             self.assertIn("tooling: shared-cli", (qa_root / "execution" / "config.yaml").read_text(encoding="utf-8"))
             self.assertIn("cli_timeout: 60", (qa_root / "execution" / "config.yaml").read_text(encoding="utf-8"))
-            self.assertIn("devflow api-test run", (qa_root / "execution" / "run.bat").read_text(encoding="utf-8"))
-            self.assertIn("devflow api-test run", (qa_root / "execution" / "run.sh").read_text(encoding="utf-8"))
+            self.assertIn("devflow bru-api run", (qa_root / "execution" / "run.bat").read_text(encoding="utf-8"))
+            self.assertIn("devflow bru-api run", (qa_root / "execution" / "run.sh").read_text(encoding="utf-8"))
             self.assertIn("BRUNO_NPM_BIN", (qa_root / "execution" / "run.bat").read_text(encoding="utf-8"))
             self.assertIn("BRUNO_NODE_HOME", (qa_root / "execution" / "run.sh").read_text(encoding="utf-8"))
 
@@ -4024,7 +4024,7 @@ class RegressionTests(unittest.TestCase):
             self.assertEqual(observed["root"], qa_root.resolve())
 
     def test_init_creates_the_flat_business_asset_layout(self):
-        cli = load_script("bruno_api_test_generator")
+        cli = load_script("bruno_bru_api_generator")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             qa_root = root / "qa"
@@ -4048,7 +4048,7 @@ class RegressionTests(unittest.TestCase):
                 self.assertTrue(path.is_dir())
 
     def test_public_cli_pipeline_uses_only_the_canonical_layout(self):
-        cli = load_script("bruno_api_test_generator")
+        cli = load_script("bruno_bru_api_generator")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             qa_root = root / "qa"
@@ -4092,7 +4092,7 @@ class RegressionTests(unittest.TestCase):
             self.assertFalse((qa_root / "scripts").exists())
 
             def preflight_run(command, **_kwargs):
-                if "devflow.test_api.check_api_coverage" in command:
+                if "devflow.bru_api.check_api_coverage" in command:
                     return subprocess.CompletedProcess(command, 0, json.dumps({"static_ok": True}), "")
                 output = Path(command[command.index("--output") + 1])
                 report = {"version": 2, "status": "runnable", "errors": []}
@@ -4109,7 +4109,7 @@ class RegressionTests(unittest.TestCase):
 
     def test_public_cli_routes_help_to_the_subcommand(self):
         completed = subprocess.run(
-            [*module_command("bruno_api_test_generator"), "generate", "--help"],
+            [*module_command("bruno_bru_api_generator"), "generate", "--help"],
             check=False,
             capture_output=True,
             text=True,
@@ -4119,7 +4119,7 @@ class RegressionTests(unittest.TestCase):
         self.assertIn("--incremental", completed.stdout)
         self.assertNotIn("--shared-cli", completed.stdout)
         run_help = subprocess.run(
-            [*module_command("bruno_api_test_generator"), "run", "--help"],
+            [*module_command("bruno_bru_api_generator"), "run", "--help"],
             check=False,
             capture_output=True,
             text=True,
@@ -4177,7 +4177,7 @@ class RegressionTests(unittest.TestCase):
             self.assertTrue(any("case fingerprints" in error for error in qa_lock.check(contracts)))
 
     def test_generate_does_not_reuse_source_rules_as_contract_rules(self):
-        cli = load_script("bruno_api_test_generator")
+        cli = load_script("bruno_bru_api_generator")
         with tempfile.TemporaryDirectory() as directory:
             qa_root = Path(directory) / "qa"
             contracts = qa_root / "contracts"
@@ -4227,7 +4227,7 @@ class RegressionTests(unittest.TestCase):
                 mock.patch.object(cli, "materialize"),
                 mock.patch.object(cli, "write_qa_lock"),
                 mock.patch.object(cli, "validate_stage", return_value=[]),
-                mock.patch("devflow.test_api.execution_config.load_execution_config", return_value={
+                mock.patch("devflow.bru_api.execution_config.load_execution_config", return_value={
                     "coverage_profile": "contract-draft", "active_environment": "local",
                 }),
             ):
@@ -4455,7 +4455,7 @@ class RegressionTests(unittest.TestCase):
             self.assertEqual(persisted["constraint_errors"], ["response schema mismatch"])
 
     def test_loopback_generation_invokes_run_command(self):
-        cli = load_script("bruno_api_test_generator")
+        cli = load_script("bruno_bru_api_generator")
         with tempfile.TemporaryDirectory() as directory:
             qa_root = Path(directory) / "qa"
             contracts = qa_root / "contracts"
@@ -4479,7 +4479,7 @@ class RegressionTests(unittest.TestCase):
                 mock.patch.object(cli, "write_qa_lock"),
                 mock.patch.object(cli, "validate_stage", return_value=[]),
                 mock.patch.object(cli, "run_command", return_value=7) as run,
-                mock.patch("devflow.test_api.execution_config.load_execution_config", return_value={
+                mock.patch("devflow.bru_api.execution_config.load_execution_config", return_value={
                     "coverage_profile": "contract-draft", "active_environment": "local",
                 }),
             ):

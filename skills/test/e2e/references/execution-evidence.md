@@ -63,7 +63,7 @@ Module runs validate `module-lock.yaml`, write only module-owned logs/evidence/r
 
 The coordinator validates and merges module evidence before the final all-module run.
 
-Run `devflow api-test aggregate` after independent module execution. It
+Run `devflow bru-api aggregate` after independent module execution. It
 requires the latest module report to contain exactly the module's current case
 IDs, rejects missing or repeated evidence, reruns post-execution constraints,
 and writes merged global evidence plus a result-first global report. A failed

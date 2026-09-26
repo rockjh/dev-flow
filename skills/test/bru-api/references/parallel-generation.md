@@ -5,7 +5,7 @@ Use workers only after the coordinator freezes the OpenAPI inventory, module map
 Before dispatching each assignment, record its current-workspace boundary:
 
 ```bash
-devflow api-test worker-start --module <module>
+devflow bru-api worker-start --module <module>
 ```
 
 ## Ownership
@@ -25,8 +25,8 @@ The coordinator records each assignment and gives the constraint validator the w
 2. Inspect runtime configuration, authentication/signature/header setup, fixtures, database test-data preparation, upload templates, and external-service mock toggles needed to execute the assigned cases.
 3. Read the assigned reviewed design rules and OpenAPI contract, then write module design references, `logic.yaml`, `cases.yaml`, and explicit flows/exclusions when applicable. Source discovery remains execution support only and cannot create business cases or expected values.
 4. Run module materialization. It writes only the module Bruno directory, `materialization-state.yaml`, `module-lock.yaml`, and module documentation.
-5. Run `devflow api-test run --module <module>`. It validates the module lock and writes module-local evidence, results, and logs.
-6. Run `devflow api-test worker-check --module <module> --stage post-execution`. Changed paths are calculated from the recorded snapshot.
+5. Run `devflow bru-api run --module <module>`. It validates the module lock and writes module-local evidence, results, and logs.
+6. Run `devflow bru-api worker-check --module <module> --stage post-execution`. Changed paths are calculated from the recorded snapshot.
 7. Return rule/case/logic/flow IDs, result/evidence paths, failures by category, and any blocking manual confirmations.
 
 A worker failure affects only that module. Other workers continue.
@@ -46,7 +46,7 @@ After workers finish, the coordinator:
 3. regenerates `index.yaml` and `generation-state.yaml` without resetting unchanged successful cases;
 4. materializes globally and refreshes `qa-lock.yaml`;
 5. validates cross-module flows;
-6. runs `devflow api-test aggregate` to reconcile independent module reports and evidence; and
+6. runs `devflow bru-api aggregate` to reconcile independent module reports and evidence; and
 7. runs the all-module collection only when a coordinator-owned cross-module flow requires it.
 
 Worker reports are inputs, not proof. Shared constraints, global reconciliation, and execution evidence are authoritative.

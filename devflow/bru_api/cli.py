@@ -62,7 +62,7 @@ from .value_resolution import (
 
 
 def qa_root_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--qa-root", type=Path, default=Path("test/api-test"))
+    parser.add_argument("--qa-root", type=Path, default=Path("test/bru-api"))
 
 
 def shared_cli_mode(qa_root: Path) -> bool:
@@ -105,7 +105,7 @@ def version_gate(
     command = [
         sys.executable,
         "-m",
-        "devflow.test_api.check_version_compatibility",
+        "devflow.bru_api.check_version_compatibility",
         str((business_repo or qa_root.parent).resolve()),
         str(qa_root / CONTRACTS),
         *options,
@@ -123,7 +123,7 @@ def is_loopback_openapi(document: dict[str, object]) -> bool:
 
 
 def init_command(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="devflow api-test init")
+    parser = argparse.ArgumentParser(prog="devflow bru-api init")
     qa_root_argument(parser)
     parser.add_argument("--design-root", action="append", type=Path, default=[])
     parser.add_argument("--design-file", action="append", type=Path, default=[])
@@ -334,7 +334,7 @@ def _design_report(
 def understand_command(argv: list[str]) -> int:
     """Complete and persist the design-understanding phase."""
 
-    parser = argparse.ArgumentParser(prog="devflow api-test understand")
+    parser = argparse.ArgumentParser(prog="devflow bru-api understand")
     qa_root_argument(parser)
     parser.add_argument("--openapi", type=Path)
     parser.add_argument("--design-root", action="append", type=Path, default=[])
@@ -369,7 +369,7 @@ def understand_command(argv: list[str]) -> int:
 
 
 def generate_command(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="devflow api-test generate")
+    parser = argparse.ArgumentParser(prog="devflow bru-api generate")
     qa_root_argument(parser)
     parser.add_argument("--openapi", type=Path)
     parser.add_argument("--module-map", type=Path)
@@ -419,7 +419,7 @@ def generate_command(argv: list[str]) -> int:
     if fetch_requested or not source_spec.is_file():
         fetch_command = [
             sys.executable,
-            "-m", "devflow.test_api.fetch_local_openapi",
+            "-m", "devflow.bru_api.fetch_local_openapi",
             "--project-root", str(qa_root.parent),
             "--output", str(source_spec),
             "--timeout", str(args.timeout),
@@ -597,7 +597,7 @@ def generate_command(argv: list[str]) -> int:
 
 
 def coverage_command(argv: list[str], reconcile: bool) -> int:
-    parser = argparse.ArgumentParser(prog=f"devflow api-test {'reconcile' if reconcile else 'check'}")
+    parser = argparse.ArgumentParser(prog=f"devflow bru-api {'reconcile' if reconcile else 'check'}")
     qa_root_argument(parser)
     scope = parser.add_mutually_exclusive_group(required=True)
     scope.add_argument("--all", action="store_true")
@@ -626,7 +626,7 @@ def coverage_command(argv: list[str], reconcile: bool) -> int:
         return 1
     command = [
         sys.executable,
-        "-m", "devflow.test_api.check_api_coverage",
+        "-m", "devflow.bru_api.check_api_coverage",
         str(contracts),
         str(qa_root / BRUNO),
         "--openapi", str(openapi),
@@ -653,10 +653,10 @@ def run_command(argv: list[str]) -> int:
     extra = list(argv)
     if "-h" in extra or "--help" in extra:
         return run_child(
-            [sys.executable, "-m", "devflow.test_api.run_bruno", "--help"], relay_summary=False
+            [sys.executable, "-m", "devflow.bru_api.run_bruno", "--help"], relay_summary=False
         )
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--qa-root", type=Path, default=Path("test/api-test"))
+    parser.add_argument("--qa-root", type=Path, default=Path("test/bru-api"))
     known, remaining = parser.parse_known_args(extra)
     try:
         errors = script_bundle_errors(known.qa_root.resolve())
@@ -668,11 +668,11 @@ def run_command(argv: list[str]) -> int:
             print(f"ERROR: {error}", file=sys.stderr)
         return 1
     extra = ["--qa-root", str(known.qa_root.resolve()), *remaining]
-    return run_child([sys.executable, "-m", "devflow.test_api.run_bruno", *extra])
+    return run_child([sys.executable, "-m", "devflow.bru_api.run_bruno", *extra])
 
 
 def materialize_command(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="devflow api-test materialize")
+    parser = argparse.ArgumentParser(prog="devflow bru-api materialize")
     qa_root_argument(parser)
     parser.add_argument("--module")
     parser.add_argument("--check", action="store_true")
@@ -714,7 +714,7 @@ def materialize_command(argv: list[str]) -> int:
 
 def worker_command(argv: list[str], start: bool) -> int:
     command = "worker-start" if start else "worker-check"
-    parser = argparse.ArgumentParser(prog=f"devflow api-test {command}")
+    parser = argparse.ArgumentParser(prog=f"devflow bru-api {command}")
     qa_root_argument(parser)
     parser.add_argument("--module", required=True)
     if not start:
@@ -742,7 +742,7 @@ def worker_command(argv: list[str], start: bool) -> int:
 
 
 def aggregate_command(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="devflow api-test aggregate")
+    parser = argparse.ArgumentParser(prog="devflow bru-api aggregate")
     qa_root_argument(parser)
     args = parser.parse_args(argv)
     try:
@@ -763,7 +763,7 @@ def aggregate_command(argv: list[str]) -> int:
 
 
 def preflight_command(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="devflow api-test preflight", add_help=False)
+    parser = argparse.ArgumentParser(prog="devflow bru-api preflight", add_help=False)
     qa_root_argument(parser)
     known, remaining = parser.parse_known_args(argv)
     qa_root = known.qa_root.resolve()
@@ -802,7 +802,7 @@ def preflight_command(argv: list[str]) -> int:
     check = subprocess.run(
         [
             sys.executable,
-            "-m", "devflow.test_api.check_api_coverage",
+            "-m", "devflow.bru_api.check_api_coverage",
             str(contracts),
             str(qa_root / BRUNO),
             "--openapi", str(openapi),
@@ -835,7 +835,7 @@ def preflight_command(argv: list[str]) -> int:
         print("ERROR: static coverage validation failed", file=sys.stderr)
         return check.returncode or 1
     options = {value.split("=", 1)[0] for value in remaining if value.startswith("--")}
-    command = [sys.executable, "-m", "devflow.test_api.runtime_preflight", *remaining]
+    command = [sys.executable, "-m", "devflow.bru_api.runtime_preflight", *remaining]
     if "--qa-root" not in options:
         command.extend(["--qa-root", str(qa_root)])
     if "--execution-config" not in options:
@@ -856,7 +856,7 @@ def preflight_command(argv: list[str]) -> int:
 
 
 def scripts_command(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="devflow api-test scripts")
+    parser = argparse.ArgumentParser(prog="devflow bru-api scripts")
     parser.add_argument(
         "action",
         nargs="?",
@@ -875,7 +875,7 @@ def scripts_command(argv: list[str]) -> int:
     if args.action == "status":
         if args.phase or args.completion_report or args.tests_adapted or args.rules or args.business_repo:
             parser.error("version options require a version-* action")
-        print(f"shared runtime active; api-test schema={CONTRACT_SCHEMA_VERSION}")
+        print(f"shared runtime active; bru-api schema={CONTRACT_SCHEMA_VERSION}")
         return 0
     options: list[str]
     if args.action == "version-init":
@@ -904,7 +904,7 @@ def scripts_command(argv: list[str]) -> int:
 
 def mock_data_command(argv: list[str], *, clean: bool) -> int:
     action = "clean" if clean else "generate"
-    parser = argparse.ArgumentParser(prog=f"devflow api-test mock-data-{action}")
+    parser = argparse.ArgumentParser(prog=f"devflow bru-api mock-data-{action}")
     qa_root_argument(parser)
     parser.add_argument(
         "--module", action="append", default=[],
@@ -928,7 +928,7 @@ def mock_data_command(argv: list[str], *, clean: bool) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    parser = argparse.ArgumentParser(prog="devflow api-test")
+    parser = argparse.ArgumentParser(prog="devflow bru-api")
     commands = (
         "init", "understand", "generate", "materialize", "check", "run", "preflight", "reconcile",
         "aggregate", "worker-start", "worker-check", "mock-data-generate", "mock-data-clean", "scripts",
@@ -961,7 +961,7 @@ def main(argv: list[str] | None = None) -> int:
     if command == "preflight":
         if "-h" in remainder or "--help" in remainder:
             return run_child(
-                [sys.executable, "-m", "devflow.test_api.runtime_preflight", "--help"], relay_summary=False
+                [sys.executable, "-m", "devflow.bru_api.runtime_preflight", "--help"], relay_summary=False
             )
         return preflight_command(remainder)
     return scripts_command(remainder)

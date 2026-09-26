@@ -10,7 +10,7 @@ constraints but may not relax them.
 - The only console entry point is `devflow = devflow.cli:console_main`.
   `python -m devflow` calls that same entry point.
 - Shared contracts live in `devflow/core/`; domain modules live in
-  `devflow/test_api/`, `devflow/test_e2e/`, and `devflow/doc_biz_flow/`.
+  `devflow/bru_api/`, `devflow/test_e2e/`, and `devflow/doc_biz_flow/`.
   The installable Skills live under `skills/<category>/<skill-name>/`; they are
   installed under `~/.agents/skills/devflow/<category>/<skill-name>/`.
 - Commands use static registration. Do not add dynamic plugin discovery,
@@ -29,7 +29,7 @@ Pipelines default to JSON, TTYs to Markdown, progress goes to stderr, and
 large results return a summary plus an authoritative path unless `--full` is
 requested. Domain schema versions are independent of the tool version.
 
-The active domains are `api-test`, `e2e`, and `biz-flow`. Preserve their
+The active domains are `bru-api`, `e2e`, and `biz-flow`. Preserve their
 existing business, safety, ownership, and report semantics while changing only
 the package, CLI, Skill, state, install, and release structure.
 

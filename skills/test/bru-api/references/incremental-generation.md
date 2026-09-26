@@ -3,7 +3,7 @@
 Run:
 
 ```bash
-devflow api-test generate --openapi qa/contracts/openapi.json --design-root docs/design --incremental
+devflow bru-api generate --openapi qa/contracts/openapi.json --design-root docs/design --incremental
 ```
 
 `qa/contracts/generation-state.yaml` records the OpenAPI and design-document SHAs, stable endpoint

@@ -6,10 +6,10 @@ The generator always parses a local specification. A checked-in file is preferre
 
 1. Use the user-provided local path.
 2. Search the target repository for the checked-in names below.
-3. If neither exists, let `devflow api-test generate` perform its loopback recovery attempt:
+3. If neither exists, let `devflow bru-api generate` perform its loopback recovery attempt:
 
    ```bash
-   devflow api-test generate --qa-root qa --design-root docs/design
+   devflow bru-api generate --qa-root qa --design-root docs/design
    ```
 
    The helper detects local TCP listeners and probes only `127.0.0.1`, `localhost`, or `::1`, trying IPv4 before IPv6 on the same port. Use `--base-url http://127.0.0.1:8080` or `--port 8080` when the listener cannot be discovered automatically, and add `--path /your/openapi.json` when the application uses a non-standard documentation path. It tries common JSON/YAML documentation paths, validates the response, and writes the result atomically. Contract identity ignores deployment-only `servers`, Swagger `host`/`schemes`, and collection provenance while retaining paths, components, security, and `basePath`. If different local services still expose different contracts, it blocks instead of silently selecting one; rerun with an explicit base URL/path.
