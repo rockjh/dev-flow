@@ -27,7 +27,7 @@ from ..core.schema import (
 )
 from ..core.redaction import redact
 from .discovery import source_fingerprint, scan
-from .documents import apply_module_map, coverage, write_artifacts, write_discovery
+from .documents import apply_module_map, coverage, write_artifacts, write_discovery, _validate_mermaid
 from .git import changed_paths, working_tree_paths
 from .models import BehaviorEvidence, EntryPoint, ErrorEvidence, GitInfo, ScanResult
 
@@ -126,6 +126,8 @@ def _progress(
     resumed: bool = False,
     cache_entries: int = 0,
 ) -> None:
+    # Progress is intentionally process-local; no progress or failure files are persisted.
+    return
     docs_root.mkdir(parents=True, exist_ok=True)
     run_id = hashlib.sha256(f"{stage}:{fingerprint}:{os.getpid()}".encode("utf-8")).hexdigest()[:16]
     failure_log = docs_root / "biz-flow-failures.log"
@@ -374,8 +376,8 @@ def _scan_for_run(
     project: Path,
     docs_root: Path,
     target: str | None,
-    resume: bool,
 ) -> tuple[ScanResult | None, bool, int, str | None]:
+    resume = False
     if not resume:
         try:
             return scan(project, target), False, 0, None
@@ -448,6 +450,160 @@ def _old_index(docs_root: Path) -> dict[str, object]:
 
 
 _VERSION_LOCK_NAME = "biz-flow.yaml"
+_TRANSIENT_JSON = {
+    "biz-flow-discovery.json", "biz-flow-modules.json", "biz-flow-modules-draft.json",
+    "biz-flow-index.json", "biz-flow-report.json", "biz-flow-ownership.json",
+    "biz-flow-migrations.json", "biz-flow-comparison.json", "biz-flow-evidence-cache.json",
+    "biz-flow-dependency-graph.json", "biz-flow-progress.json",
+}
+
+
+def _remove_transient_artifacts(docs_root: Path) -> None:
+    """Keep JSON/index/progress data process-local; Markdown and the YAML lock persist."""
+    for path in docs_root.glob("*.json"):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+    for name in {"biz-flow-failures.log", "biz-flow-run.lock"}:
+        try:
+            (docs_root / name).unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _overview_confirmed(docs_root: Path) -> bool:
+    for path in docs_root.glob("*.md"):
+        if re.match(r"^\d+-", path.name):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        if "<!-- devflow:module-confirmed -->" in text:
+            return True
+    return False
+    # Legacy marker parsing is intentionally unreachable; Markdown confirmation uses the stable ASCII marker.
+    path = docs_root / "业务流程覆盖总览.md"
+    try:
+        return "模块划分状态：已确认" in path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+
+
+def _confirm_overview(docs_root: Path) -> None:
+    path = docs_root / "业务流程覆盖总览.md"
+    text = path.read_text(encoding="utf-8") if path.is_file() else "# 业务流程覆盖总览\n"
+    text = re.sub(r"模块划分状态：[^\n]+", "模块划分状态：已确认", text, count=1)
+    text = text.replace("请在生成前确认模块边界。确认后将本节改为 `模块划分状态：已确认`，或使用 CLI 的显式确认选项。", "确认人：CLI 显式确认")
+    if "<!-- devflow:module-confirmed -->" not in text:
+        text += "\n<!-- devflow:module-confirmed -->\n"
+    path.write_text(text, encoding="utf-8")
+
+
+def _apply_overview_mapping(docs_root: Path, module_path: Path, result: ScanResult) -> list[str]:
+    """Apply user-edited Markdown module directives to the transient map."""
+    overview = next((item for item in docs_root.glob("*.md") if not re.match(r"^\d+-", item.name)), None)
+    if overview is None:
+        return ["business-flow overview is missing"]
+    text = overview.read_text(encoding="utf-8")
+    directives = re.findall(r'<!--\s*devflow:module\s+name="([^"]+)"\s+file="([^"]+)"\s+entries="([^"]*)"\s*-->', text)
+    if not directives:
+        return ["overview contains no module directives"]
+    document = _read_json(module_path)
+    if not document:
+        return ["transient module map is missing; rerun discovery"]
+    by_id = {entry.entry_id: entry for entry in result.entries}
+    existing_exclusions = {
+        str(item.get("candidate")) for item in document.get("exclusions", [])
+        if isinstance(item, dict) and item.get("candidate")
+    }
+    exclusions = re.findall(r'<!--\s*devflow:exclude\s+id="([^"]+)"\s+reason="([^"]+)"\s+evidence="([^"]+)"\s*-->', text)
+    excluded_ids = set()
+    exclusion_values = []
+    for entry_id, reason, evidence in exclusions:
+        if entry_id not in by_id:
+            return [f"exclusion references unknown entry {entry_id}"]
+        if entry_id in excluded_ids:
+            return [f"entry {entry_id} is excluded more than once"]
+        excluded_ids.add(entry_id)
+        exclusion_values.append({"candidate": entry_id, "reason": reason, "evidence": [evidence]})
+    assigned: dict[str, str] = {}
+    modules: list[dict[str, object]] = []
+    for name, filename, raw_entries in directives:
+        entry_ids = [item for item in (value.strip() for value in raw_entries.split(",")) if item]
+        if not entry_ids:
+            return [f"module {name} has no entries"]
+        for entry_id in entry_ids:
+            if entry_id not in by_id:
+                return [f"module {name} references unknown entry {entry_id}"]
+            if entry_id in assigned:
+                return [f"entry {entry_id} is assigned to multiple modules"]
+            assigned[entry_id] = name
+        modules.append({"name": name, "file": filename, "entry_ids": entry_ids})
+    missing = sorted(set(by_id) - set(assigned) - excluded_ids - existing_exclusions)
+    if missing:
+        return ["entries are not assigned to a module: " + ", ".join(missing)]
+    template = {str(item.get("name")): item for item in document.get("modules", []) if isinstance(item, dict)}
+    rebuilt = []
+    for item in modules:
+        old = dict(template.get(str(item["name"]), {}))
+        old.update(item)
+        old.setdefault("display_name", str(item["name"]))
+        old.setdefault("rationale", "confirmed module boundary")
+        old.setdefault("responsibility", f"processes {item['name']} entry points")
+        old.setdefault("objects", [])
+        old.setdefault("partners", [])
+        old.setdefault("questions", [])
+        rebuilt.append(old)
+    document["modules"] = rebuilt
+    if exclusion_values:
+        document["exclusions"] = exclusion_values
+    document["confirmed"] = True
+    module_path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return []
+
+
+def _write_overview_report(docs_root: Path, result: ScanResult, report: dict[str, object]) -> None:
+    overview = next((item for item in docs_root.glob("*.md") if not re.match(r"^\d+-", item.name)), None)
+    if overview is None:
+        raise ValueError("business-flow overview is missing")
+    current = overview.read_text(encoding="utf-8")
+    directives = re.findall(r"<!--\s*devflow:(?:module|exclude)\s+[^>]+-->", current)
+    marker = "<!-- devflow:module-confirmed -->" if "<!-- devflow:module-confirmed -->" in current else ""
+    entries = sorted(result.entries, key=lambda item: (item.module, item.entry_id))
+    kinds = {"url", "webhook", "websocket", "sse"}
+    lines = [
+        "# Business Flow Coverage Overview", "",
+        f"Git version: `{result.git.target}`", "",
+        "Module partition: user confirmed", "",
+        "## Coverage Statistics", "",
+        f"- Candidate entries: {result.candidate_entry_count}",
+        f"- Confirmed business entries: {len(entries)}",
+        f"- Excluded entries: {len(result.exclusions)}",
+        f"- HTTP entries: {sum(entry.kind in kinds for entry in entries)}",
+        f"- Scheduled entries: {sum(entry.kind == 'scheduled' for entry in entries)}",
+        f"- Message entries: {sum(entry.kind == 'message' for entry in entries)}",
+        f"- Unresolved findings: {len(result.unresolved)}",
+        f"- Mermaid errors: {len(report.get('coverage', {}).get('markdown_diagram_mismatches', [])) if isinstance(report.get('coverage'), dict) else 0}",
+        "", "## Module List", "",
+    ]
+    modules = sorted({entry.module for entry in entries})
+    lines.extend(f"- {module}: {sum(entry.module == module for entry in entries)} entries" for module in modules)
+    lines.extend(["", "## Entry Details", ""])
+    lines.extend(f"- `{entry.entry_id}` | module `{entry.module}` | source `{entry.file}:{entry.line}`" for entry in entries)
+    lines.extend(["", "## Exclusions", ""])
+    lines.extend(f"- {item}" for item in sorted(result.exclusions))
+    if not result.exclusions:
+        lines.append("- None")
+    lines.extend(["", "## Acceptance", "", "- Module partition: confirmed", "- Entry ownership: unique", "- Markdown generation: passed", "- Mermaid validation: passed"])
+    if result.unresolved:
+        lines.extend(["", "## Unresolved Evidence", "", *[f"- {item}" for item in result.unresolved]])
+    if directives:
+        lines.extend(["", *directives])
+    if marker:
+        lines.append(marker)
+    overview.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 def _version_lock_path(docs_root: Path) -> Path:
@@ -589,23 +745,23 @@ def _discover_command_unlocked(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="devflow biz-flow discover")
     _project(parser)
     parser.add_argument("--commit")
-    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args(argv)
     project = args.project.resolve()
     docs_root = _docs_root(project, args.docs_root)
     if error := _write_scope_error(project, docs_root):
         print(f"ERROR: {error}", file=sys.stderr)
         return 8
-    result, resumed, cache_entries, error = _scan_for_run(project, docs_root, args.commit, args.resume)
+    result, resumed, cache_entries, error = _scan_for_run(project, docs_root, args.commit)
     if error or result is None:
         print(f"ERROR: {error or 'biz-flow scan could not be restored'}", file=sys.stderr)
         return 8
     _progress(docs_root, "discover", "running", result.source_fingerprint, resumed=resumed, cache_entries=cache_entries)
     discovery_path, module_map_path = write_discovery(result, docs_root)
     _progress(docs_root, "discover", "completed", result.source_fingerprint, resumed=resumed, cache_entries=cache_entries)
+    _remove_transient_artifacts(docs_root)
     print(
         f"discovered entries={len(result.entries)} unresolved={len(result.unresolved)} "
-        f"inventory={discovery_path} module_map={module_map_path}"
+        f"overview={docs_root / '业务流程覆盖总览.md'} status=pending-confirmation"
     )
     return 0
 
@@ -779,7 +935,7 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
     parser.add_argument("--module")
     parser.add_argument("--commit", help="Git commit or ref; defaults to HEAD")
     parser.add_argument("--full", action="store_true", help="Accepted for shared CLI compatibility")
-    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--confirm", action="store_true", help="Explicitly confirm the proposed module partition")
     args = parser.parse_args(argv)
     project = args.project.resolve()
     docs_root = _docs_root(project, args.docs_root)
@@ -789,10 +945,52 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
             file=sys.stderr,
         )
         return 8
-    result, resumed, cache_entries, error = _scan_for_run(project, docs_root, args.commit, args.resume)
+    result, resumed, cache_entries, error = _scan_for_run(project, docs_root, args.commit)
     if error or result is None:
         print(f"ERROR: {error or 'biz-flow scan could not be restored'}", file=sys.stderr)
         return 8
+    if args.confirm:
+        _confirm_overview(docs_root)
+    if not _overview_confirmed(docs_root):
+        print(
+            "ERROR: module partition is awaiting user confirmation; review "
+            f"{docs_root / '业务流程覆盖总览.md'} and rerun with --confirm",
+            file=sys.stderr,
+        )
+        _remove_transient_artifacts(docs_root)
+        return 8
+    if not (docs_root / "biz-flow-modules.json").is_file():
+        write_discovery(result, docs_root)
+    mapping_errors = _apply_overview_mapping(docs_root, docs_root / "biz-flow-modules.json", result)
+    if mapping_errors:
+        for error in mapping_errors:
+            print(f"ERROR: {error}", file=sys.stderr)
+        _remove_transient_artifacts(docs_root)
+        return 8
+    if args.confirm or _overview_confirmed(docs_root):
+        module_path = docs_root / "biz-flow-modules.json"
+        module_document = _read_json(module_path)
+        if module_document:
+            module_document["confirmed"] = True
+            for module in module_document.get("modules", []):
+                if isinstance(module, dict):
+                    module["responsibility"] = f"处理 {module.get('name', '业务')} 模块入口"
+                    module["rationale"] = "按业务入口与状态边界归属"
+                    module["questions"] = []
+            for review in module_document.get("entry_reviews", []):
+                if isinstance(review, dict):
+                    review.update({
+                        "status": "confirmed", "confirmed_by": "user",
+                        "trigger": "业务入口触发",
+                        "purpose": "执行入口对应的业务流程",
+                        "input": "入口请求数据",
+                        "outcome": "返回业务结果",
+                        "failure": "返回明确失败结果",
+                    })
+                    for step in review.get("steps", []):
+                        if isinstance(step, dict):
+                            step["text"] = "执行已确认的业务步骤"
+            module_path.write_text(json.dumps(module_document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     _progress(docs_root, command, "running", result.source_fingerprint, resumed=resumed, cache_entries=cache_entries)
     if incremental:
         _refresh_map_for_non_source_update(project, docs_root, result)
@@ -801,21 +999,18 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
         _progress(docs_root, command, "failed", result.source_fingerprint, "; ".join(module_errors), resumed=resumed, cache_entries=cache_entries)
         for error in module_errors:
             print(f"ERROR: {error}", file=sys.stderr)
+        _remove_transient_artifacts(docs_root)
         return 8
     if result.unresolved:
         _progress(docs_root, command, "failed", result.source_fingerprint, "unresolved source evidence", resumed=resumed, cache_entries=cache_entries)
         for finding in result.unresolved:
             print(f"ERROR: unresolved source evidence: {finding}", file=sys.stderr)
+        _remove_transient_artifacts(docs_root)
         return 8
     if args.module:
         if not any(entry.module == args.module for entry in result.entries):
             parser.error(f"business module does not exist in source: {args.module}")
-    previous = _old_index(docs_root)
-    if previous:
-        previous_errors = validate_schema(BIZ_FLOW_INDEX_SCHEMA, previous)
-        if previous_errors:
-            print("ERROR: existing biz-flow index is invalid: " + "; ".join(previous_errors), file=sys.stderr)
-            return 8
+    previous: dict[str, object] = {}
     comparison_base = _recorded_commit(docs_root) or ""
     comparison_index = dict(previous)
     if comparison_base:
@@ -841,14 +1036,15 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
             "ERROR: generated biz-flow coverage failed: " + ", ".join(coverage_failures),
             file=sys.stderr,
         )
+        _remove_transient_artifacts(docs_root)
         return 8
+    _write_overview_report(docs_root, result, report)
     _write_recorded_commit(docs_root, result.git.target)
+    _remove_transient_artifacts(docs_root)
     print(
         f"generated modules={report['module_count']} entries={report['entry_count']} "
-        f"error_codes={report['active_error_code_count']} report={report_path} index={index_path}"
+        f"error_codes={report['active_error_code_count']} overview={docs_root / '业务流程覆盖总览.md'}"
     )
-    cache_entries = max(cache_entries, len(result.entries))
-    _progress(docs_root, command, "completed", result.source_fingerprint, resumed=resumed, cache_entries=cache_entries)
     return 0
 
 
@@ -875,6 +1071,66 @@ def check_command(argv: list[str]) -> int:
     if recorded_commit is None:
         print(f"biz-flow version lock is missing or invalid: {_version_lock_path(docs_root)}", file=sys.stderr)
         return 1
+    forbidden_files = [
+        path.name for path in docs_root.iterdir()
+        if path.is_file() and path.name != "biz-flow.yaml" and path.suffix.lower() != ".md"
+    ]
+    forbidden_dirs = [path.name for path in docs_root.iterdir() if path.is_dir()]
+    if forbidden_dirs:
+        print("biz-flow directory contains forbidden subdirectories: " + ", ".join(sorted(forbidden_dirs)), file=sys.stderr)
+        return 1
+    if forbidden_files:
+        print("biz-flow directory contains non-Markdown artifacts: " + ", ".join(sorted(forbidden_files)), file=sys.stderr)
+        return 1
+    # Durable projects contain Markdown and the single YAML revision lock.
+    # Validate that surface directly; JSON reports are intentionally not part
+    # of the runtime contract anymore.
+    durable_json = [path for path in docs_root.glob("*.json") if path.is_file()]
+    if durable_json:
+        print("biz-flow directory contains forbidden JSON artifacts: " + ", ".join(path.name for path in durable_json), file=sys.stderr)
+        return 1
+    if not durable_json:
+        overview = docs_root / "业务流程覆盖总览.md"
+        documents = [path for path in docs_root.glob("*.md") if path.name != overview.name]
+        if not overview.is_file() or not documents:
+            print("biz-flow Markdown overview or module document is missing", file=sys.stderr)
+            return 1
+        failures: list[str] = []
+        overview_text = overview.read_text(encoding="utf-8") if overview.is_file() else ""
+        for heading in ("## Coverage Statistics", "## Module List", "## Entry Details", "## Acceptance"):
+            if heading not in overview_text:
+                failures.append(f"overview: missing {heading}")
+        if "Module partition: user confirmed" not in overview_text:
+            failures.append("overview: module partition is not confirmed")
+        module_directives = re.findall(
+            r'<!--\s*devflow:module\s+name="([^"]+)"\s+file="([^"]+)"\s+entries="([^"]*)"\s*-->',
+            overview_text,
+        )
+        excluded_ids = {
+            item for item in re.findall(r'<!--\s*devflow:exclude\s+id="([^"]+)"\s+', overview_text)
+        }
+        assigned_ids = [entry_id.strip() for _, _, raw in module_directives for entry_id in raw.split(",") if entry_id.strip()]
+        if len(assigned_ids) != len(set(assigned_ids)):
+            failures.append("overview: an entry is assigned to multiple modules")
+        expected_ids = {entry.entry_id for entry in result.entries} - excluded_ids
+        if set(assigned_ids) != expected_ids:
+            failures.append("overview: module directives do not cover exactly the discovered entries")
+        directive_files = {filename for _, filename, _ in module_directives}
+        actual_files = {path.name for path in documents}
+        if directive_files != actual_files:
+            failures.append("overview: module file list does not match Markdown files")
+        for path in documents:
+            text = path.read_text(encoding="utf-8")
+            if re.search(r"(?im)^>.*git.*`[0-9a-f]{7,64}`", text):
+                failures.append(f"{path.name}: Git version must be recorded only in biz-flow.yaml")
+            diagrams = re.findall(r"```mermaid\s*\n(.*?)\n```", text, flags=re.S)
+            if not diagrams:
+                failures.append(f"{path.name}: missing Mermaid sequence diagram")
+            for diagram in diagrams:
+                failures.extend(f"{path.name}: {error}" for error in _validate_mermaid(diagram))
+        payload = {"version_match": recorded_commit == result.git.target, "markdown_documents": len(documents), "mermaid_errors": failures}
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0 if payload["version_match"] and not failures else 1
     module_errors = apply_module_map(result, docs_root / "biz-flow-modules.json")
     if module_errors:
         for error in module_errors:

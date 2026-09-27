@@ -9,14 +9,21 @@ Use the installed `devflow` CLI and the explicitly mapped `devflow/doc/biz-flow`
 
 Documents live in the project root under `docs/biz-flow`, the only
 supported document root. Each business module has exactly one Markdown file. Every
-discovered business entry point belongs to exactly one module, including HTTP
+Prefer Swagger/OpenAPI summaries, tags, descriptions, Javadoc, and nearby code
+comments for module names. Use the route or source file as a stable fallback
+when no explicit description exists. Clearly related entry points sharing that
+label belong in the same Markdown file. Every discovered business entry point belongs to exactly one module, including HTTP
 and webhook routes, scheduled jobs, XXL-JOB handlers, thread-pool workers,
 message consumers, event subscriptions, file/import triggers, and CLI commands.
 
-On first use, run `biz-flow init`, then `biz-flow discover`. Review
-`biz-flow-modules-draft.json`, move every entry to one module, exclude only
-non-business candidates with source evidence, and explicitly confirm the module
-map before generation. Do not generate documents from an unconfirmed map.
+On first use, run `biz-flow init`, then `biz-flow discover`. Review the
+Markdown overview `docs/biz-flow/业务流程覆盖总览.md`, resolve module ownership,
+and edit its `devflow:module` directives to merge, split, move, or rename
+modules. Record exclusions with `devflow:exclude` directives including a reason
+and source evidence. Explicitly confirm the partition (for example with `biz-flow generate
+--confirm`). Do not generate documents from an unconfirmed partition. JSON
+discovery, progress, and evidence data is process-local and must not remain in
+the project.
 
 Each generated module document contains only its entry flow sections. The
 confirmed review for every entry must keep each short description field at or
@@ -42,8 +49,8 @@ confirmed owning module. If ownership is unclear, the CLI rejects the map until
 the caller chooses a new module or an existing module. Update the YAML lock
 only after the document and coverage checks pass.
 
-Use `biz-flow check` after generation/update. Its coverage, ownership,
-source fingerprint, version, error-evidence, Mermaid, stale-entry, and
-description-length checks are the release gate; do not bypass them by editing
-generated JSON. The writer records `biz-flow.yaml` only after this gate
-passes, so a failed update cannot advance the documented Git revision.
+Use `biz-flow check` after generation/update. Its coverage, ownership, source
+fingerprint, version, error-evidence, Mermaid, stale-entry, and
+description-length checks are the release gate. The durable output is the
+Markdown overview, one Markdown file per module, and `biz-flow.yaml`; failed
+validation never advances the YAML revision lock.

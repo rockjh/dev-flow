@@ -78,7 +78,8 @@ def _required_control_counts(scan: ScanResult, entry: EntryPoint) -> tuple[int, 
 
 
 def _slug(value: str) -> str:
-    return re.sub(r"[^a-z0-9-]+", "-", value.lower()).strip("-") or "common"
+    # Keep the source comment's words, including CJK, in the stable filename.
+    return re.sub(r"[^\w-]+", "-", value.strip().lower(), flags=re.UNICODE).strip("-_") or "module"
 
 
 def _display(value: str) -> str:
@@ -908,6 +909,55 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
     # Keep a complete parsed-evidence snapshot so a same-fingerprint resume can
     # rebuild the scan result without parsing the source tree again.
     write_json(docs_root / "biz-flow-evidence-cache.json", _cache_payload(scan))
+    # The JSON objects above are an implementation detail of one invocation.
+    # The durable review surface is Markdown; callers remove the transient
+    # files before returning to the operator.
+    overview = docs_root / "业务流程覆盖总览.md"
+    previously_confirmed = False
+    try:
+        previously_confirmed = "<!-- devflow:module-confirmed -->" in overview.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        pass
+    if overview.is_file():
+        try:
+            previously_confirmed = "模块划分状态：已确认" in overview.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            previously_confirmed = False
+    status = "已确认" if module_map["confirmed"] or previously_confirmed else "待用户确认"
+    existing_directives: list[str] = []
+    try:
+        existing_text = overview.read_text(encoding="utf-8") if overview.is_file() else ""
+        existing_directives = re.findall(r"<!--\s*devflow:module\s+[^>]+-->", existing_text)
+    except (OSError, UnicodeError):
+        pass
+    generated_directives = [
+        f'<!-- devflow:module name="{module["name"]}" file="{module["file"]}" entries="{",".join(module["entry_ids"])}" -->'
+        for module in module_map["modules"]
+    ]
+    generated_directives.extend(
+        f'<!-- devflow:exclude id="{item["candidate"]}" reason="{item["reason"]}" evidence="{item["evidence"][0]}" -->'
+        for item in module_map.get("exclusions", [])
+        if isinstance(item, dict) and item.get("candidate") and item.get("reason") and item.get("evidence")
+    )
+    machine_lines = existing_directives or generated_directives
+    module_lines = machine_lines + [
+        f"- {module['name']}：{module['responsibility']}；入口 {len(module['entry_ids'])} 个 "
+        f"（{', '.join(f'`{entry_id}`' for entry_id in module['entry_ids'])}）；文件 `{module['file']}`"
+        for module in module_map["modules"]
+    ] or ["- 未发现候选业务入口"]
+    confirmation_marker = "<!-- devflow:module-confirmed -->\n" if previously_confirmed else ""
+    overview.write_text(
+        "# 业务流程覆盖总览\n\n"
+        f"Git 版本：`{scan.git.target}`\n\n"
+        f"模块划分状态：{status}\n\n"
+        "## 模块候选\n\n" + "\n".join(module_lines) + "\n\n"
+        "## 确认记录\n\n"
+        "请在生成前确认模块边界。确认后将本节改为 `模块划分状态：已确认`，或使用 CLI 的显式确认选项。\n",
+        encoding="utf-8",
+    )
+    if confirmation_marker:
+        with overview.open("a", encoding="utf-8") as stream:
+            stream.write(confirmation_marker)
     return discovery_path, module_map_path
 
 
@@ -1335,8 +1385,6 @@ def render_module(
     lines = [
         f"<!-- biz-flow-module: {module} -->",
         "",
-        f"> \u751f\u6548 Git \u7248\u672c\uff1a`{git.target}`{dirty}",
-        "",
     ]
     lines.extend(_entry_text(entry) for entry in entries)
     return "\n".join(lines).rstrip() + "\n"
@@ -1344,6 +1392,10 @@ def render_module(
 
 def _update_version_only(path: Path, git: GitInfo) -> None:
     canonical = path.read_text(encoding="utf-8")
+    cleaned = re.sub(r"^>.*Git.*`[0-9a-fA-F]{7,64}`.*\n?", "", canonical, flags=re.MULTILINE)
+    if cleaned != canonical:
+        path.write_text(redact(cleaned), encoding="utf-8")
+        return
     updated = re.sub(
         r"^> 生效 Git 版本：\s*`[^`]+`.*$",
         f"> 生效 Git 版本：`{git.target}`" + ("；包含未提交变更" if git.includes_uncommitted else ""),
@@ -1411,7 +1463,6 @@ def _markdown_coverage(
     fact_mismatches: list[str] = []
     version_mismatches: list[str] = []
     marker = re.compile(r"^<!-- biz-flow-entry: (.+) -->\s*$", re.MULTILINE)
-    expected_commit = str(index.get("effective_git", {}).get("commit", ""))
     for module in modules:
         name = str(module.get("name", ""))
         text = text_by_module.get(name, "")
@@ -1433,16 +1484,6 @@ def _markdown_coverage(
         }
         expected_ids = {str(entry.get("id", "")) for entry in module_entries}
         stale_entries.extend(sorted(set(sections) - expected_ids))
-        strict_version_marker = re.search(
-            r"^>\s+[^`\r\n]*Git[^`\r\n]*`([0-9a-fA-F]{7,64})`",
-            text,
-            re.MULTILINE,
-        )
-        if not strict_version_marker or strict_version_marker.group(1) != expected_commit:
-            if name not in version_mismatches:
-                version_mismatches.append(name)
-        elif name in version_mismatches:
-            version_mismatches.remove(name)
         if sum(section.count("sequenceDiagram") for section in sections.values()) != len(module_entries):
             diagram_mismatches.append(name)
         for entry in module_entries:

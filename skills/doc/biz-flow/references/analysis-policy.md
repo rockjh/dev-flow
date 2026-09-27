@@ -8,7 +8,7 @@ Inspect framework configuration, annotations/decorators, route registration, ser
 
 For each entry retain: type, method/topic/job/event/file identifier, handler, source location, owning module, and the document file. A route may have only one primary owner. A cross-module call is a dependency in the owner document.
 
-`biz-flow-modules.json` is the review boundary. Resolve every discovery finding with code locations, use `entry_overrides` when static analysis found the entry but not its exact metadata or evidence, add scanner misses through `additional_entries`, and exclude non-business candidates only with reason and source evidence. Re-run discovery after source/config changes; confirmation from a different source fingerprint is invalid.
+`业务流程覆盖总览.md` is the review boundary. Resolve every discovery finding with code locations, record ownership decisions in the Markdown module documents, and exclude non-business candidates only with reason and source evidence. Re-run discovery after source/config changes; confirmation from a different source fingerprint is invalid. JSON scan and evidence structures are process-local and must not be persisted.
 
 ## Call-chain and error review
 

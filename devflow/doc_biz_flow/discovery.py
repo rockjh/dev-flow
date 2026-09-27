@@ -54,7 +54,42 @@ IGNORED_EXTERNAL_CALLS = {
 }
 
 
-def _module_name(relative: Path, identifier: str) -> str:
+def _comment_label(text: str, line: int) -> str:
+    """Return the nearest contiguous source comment before an entry."""
+    lines = text.splitlines()
+    index = max(0, line - 2)
+    comments: list[str] = []
+    while index >= 0:
+        value = lines[index].strip()
+        if not value:
+            if comments:
+                break
+            index -= 1
+            continue
+        annotation = re.search(
+            r"@(?:Operation|ApiOperation|ApiDescription|Tag|Api)\b[^\n]*(?:summary|value|name|description)\s*=\s*[\"']([^\"']+)",
+            value,
+            re.I,
+        )
+        if annotation:
+            comments.append(annotation.group(1).strip())
+            index -= 1
+            continue
+        if value.startswith(("#", "//", "///", "/*", "*", "*/")):
+            value = re.sub(r"^(?:#|//+|/\*+|\*+/?)\s*", "", value).strip()
+            value = re.sub(r"^@(?:module|business|domain)\s*[:=]?\s*", "", value, flags=re.I)
+            if value:
+                comments.append(value)
+            index -= 1
+            continue
+        break
+    return " ".join(reversed(comments)).strip()
+
+
+def _module_name(relative: Path, identifier: str, text: str = "", line: int = 0) -> str:
+    comment = _comment_label(text, line) if text and line else ""
+    if comment:
+        return comment
     parts = [part for part in relative.parts[:-1] if part.lower() not in {"src", "app", "api", "controller", "controllers", "service", "services"}]
     route_parts = [part for part in identifier.split(" ", 1)[-1].strip("/").split("/") if part]
     route_parts = [part for part in route_parts if part.lower() not in {"api", "admin", "public", "internal", "private"} and not re.fullmatch(r"v\d+", part, re.I)]
@@ -1099,7 +1134,7 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
                     handler=handler,
                     file=relative,
                     line=line,
-                    module=_module_name(Path(relative), identifier),
+                    module=_module_name(Path(relative), identifier, source_texts.get(relative, ""), line),
                     source=relative,
                     functions=functions,
                     errors=unique_errors,

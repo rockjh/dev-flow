@@ -240,16 +240,16 @@ COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "biz-flow.init": {"options": {"--project": "path", "--docs-root": "path"}},
     "biz-flow.discover": {
-        "options": {"--project": "path", "--docs-root": "path", "--commit": "string", "--resume": "boolean"}
+        "options": {"--project": "path", "--docs-root": "path", "--commit": "string"}
     },
     "biz-flow.generate": {
         "options": {
-            "--project": "path", "--docs-root": "path", "--module": "string", "--commit": "string", "--resume": "boolean",
+            "--project": "path", "--docs-root": "path", "--module": "string", "--commit": "string", "--confirm": "boolean",
         }
     },
     "biz-flow.update": {
         "options": {
-            "--project": "path", "--docs-root": "path", "--module": "string", "--commit": "string", "--resume": "boolean",
+            "--project": "path", "--docs-root": "path", "--module": "string", "--commit": "string", "--confirm": "boolean",
         }
     },
     "biz-flow.check": {
