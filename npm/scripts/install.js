@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-const { cpSync, existsSync, mkdirSync, readdirSync } = require("node:fs");
+const { cpSync, existsSync, mkdirSync, readdirSync, rmSync } = require("node:fs");
 const { homedir } = require("node:os");
 const { join } = require("node:path");
 const { spawnSync } = require("node:child_process");
@@ -42,6 +42,7 @@ function install() {
 
   const skillHome = process.env.DEVFLOW_SKILL_HOME || join(homedir(), ".agents", "skills");
   const destination = join(skillHome, "devflow");
+  rmSync(destination, { recursive: true, force: true });
   mkdirSync(destination, { recursive: true });
   cpSync(join(root, "skills", "devflow"), destination, { recursive: true, force: true });
 

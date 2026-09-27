@@ -1,4 +1,4 @@
 interface:
   display_name: "biz-flow-doc-generator"
   short_description: "Generate confirmed, source-backed business flow Markdown"
-  default_prompt: "Use the installed devflow CLI and route only biz-flow requests to devflow/doc/biz-flow. Read only the references required for the selected biz-flow workflow. Preserve scoped schemas, locks, ownership, safety, redaction, and artifact rules; stop when evidence is missing, the target is unsafe or ambiguous, or a validation gate fails; return the redacted authoritative report or artifact path with its exit status."
+  default_prompt: "Use the installed devflow CLI and route only biz-flow requests to devflow/doc/biz-flow. After discover, show the user the module partition proposal with NN-Chinese filenames, entry counts and exclusions, then wait for explicit confirmation or apply requested edits and ask again. Never treat --confirm as user confirmation. Preserve scoped schemas, locks, ownership, safety, redaction, and artifact rules; stop when evidence is missing, the target is unsafe or ambiguous, or a validation gate fails; return the redacted authoritative report or artifact path with its exit status."

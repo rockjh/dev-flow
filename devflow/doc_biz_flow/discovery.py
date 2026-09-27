@@ -87,14 +87,13 @@ def _comment_label(text: str, line: int) -> str:
 
 
 def _module_name(relative: Path, identifier: str, text: str = "", line: int = 0) -> str:
-    comment = _comment_label(text, line) if text and line else ""
-    if comment:
-        return comment
+    # Module ownership comes from source/package boundaries, never prose.
     parts = [part for part in relative.parts[:-1] if part.lower() not in {"src", "app", "api", "controller", "controllers", "service", "services"}]
-    route_parts = [part for part in identifier.split(" ", 1)[-1].strip("/").split("/") if part]
-    route_parts = [part for part in route_parts if part.lower() not in {"api", "admin", "public", "internal", "private"} and not re.fullmatch(r"v\d+", part, re.I)]
-    route = route_parts[0] if route_parts else ""
-    candidate = route if route and not route.startswith("{") else (parts[-1] if parts else relative.stem)
+    candidate = parts[-1] if parts else relative.stem
+    if not candidate or candidate.lower() in {"main", "index", "app"}:
+        route_parts = [part for part in identifier.split(" ", 1)[-1].strip("/").split("/") if part]
+        route_parts = [part for part in route_parts if part.lower() not in {"api", "admin", "public", "internal", "private"} and not re.fullmatch(r"v\d+", part, re.I)]
+        candidate = route_parts[0] if route_parts else relative.stem
     candidate = re.sub(r"[^A-Za-z0-9_-]+", "-", candidate).strip("-") or "公共能力"
     return candidate.replace("_", "-").lower()
 

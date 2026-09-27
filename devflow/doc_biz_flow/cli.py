@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -501,6 +502,19 @@ def _confirm_overview(docs_root: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _clear_confirmation_marker(docs_root: Path) -> None:
+    for path in docs_root.glob("*.md"):
+        if re.match(r"^\d+-", path.name):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+            updated = text.replace("<!-- devflow:module-confirmed -->", "")
+            if updated != text:
+                path.write_text(updated, encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+
+
 def _apply_overview_mapping(docs_root: Path, module_path: Path, result: ScanResult) -> list[str]:
     """Apply user-edited Markdown module directives to the transient map."""
     overview = next((item for item in docs_root.glob("*.md") if not re.match(r"^\d+-", item.name)), None)
@@ -541,6 +555,20 @@ def _apply_overview_mapping(docs_root: Path, module_path: Path, result: ScanResu
                 return [f"entry {entry_id} is assigned to multiple modules"]
             assigned[entry_id] = name
         modules.append({"name": name, "file": filename, "entry_ids": entry_ids})
+    existing_signature = {
+        (str(item.get("name")), str(item.get("file")), tuple(sorted(str(value) for value in item.get("entry_ids", []))))
+        for item in document.get("modules", [])
+        if isinstance(item, dict)
+    }
+    proposed_signature = {
+        (str(item["name"]), str(item["file"]), tuple(sorted(str(value) for value in item["entry_ids"])))
+        for item in modules
+    }
+    if existing_signature != proposed_signature:
+        document["confirmed"] = False
+        module_path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        overview.write_text(overview.read_text(encoding="utf-8").replace("<!-- devflow:module-confirmed -->", ""), encoding="utf-8")
+        return ["module partition changed; review the proposal and explicitly confirm it again"]
     missing = sorted(set(by_id) - set(assigned) - excluded_ids - existing_exclusions)
     if missing:
         return ["entries are not assigned to a module: " + ", ".join(missing)]
@@ -589,7 +617,17 @@ def _write_overview_report(docs_root: Path, result: ScanResult, report: dict[str
         "", "## Module List", "",
     ]
     modules = sorted({entry.module for entry in entries})
-    lines.extend(f"- {module}: {sum(entry.module == module for entry in entries)} entries" for module in modules)
+    directive_map = {
+        name: filename
+        for name, filename, _ in re.findall(
+            r'<!--\s*devflow:module\s+name="([^"]+)"\s+file="([^"]+)"\s+entries="([^"]*)"\s*-->',
+            current,
+        )
+    }
+    lines.extend(
+        f"- {module}: {sum(entry.module == module for entry in entries)} entries; file `{directive_map.get(module, '')}`"
+        for module in modules
+    )
     lines.extend(["", "## Entry Details", ""])
     lines.extend(f"- `{entry.entry_id}` | module `{entry.module}` | source `{entry.file}:{entry.line}`" for entry in entries)
     lines.extend(["", "## Exclusions", ""])
@@ -756,8 +794,25 @@ def _discover_command_unlocked(argv: list[str]) -> int:
         print(f"ERROR: {error or 'biz-flow scan could not be restored'}", file=sys.stderr)
         return 8
     _progress(docs_root, "discover", "running", result.source_fingerprint, resumed=resumed, cache_entries=cache_entries)
+    _clear_confirmation_marker(docs_root)
     discovery_path, module_map_path = write_discovery(result, docs_root)
     _progress(docs_root, "discover", "completed", result.source_fingerprint, resumed=resumed, cache_entries=cache_entries)
+    proposal = _read_json(module_map_path) or {}
+    print("module partition proposal:")
+    for module in proposal.get("modules", []):
+        if not isinstance(module, dict):
+            continue
+        entry_ids = [str(value) for value in module.get("entry_ids", [])]
+        print(
+            f"- {module.get('name')}: file={module.get('file')} entries={len(entry_ids)} "
+            f"[{', '.join(entry_ids)}]"
+        )
+    for exclusion in proposal.get("exclusions", []):
+        if isinstance(exclusion, dict):
+            print(
+                f"- excluded {exclusion.get('candidate')}: {exclusion.get('reason')} "
+                f"(evidence: {', '.join(map(str, exclusion.get('evidence', [])))})"
+            )
     _remove_transient_artifacts(docs_root)
     print(
         f"discovered entries={len(result.entries)} unresolved={len(result.unresolved)} "
@@ -949,12 +1004,10 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
     if error or result is None:
         print(f"ERROR: {error or 'biz-flow scan could not be restored'}", file=sys.stderr)
         return 8
-    if args.confirm:
-        _confirm_overview(docs_root)
     if not _overview_confirmed(docs_root):
         print(
             "ERROR: module partition is awaiting user confirmation; review "
-            f"{docs_root / '业务流程覆盖总览.md'} and rerun with --confirm",
+            f"{docs_root / '业务流程覆盖总览.md'} after explicit user confirmation",
             file=sys.stderr,
         )
         _remove_transient_artifacts(docs_root)
@@ -967,7 +1020,7 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
             print(f"ERROR: {error}", file=sys.stderr)
         _remove_transient_artifacts(docs_root)
         return 8
-    if args.confirm or _overview_confirmed(docs_root):
+    if _overview_confirmed(docs_root):
         module_path = docs_root / "biz-flow-modules.json"
         module_document = _read_json(module_path)
         if module_document:
@@ -1119,6 +1172,11 @@ def check_command(argv: list[str]) -> int:
         actual_files = {path.name for path in documents}
         if directive_files != actual_files:
             failures.append("overview: module file list does not match Markdown files")
+        for name, filename, _ in module_directives:
+            if not re.fullmatch(r"\d{2}-[^/]*[\u3400-\u9fff][^/]*\.md", filename):
+                failures.append(f"overview: module {name} file is not a Chinese NN filename: {filename}")
+            if not re.search(rf"(?m)^-\s+{re.escape(name)}:.*file\s+`{re.escape(filename)}`", overview_text):
+                failures.append(f"overview: Module List file mismatch for {name}")
         for path in documents:
             text = path.read_text(encoding="utf-8")
             if re.search(r"(?im)^>.*git.*`[0-9a-f]{7,64}`", text):
@@ -1128,7 +1186,14 @@ def check_command(argv: list[str]) -> int:
                 failures.append(f"{path.name}: missing Mermaid sequence diagram")
             for diagram in diagrams:
                 failures.extend(f"{path.name}: {error}" for error in _validate_mermaid(diagram))
-        payload = {"version_match": recorded_commit == result.git.target, "markdown_documents": len(documents), "mermaid_errors": failures}
+        payload = {
+            "version_match": recorded_commit == result.git.target,
+            "markdown_documents": len(documents),
+            "mermaid_errors": failures,
+            "mermaid_parser": "mmdc" if shutil.which("mmdc") else "fallback-structural",
+            "mermaid_parser_warning": "mmdc is not installed; only built-in structural validation was applied"
+            if not shutil.which("mmdc") else "",
+        }
         print(json.dumps(payload, ensure_ascii=False))
         return 0 if payload["version_match"] and not failures else 1
     module_errors = apply_module_map(result, docs_root / "biz-flow-modules.json")

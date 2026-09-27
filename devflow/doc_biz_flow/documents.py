@@ -82,6 +82,33 @@ def _slug(value: str) -> str:
     return re.sub(r"[^\w-]+", "-", value.strip().lower(), flags=re.UNICODE).strip("-_") or "module"
 
 
+_CJK_RE = re.compile(r"[\u3400-\u9fff]")
+
+
+def _chinese_module_filename(index: int, name: str) -> str:
+    """Return the canonical NN-Chinese-name.md module filename."""
+    chinese = "".join(re.findall(r"[\u3400-\u9fff]+", str(name)))
+    if not chinese:
+        chinese = "业务模块"
+    return f"{index:02d}-{chinese[:40]}.md"
+
+
+def _is_chinese_module_filename(value: object) -> bool:
+    raw = str(value or "").replace("\\", "/")
+    return bool(
+        re.fullmatch(r"\d{2}-[^/]+\.md", raw)
+        and _CJK_RE.search(raw)
+        and ".." not in Path(raw).parts
+    )
+
+
+def _mermaid_text(value: object, limit: int = 140) -> str:
+    """Make arbitrary evidence safe for Mermaid sequence labels."""
+    text = str(redact(value)).replace("\r", " ").replace("\n", " ")
+    text = re.sub(r"\s+", " ", text).replace(";", "；").strip()
+    return text[:limit]
+
+
 def _display(value: str) -> str:
     if value == "公共能力":
         return value
@@ -314,11 +341,11 @@ def _append_error(lines: list[str], error: ErrorEvidence) -> None:
 
 def _append_error(lines: list[str], error: ErrorEvidence) -> None:
     """Render optional async interruptions as opt; synchronous errors remain alt branches."""
-    condition = str(redact(error.condition)).replace("\n", " ")[:100]
-    consequence = str(redact(error.consequence)).replace("\n", " ")[:100]
+    condition = _mermaid_text(error.condition, 100)
+    consequence = _mermaid_text(error.consequence, 100)
     kind = "opt" if error.phase in {"async", "worker"} else "alt"
-    lines.append(f"{kind} {error.code}: {condition}")
-    lines.append(f"System-->>Caller: PROTOCOL_FAILURE; PERSISTED=false; DELIVERED=false; {consequence}")
+    lines.append(f"{kind} {_mermaid_text(error.code, 60)}: {condition}")
+    lines.append(f"System-->>Caller: {_mermaid_text('PROTOCOL_FAILURE; PERSISTED=false; DELIVERED=false; ' + consequence)}")
     lines.append("end")
 
 
@@ -337,8 +364,8 @@ def _diagram(entry: EntryPoint) -> str:
         alias = aliases.get(participant, "P" + str(len(aliases) + 1))
         aliases.setdefault(participant, alias)
         lines.append(f"participant {alias} as {participant}")
-    lines.append(f"Caller->>System: {entry.identifier}")
-    lines.append(f"System->>System: 进入 {entry.handler}")
+    lines.append(f"Caller->>System: {_mermaid_text(entry.identifier)}")
+    lines.append(f"System->>System: {_mermaid_text(f'进入 {entry.handler}')}")
     errors = sorted(entry.errors, key=lambda item: item.line)
     emitted_errors: set[int] = set()
     branch_number = 0
@@ -348,7 +375,7 @@ def _diagram(entry: EntryPoint) -> str:
             if index not in emitted_errors and error.line <= step_line:
                 _append_error(lines, error)
                 emitted_errors.add(index)
-        text = str(redact(step.text)).replace("\n", " ")[:120]
+        text = _mermaid_text(step.text, 120)
         participant = aliases.get(step.participant, "System")
         if step.kind == "alt":
             branch_number += 1
@@ -376,19 +403,18 @@ def _diagram(entry: EntryPoint) -> str:
     )
     lines.pop()
     lines.append(
-        f"System-->>Caller: PROTOCOL_SUCCESS; PERSISTED={str(entry.has_persistence).lower()}; "
-        f"DELIVERED={str(entry.has_async).lower()}; {str(redact(review.outcome))[:100]}"
+        f"System-->>Caller: PROTOCOL_SUCCESS； PERSISTED={str(entry.has_persistence).lower()}； "
+        f"DELIVERED={str(entry.has_async).lower()}； {str(redact(review.outcome))[:100]}"
     )
-    lines.append(f"Note over Caller,System: {str(redact(review.outcome))[:140]}")
-    lines.append(
-        "System-->>Caller: \u534f\u8bae\u6210\u529f; \u5931\u8d25\u5206\u652f\u53e6\u884c\u8bb0\u5f55; \u843d\u5e93/\u4e0d\u843d\u5e93; \u6295\u9012/\u4e0d\u6295\u9012 (PROTOCOL_SUCCESS, PROTOCOL_FAILURE)"
-    )
+    lines.append(f"Note over Caller,System: {_mermaid_text(review.outcome)}")
     lines.append("```")
     return "\n".join(lines)
 
 
 def _validate_mermaid(diagram: str) -> list[str]:
     """Validate the sequence subset emitted by this skill before claiming it renders."""
+    if ";" in diagram:
+        return ["ASCII semicolon is not allowed in Mermaid sequence labels"]
     lines = [line.strip() for line in diagram.splitlines() if line.strip()]
     if not lines or lines[0] != "sequenceDiagram":
         return ["missing sequenceDiagram header"]
@@ -544,17 +570,17 @@ def _module_files(
     used = set(old.values())
     result: dict[str, str] = {}
     for index, module in enumerate(sorted(modules)):
-        if preferred and safe_filename(preferred.get(module)):
+        if preferred and _is_chinese_module_filename(preferred.get(module)):
             result[module] = preferred[module]
             used.add(preferred[module])
             continue
-        if module in old:
+        if module in old and _is_chinese_module_filename(old[module]):
             result[module] = old[module]
             continue
-        candidate = f"{index:02d}-{_slug(module)}.md"
+        candidate = _chinese_module_filename(index, module)
         while candidate in used:
             index += 1
-            candidate = f"{index:02d}-{_slug(module)}.md"
+            candidate = _chinese_module_filename(index, module)
         used.add(candidate)
         result[module] = candidate
     return result
@@ -885,7 +911,7 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
                     for module in previous.get("modules", [])
                     if isinstance(module, dict) and module.get("name") == name
                 ), draft_module_facts(name, entry_ids)[0]),
-                "file": str(previous_modules.get(name, {}).get("file") or f"{index:02d}-{_slug(name)}.md"),
+                "file": str(previous_modules.get(name, {}).get("file") or _chinese_module_filename(index, name)),
                 "responsibility": str(previous_modules.get(name, {}).get("responsibility") or draft_module_facts(name, entry_ids)[1]),
                 "objects": [str(value) for value in previous_modules.get(name, {}).get("objects", [])] or draft_module_facts(name, entry_ids)[2],
                 "partners": [str(value) for value in previous_modules.get(name, {}).get("partners", [])] or draft_module_facts(name, entry_ids)[3],
@@ -1238,6 +1264,8 @@ def apply_module_map(scan: ScanResult, path: Path) -> list[str]:
             errors.append(f"module {name} has no stable file name")
         elif not filename.lower().endswith(".md"):
             errors.append(f"module {name} file must be Markdown: {filename}")
+        elif not _is_chinese_module_filename(filename):
+            errors.append(f"module {name} file must match NN-ChineseName.md: {filename}")
         elif (path.parent / filename).resolve().parent != path.parent.resolve():
             errors.append(f"module {name} file escapes docs root: {filename}")
         elif filename in module_files.values():
@@ -1523,7 +1551,7 @@ def _markdown_coverage(
                         if line.startswith("System-->>Caller:")
                     ]
                     if not any(
-                        "PROTOCOL_SUCCESS" in line
+                        "PROTOCOL_SUCCESS" in line and "PERSISTED=" in line and "DELIVERED=" in line
                         and re.search(r"(?:落库|不落库|PERSISTED=)", line)
                         and re.search(r"(?:投递|发送|不投递|DELIVERED=)", line)
                         for line in result_messages
@@ -1532,7 +1560,7 @@ def _markdown_coverage(
                             f"{entry_id}:mermaid:success-missing-persistence-or-delivery"
                         )
                     if entry.get("errors") and not any(
-                        "PROTOCOL_FAILURE" in line
+                        "PROTOCOL_FAILURE" in line and "PERSISTED=" in line and "DELIVERED=" in line
                         and re.search(r"(?:落库|不落库|PERSISTED=)", line)
                         and re.search(r"(?:投递|发送|不投递|DELIVERED=)", line)
                         for line in result_messages

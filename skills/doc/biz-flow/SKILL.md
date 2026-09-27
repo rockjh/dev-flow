@@ -54,3 +54,12 @@ fingerprint, version, error-evidence, Mermaid, stale-entry, and
 description-length checks are the release gate. The durable output is the
 Markdown overview, one Markdown file per module, and `biz-flow.yaml`; failed
 validation never advances the YAML revision lock.
+
+Module files must use the canonical `NN-中文模块名.md` form. The filename in
+each `devflow:module` directive, the `## Module List` row, and the actual file
+must match exactly. After `discover`, show the user the proposed module name,
+Chinese filename, entry count and IDs, and exclusions with reasons. Generation
+and update require the explicit `<!-- devflow:module-confirmed -->` marker
+recording that user confirmation; `--confirm` alone is not confirmation.
+Mermaid labels are sanitized by the CLI; ASCII semicolons are rejected and
+available Mermaid renderers are used for real parsing.
