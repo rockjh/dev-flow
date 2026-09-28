@@ -1685,6 +1685,9 @@ BIZ_FLOW_DISCOVERY_SCHEMA: dict[str, Any] = _object(
         "confirmed_binding_count": {"type": "integer", "minimum": 0},
         "confirmed_handler_count": {"type": "integer", "minimum": 0},
         "unresolved": STRING_LIST,
+        "module_suggestions": _array(_object({
+            "name": NONEMPTY_STRING, "entry_ids": STRING_LIST, "basis": NONEMPTY_STRING,
+        }, ("name", "entry_ids", "basis"))),
     }
 )
 
@@ -1705,7 +1708,7 @@ BIZ_FLOW_MODULE_MAP_SCHEMA: dict[str, Any] = _object(
         "entry_overrides": _array(_object({
             "id": NONEMPTY_STRING, "type": NONEMPTY_STRING, "identifier": NONEMPTY_STRING,
             "handler": NONEMPTY_STRING, "caller": NONEMPTY_STRING,
-            "input_summary": NONEMPTY_STRING, "core_capabilities": STRING_LIST,
+            "input_summary": NONEMPTY_STRING, "title": NONEMPTY_STRING, "core_capabilities": STRING_LIST,
             "errors": _array(BIZ_FLOW_ERROR_SCHEMA), "behaviors": _array(BIZ_FLOW_BEHAVIOR_SCHEMA),
         }, ("id",))),
         "additional_entries": _array(_object({

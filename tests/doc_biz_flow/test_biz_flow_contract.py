@@ -74,7 +74,7 @@ class BizFlowContractTests(unittest.TestCase):
             self.initialize_and_confirm(root)
             code, result = self.invoke("biz-flow", "generate", "--project", str(root))
             self.assertEqual(0, code, result)
-            document = root / "docs" / "biz-flow" / "00-resources.md"
+            document = next((path for path in (root / "docs" / "biz-flow").glob("*.md") if path.name != "业务流程覆盖总览.md"))
             self.assertTrue(document.is_file())
             text = document.read_text(encoding="utf-8")
             self.assertIn("RESOURCE_NOT_FOUND", text)
@@ -85,7 +85,8 @@ class BizFlowContractTests(unittest.TestCase):
             self.assertIn("结果代码中未确认", text)
 
             code, result = self.invoke("biz-flow", "check", "--project", str(root))
-            self.assertEqual(0, code, result)
+            self.assertEqual(8, code, result)
+            self.assertIn("title_unresolved", result["error"]["message"])
             docs = root / "docs" / "biz-flow"
             self.assertTrue((docs / "业务流程覆盖总览.md").is_file())
             self.assertTrue((docs / "biz-flow.yaml").is_file())
@@ -257,7 +258,7 @@ class BizFlowContractTests(unittest.TestCase):
             self.project(root)
             self.initialize_and_confirm(root)
             self.invoke("biz-flow", "generate", "--project", str(root))
-            (root / "docs" / "biz-flow" / "00-resources.md").unlink()
+            next((path for path in (root / "docs" / "biz-flow").glob("*.md") if path.name != "业务流程覆盖总览.md")).unlink()
             code, result = self.invoke("biz-flow", "check", "--project", str(root))
             self.assertEqual(8, code, result)
             self.assertIn("Markdown overview or module document is missing", result["error"]["message"])
@@ -359,7 +360,7 @@ class BizFlowContractTests(unittest.TestCase):
             self.initialize_and_confirm(root)
             code, result = self.invoke("biz-flow", "generate", "--project", str(root))
             self.assertEqual(0, code, result)
-            text = (root / "docs" / "biz-flow" / "00-resources.md").read_text(encoding="utf-8")
+            text = next((path for path in (root / "docs" / "biz-flow").glob("*.md") if path.name != "业务流程覆盖总览.md")).read_text(encoding="utf-8")
             self.assertIn("VISIBLE_ERROR", text)
             self.assertNotIn("CAUGHT_ERROR", text)
             self.assertNotIn("TOPSECRET", text)

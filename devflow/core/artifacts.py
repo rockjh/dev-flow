@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,20 @@ def state_root() -> Path:
 
 def write_json(path: Path, value: Any) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(redact(value), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    payload = json.dumps(redact(value), ensure_ascii=False, indent=2) + "\n"
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        Path(temporary_name).replace(path)
+    except Exception:
+        try:
+            Path(temporary_name).unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     return path
 
 

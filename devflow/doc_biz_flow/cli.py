@@ -26,11 +26,13 @@ from ..core.schema import (
     BIZ_FLOW_SCHEMA_VERSION,
     validate_schema,
 )
+from ..core.artifacts import write_json
 from ..core.redaction import redact
 from .discovery import source_fingerprint, scan
 from .documents import apply_module_map, coverage, write_artifacts, write_discovery, _validate_mermaid
 from .git import changed_paths, working_tree_paths
 from .models import BehaviorEvidence, EntryPoint, ErrorEvidence, GitInfo, ScanResult
+from .orchestration import build_agent_plan, validate_agent_plan
 
 
 _PROTECTED_NAMES = {"prod", "prd", "live", "production"}
@@ -115,6 +117,33 @@ def _write_scope_error(project: Path, docs_root: Path) -> str | None:
     if os.environ.get("DEVFLOW_PROTECTED", "").strip().casefold() in {"1", "true", "yes", "on"}:
         return "biz-flow writes are blocked by DEVFLOW_PROTECTED"
     return None
+
+
+def _markdown_snapshot(docs_root: Path) -> dict[str, bytes]:
+    return {
+        path.name: path.read_bytes()
+        for path in docs_root.glob("*.md")
+        if path.is_file()
+    }
+
+
+def _restore_markdown_snapshot(docs_root: Path, snapshot: dict[str, bytes]) -> None:
+    for path in docs_root.glob("*.md"):
+        if path.name not in snapshot:
+            path.unlink(missing_ok=True)
+    for name, content in snapshot.items():
+        temporary = docs_root / f".{name}.restore.tmp"
+        temporary.write_bytes(content)
+        temporary.replace(docs_root / name)
+
+
+def _safe_write_artifacts(result: ScanResult, docs_root: Path, snapshot: dict[str, bytes], **kwargs):
+    try:
+        return write_artifacts(result, docs_root, **kwargs)
+    except Exception:
+        _restore_markdown_snapshot(docs_root, snapshot)
+        _remove_transient_artifacts(docs_root)
+        raise
 
 
 def _progress(
@@ -326,6 +355,10 @@ def _cached_scan(docs_root: Path, project: Path, fingerprint: str) -> tuple[Scan
             has_async=bool(raw.get("has_async")),
             binding_confirmed=bool(raw.get("binding_confirmed", True)),
             handler_confirmed=bool(raw.get("handler_confirmed", True)),
+            title=str(raw.get("title", "")),
+            title_unresolved=bool(raw.get("title_unresolved", False)),
+            parent_entry_id=str(raw.get("parent_entry_id", "")),
+            submit_source=str(raw.get("submit_source", "")),
         ))
     try:
         git = GitInfo(
@@ -466,6 +499,11 @@ def _remove_transient_artifacts(docs_root: Path) -> None:
             path.unlink()
         except FileNotFoundError:
             pass
+    for path in docs_root.glob("*.tmp"):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
     for name in {"biz-flow-failures.log", "biz-flow-run.lock"}:
         try:
             (docs_root / name).unlink()
@@ -533,6 +571,9 @@ def _apply_overview_mapping(docs_root: Path, module_path: Path, result: ScanResu
         if isinstance(item, dict) and item.get("candidate")
     }
     exclusions = re.findall(r'<!--\s*devflow:exclude\s+id="([^"]+)"\s+reason="([^"]+)"\s+evidence="([^"]+)"\s*-->', text)
+    exclude_markers = re.findall(r"<!--\s*devflow:exclude\b.*?-->", text)
+    if len(exclusions) != len(exclude_markers):
+        return ["invalid devflow:exclude syntax; use id=\"...\" reason=\"...\" evidence=\"file:line\""]
     excluded_ids = set()
     exclusion_values = []
     for entry_id, reason, evidence in exclusions:
@@ -540,6 +581,11 @@ def _apply_overview_mapping(docs_root: Path, module_path: Path, result: ScanResu
             return [f"exclusion references unknown entry {entry_id}"]
         if entry_id in excluded_ids:
             return [f"entry {entry_id} is excluded more than once"]
+        source_file, separator, source_line = evidence.rpartition(":")
+        if not separator or not source_file or not source_line.isdigit() or not (1 <= int(source_line) <= result.source_lines.get(source_file, 0)):
+            return [f"exclusion {entry_id} evidence must be a valid scanned file:line: {evidence}"]
+        if any(entry_id in [value.strip() for value in raw.split(",")] for _, _, raw in directives):
+            return [f"excluded entry {entry_id} must not also appear in a devflow:module directive"]
         excluded_ids.add(entry_id)
         exclusion_values.append({"candidate": entry_id, "reason": reason, "evidence": [evidence]})
     assigned: dict[str, str] = {}
@@ -588,6 +634,16 @@ def _apply_overview_mapping(docs_root: Path, module_path: Path, result: ScanResu
     if exclusion_values:
         document["exclusions"] = exclusion_values
     document["confirmed"] = True
+    # The overview confirmation marker is the explicit partition confirmation.
+    # Promote only complete evidence-derived drafts; preserve any user-authored
+    # status, text, and steps byte-for-byte.
+    for review in document.get("entry_reviews", []):
+        if not isinstance(review, dict) or review.get("status") != "draft":
+            continue
+        fields = ("trigger", "purpose", "input", "outcome", "failure")
+        if all(str(review.get(field, "")).strip() for field in fields) and review.get("steps"):
+            review["status"] = "confirmed"
+            review["confirmed_by"] = "overview-confirmation"
     module_path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return []
 
@@ -628,8 +684,12 @@ def _write_overview_report(docs_root: Path, result: ScanResult, report: dict[str
         f"- {module}: {sum(entry.module == module for entry in entries)} entries; file `{directive_map.get(module, '')}`"
         for module in modules
     )
-    lines.extend(["", "## Entry Details", ""])
-    lines.extend(f"- `{entry.entry_id}` | module `{entry.module}` | source `{entry.file}:{entry.line}`" for entry in entries)
+    lines.extend(["", "## Entry Details", "", "| 入口 ID | 业务描述 | 入口 | 归属 | 入口类型 | 源码位置 |", "| --- | --- | --- | --- | --- | --- |"])
+    for entry in entries:
+        title = entry.title if entry.title and not entry.title_unresolved else "title_unresolved"
+        lines.append(
+            f"| `{entry.entry_id}` | {title} | {entry.identifier} | `{directive_map.get(entry.module, '')}` | {entry.kind} | `{entry.file}:{entry.line}` |"
+        )
     lines.extend(["", "## Exclusions", ""])
     lines.extend(f"- {item}" for item in sorted(result.exclusions))
     if not result.exclusions:
@@ -641,7 +701,10 @@ def _write_overview_report(docs_root: Path, result: ScanResult, report: dict[str
         lines.extend(["", *directives])
     if marker:
         lines.append(marker)
-    overview.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    rendered = "\n".join(lines).rstrip() + "\n"
+    temporary = overview.with_name(overview.name + ".tmp")
+    temporary.write_text(rendered, encoding="utf-8")
+    temporary.replace(overview)
 
 
 def _version_lock_path(docs_root: Path) -> Path:
@@ -1004,6 +1067,12 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
     if error or result is None:
         print(f"ERROR: {error or 'biz-flow scan could not be restored'}", file=sys.stderr)
         return 8
+    agent_plan = build_agent_plan(result, incremental=incremental)
+    plan_errors = validate_agent_plan(agent_plan, result)
+    if plan_errors:
+        print("ERROR: invalid orchestration plan: " + "; ".join(plan_errors), file=sys.stderr)
+        return 8
+    write_json(docs_root / "biz-flow-agent-plan.json", agent_plan)
     if not _overview_confirmed(docs_root):
         print(
             "ERROR: module partition is awaiting user confirmation; review "
@@ -1020,7 +1089,9 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
             print(f"ERROR: {error}", file=sys.stderr)
         _remove_transient_artifacts(docs_root)
         return 8
-    if _overview_confirmed(docs_root):
+    # Generation must never promote or rewrite user reviews. Confirmation is a
+    # gate only; module prose and evidence remain exactly as authored.
+    if False and _overview_confirmed(docs_root):
         module_path = docs_root / "biz-flow-modules.json"
         module_document = _read_json(module_path)
         if module_document:
@@ -1071,9 +1142,11 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
         effective_git["commit"] = comparison_base
         comparison_index["effective_git"] = effective_git
     changes = _change_summary(project, comparison_index, result.entries, result.git.target)
-    index_path, report_path, report = write_artifacts(
+    markdown_snapshot = _markdown_snapshot(docs_root)
+    index_path, report_path, report = _safe_write_artifacts(
         result,
         docs_root,
+        markdown_snapshot,
         comparison=str(changes.get("comparison", "current")),
         old_commit=comparison_base or None,
         changed=changes,
@@ -1084,6 +1157,7 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
         if isinstance(value, list) and value
     ]
     if coverage_failures:
+        _restore_markdown_snapshot(docs_root, markdown_snapshot)
         _progress(docs_root, command, "failed", result.source_fingerprint, "generated biz-flow coverage failed", resumed=resumed, cache_entries=cache_entries)
         print(
             "ERROR: generated biz-flow coverage failed: " + ", ".join(coverage_failures),
@@ -1168,6 +1242,9 @@ def check_command(argv: list[str]) -> int:
         expected_ids = {entry.entry_id for entry in result.entries} - excluded_ids
         if set(assigned_ids) != expected_ids:
             failures.append("overview: module directives do not cover exactly the discovered entries")
+        table_ids = re.findall(r"^\|\s*`([^`]+)`\s*\|", overview_text, flags=re.M)
+        if set(table_ids) != expected_ids or len(table_ids) != len(set(table_ids)):
+            failures.append("overview: entry table does not cover each discovered entry exactly once")
         directive_files = {filename for _, filename, _ in module_directives}
         actual_files = {path.name for path in documents}
         if directive_files != actual_files:
@@ -1186,6 +1263,18 @@ def check_command(argv: list[str]) -> int:
                 failures.append(f"{path.name}: missing Mermaid sequence diagram")
             for diagram in diagrams:
                 failures.extend(f"{path.name}: {error}" for error in _validate_mermaid(diagram))
+            entry_markers = list(re.finditer(r"<!--\s*biz-flow-entry:\s*([^>]+?)\s*-->", text))
+            for marker_index, marker in enumerate(entry_markers):
+                entry_id = marker.group(1).strip()
+                section_end = entry_markers[marker_index + 1].start() if marker_index + 1 < len(entry_markers) else len(text)
+                section = text[marker.start():section_end]
+                if "title_unresolved" in section[:220]:
+                    failures.append(f"{path.name}:{entry_id}: title_unresolved requires human title")
+                paragraphs = [line[2:].strip() for line in section.splitlines() if line.startswith("- ")]
+                if any(len(value) > 50 for value in paragraphs):
+                    failures.append(f"{path.name}:{entry_id}: business description point exceeds 50 characters")
+                if any(marker in section for marker in ("pending business steps", "confirmed business steps", "执行已确认的业务步骤", "待补充业务步骤")):
+                    failures.append(f"{path.name}:{entry_id}: placeholder business text is forbidden")
         payload = {
             "version_match": recorded_commit == result.git.target,
             "markdown_documents": len(documents),
@@ -1291,6 +1380,38 @@ def check_command(argv: list[str]) -> int:
     return 0
 
 
+def verify_command(argv: list[str]) -> int:
+    """Repeat the durable gate and prove stable Markdown output."""
+    parser = argparse.ArgumentParser(prog="devflow biz-flow verify")
+    _project(parser)
+    args = parser.parse_args(argv)
+    project = args.project.resolve()
+    docs_root = _docs_root(project, args.docs_root)
+
+    def snapshot() -> dict[str, str]:
+        return {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in docs_root.glob("*.md") if path.is_file()
+        }
+
+    before = snapshot()
+    first = check_command(argv)
+    middle = snapshot()
+    second = check_command(argv)
+    after = snapshot()
+    if first or second:
+        print("ERROR: repeated biz-flow check did not pass", file=sys.stderr)
+        return 1
+    if before != middle or middle != after:
+        print("ERROR: repeated biz-flow check changed durable Markdown", file=sys.stderr)
+        return 1
+    if any(path.name.endswith(".tmp") for path in docs_root.iterdir()):
+        print("ERROR: temporary generation artifacts remain in docs/biz-flow", file=sys.stderr)
+        return 1
+    print(json.dumps({"stable": True, "markdown_documents": len(after), "checks": 2}, ensure_ascii=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     commands = {
         "init": init_command,
@@ -1298,6 +1419,7 @@ def main(argv: list[str] | None = None) -> int:
         "generate": generate_command,
         "update": lambda args: generate_command(args, incremental=True),
         "check": check_command,
+        "verify": verify_command,
     }
     parser = argparse.ArgumentParser(prog="devflow biz-flow")
     parser.add_argument("command", nargs="?", choices=tuple(commands))

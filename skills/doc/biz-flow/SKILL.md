@@ -25,6 +25,42 @@ and source evidence. Explicitly confirm the partition (for example with `biz-flo
 discovery, progress, and evidence data is process-local and must not remain in
 the project.
 
+Use this exact exclusion syntax:
+`<!-- devflow:exclude id="<stable-entry-id>" reason="<why excluded>" evidence="<relative/source.java:42>" -->`.
+`id` must be discovered, `reason` is required, and `evidence` must be a real
+scanned source location in `file:line` form. `evidence="health"` is invalid.
+An excluded id must not also appear in a `devflow:module` directive; the CLI
+rejects duplicate, unknown, malformed, and overlapping directives.
+
+For Java/Kotlin and other heuristic parsers, record each unresolved finding as
+a structured resolution containing source evidence, the confirmed path,
+control conditions, and remaining unknowns. Never batch-fill a template or
+describe unknown behavior as confirmed. Unknowns affecting entry existence,
+ownership, or a key branch block generation; only explicitly marked
+non-critical unknowns may remain for human review.
+
+Use `references/requirements-matrix.md` to map each requirement to its code
+gate, semantic evidence, and failure behavior before declaring completion.
+
+After a successful generation or update, run `devflow biz-flow verify`. It
+executes the durable check twice and fails if Markdown changes between runs or
+temporary generation files remain. The verification result is the final
+repeatability gate for delivery.
+
+Discover platform-base-class and registry message receivers without requiring
+Spring annotations. Resolve topics from constants, configuration, or
+registration and trace `serve`, `doServe`, `receive`, and `decode`. Scan
+executor `execute`/`submit` independently, including lambdas, method
+references, `AsyncContext.wrap`, and custom wrappers; retain an unresolved
+finding when a worker cannot be statically resolved.
+
+After module confirmation, orchestration may run one module role per Markdown
+file in parallel. Each module role is the sole writer for its file and may
+delegate one read-only entry role per entry; entry roles return only structured
+steps, branches, evidence, and resolutions. Record input fingerprint, task
+boundary, output status, and merge result. Incremental runs skip module
+partitioning and schedule only affected module and entry roles.
+
 Each generated module document contains only its entry flow sections. The
 confirmed review for every entry must keep each short description field at or
 below 200 characters; the CLI rejects longer values. Every entry section has a

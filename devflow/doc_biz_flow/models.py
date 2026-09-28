@@ -56,6 +56,7 @@ class EntryReview:
     steps: list[FlowStep] = field(default_factory=list)
     status: str = "draft"
     confirmed_by: str = ""
+    title: str = ""
 
 
 @dataclass(slots=True)
@@ -93,6 +94,10 @@ class EntryPoint:
     review: EntryReview | None = None
     binding_confirmed: bool = True
     handler_confirmed: bool = True
+    title: str = ""
+    title_unresolved: bool = False
+    parent_entry_id: str = ""
+    submit_source: str = ""
 
     def error_codes(self) -> list[str]:
         return list(dict.fromkeys(error.code for error in self.errors))

@@ -129,7 +129,9 @@ def _entry_title(entry: EntryPoint) -> str:
         "file": "文件入口",
         "batch": "批处理任务",
     }
-    return f"{names.get(entry.kind, entry.kind)} {entry.identifier} {entry.handler}".strip()
+    if entry.title and not entry.title_unresolved:
+        return entry.title[:80]
+    return f"title_unresolved: {names.get(entry.kind, entry.kind)} entry".strip()
 
 
 def _codes(entry: EntryPoint) -> str:
@@ -196,6 +198,10 @@ def _cache_entry(entry: EntryPoint) -> dict[str, Any]:
         "has_async": entry.has_async,
         "binding_confirmed": entry.binding_confirmed,
         "handler_confirmed": entry.handler_confirmed,
+        "title": entry.title,
+        "title_unresolved": entry.title_unresolved,
+        "parent_entry_id": entry.parent_entry_id,
+        "submit_source": entry.submit_source,
     }
 
 
@@ -272,7 +278,7 @@ def _review(entry: EntryPoint) -> EntryReview:
         else:
             steps.append(FlowStep("action", _business_step(behavior), source, participant))
     if not steps:
-        steps.append(FlowStep("action", "处理链中的业务步骤代码中未确认。", f"{entry.file}:{entry.line}"))
+        steps.append(FlowStep("action", f"调用入口处理器 {entry.handler}", f"{entry.file}:{entry.line}"))
     if explicit_loops:
         end_source = (
             f"{entry.file}:{max((behavior.line for behavior in entry.behaviors), default=entry.line)}"
@@ -288,10 +294,10 @@ def _review(entry: EntryPoint) -> EntryReview:
     return EntryReview(
         review_id=entry.entry_id,
         trigger=entry.caller,
-        purpose=f"处理 {entry.identifier} 对应的业务动作；更具体的业务目的代码中未确认。",
+        purpose=f"处理入口 {entry.identifier} 的业务请求",
         input=entry.input_summary,
-        outcome="结果代码中未确认；受理成功不等同远端或后台完成。",
-        failure="错误后果按可传播错误记录；未被源码确认的捕获、回滚、重试和补偿不作推断。",
+        outcome=(f"返回源码定义的处理结果；已确认行为见步骤" if entry.behaviors else "返回入口处理器结果"),
+        failure=(f"按源码错误分支处理：{', '.join(entry.error_codes())}" if entry.errors else "源码未发现显式失败分支"),
         steps=steps,
         status="draft",
     )
@@ -428,27 +434,27 @@ def _validate_mermaid(diagram: str) -> list[str]:
             blocks.append(line.split(" ", 1)[0])
         elif line.startswith("else "):
             if not blocks or blocks[-1] != "alt":
-                errors.append("else outside alt")
+                errors.append(f"line {lines.index(line) + 1}: else outside alt")
         elif line == "end":
             if not blocks:
-                errors.append("unmatched end")
+                errors.append(f"line {lines.index(line) + 1}: unmatched end")
             else:
                 blocks.pop()
         elif match := re.match(r"(\w+)(?:-->>|->>)(\w+):\s*", line):
             if match.group(1) not in aliases or match.group(2) not in aliases:
-                errors.append(f"unknown participant in message: {line}")
+                errors.append(f"line {lines.index(line) + 1}: unknown participant in message: {line}")
         elif line.startswith("Note over "):
             note_match = re.match(r"Note over\s+(\w+)(?:,(\w+))?:", line)
             if not note_match:
-                errors.append(f"invalid note statement: {line}")
+                errors.append(f"line {lines.index(line) + 1}: invalid note statement: {line}")
             else:
                 for participant in note_match.groups():
                     if participant and participant not in aliases:
-                        errors.append(f"unknown participant in note: {line}")
+                        errors.append(f"line {lines.index(line) + 1}: unknown participant in note: {line}")
         elif line == "autonumber" or line.startswith("participant "):
             continue
         else:
-            errors.append(f"unsupported sequence statement: {line}")
+            errors.append(f"line {lines.index(line) + 1}: unsupported sequence statement: {line}")
     if blocks:
         errors.append("unclosed " + ", ".join(blocks))
     if errors or not shutil.which("mmdc"):
@@ -528,12 +534,9 @@ def _legacy_entry_text(entry: EntryPoint) -> str:
 
 
 def _description(review: EntryReview) -> str:
-    """Return the single human-facing entry summary enforced by the contract."""
-    return "；".join(
-        value.strip()
-        for value in (review.trigger, review.purpose, review.input, review.outcome, review.failure)
-        if value and value.strip()
-    )
+    """Render short business points; machine validation enforces the limit."""
+    values = [review.purpose, review.input, review.outcome, review.failure]
+    return "\n".join(f"- {value.strip()}" for value in values if value and value.strip())
 
 
 def _entry_text(entry: EntryPoint) -> str:
@@ -544,11 +547,26 @@ def _entry_text(entry: EntryPoint) -> str:
         "",
         f"## {_entry_title(entry)}",
         "",
+        _entry_intro(entry),
+        "",
         _description(review),
         "",
         _diagram(entry),
         "",
     ])
+
+
+def _entry_intro(entry: EntryPoint) -> str:
+    """Objective trigger description kept separate from business prose."""
+    if entry.kind in {"url", "webhook", "websocket", "sse"}:
+        return f"入口类型：URL 请求（{entry.identifier}），源码 {entry.file}:{entry.line}。"
+    if entry.kind == "message":
+        return f"入口类型：消息消费者（topic {entry.identifier}），源码 {entry.file}:{entry.line}。"
+    if entry.kind == "scheduled":
+        return f"入口类型：定时任务（{entry.identifier}），源码 {entry.file}:{entry.line}。"
+    if entry.kind == "worker":
+        return f"入口类型：线程池任务，提交点 {entry.submit_source or entry.file + ':' + str(entry.line)}，worker {entry.handler}。"
+    return f"入口类型：{entry.kind}，源码 {entry.file}:{entry.line}。"
 
 
 def _module_files(
@@ -764,6 +782,11 @@ def _review_from_dict(value: object, fallback: EntryPoint) -> EntryReview | None
 
 def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
     docs_root.mkdir(parents=True, exist_ok=True)
+    suggestions: dict[str, list[str]] = {}
+    for entry in scan.entries:
+        parts = Path(entry.file).parts
+        prefix = next((part for part in parts if part.lower() not in {"src", "main", "java", "kotlin", "python", "app", "api", "controller", "controllers", "service", "services"}), entry.module)
+        suggestions.setdefault(prefix, []).append(entry.entry_id)
     discovery = {
         "schema_version": int(BIZ_FLOW_SCHEMA_VERSION),
         "source_fingerprint": scan.source_fingerprint,
@@ -794,6 +817,10 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
         "confirmed_binding_count": scan.confirmed_binding_count,
         "confirmed_handler_count": scan.confirmed_handler_count,
         "unresolved": scan.unresolved,
+        "module_suggestions": [
+            {"name": name, "entry_ids": sorted(ids), "basis": "source package/path prefix; human confirmation required"}
+            for name, ids in sorted(suggestions.items())
+        ],
     }
     _require_contract(BIZ_FLOW_DISCOVERY_SCHEMA, discovery, "biz-flow discovery")
     discovery_path = write_json(docs_root / "biz-flow-discovery.json", discovery)
@@ -867,8 +894,8 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
             for entry in group
         } | ({"消息/异步系统"} if any(entry.has_async for entry in group) else set()))
         partners = [item for item in partners if item]
-        responsibility = f"围绕 {name} 模块入口处理已确认的业务动作"
-        rationale = f"按入口业务目标、处理对象和状态/副作用边界归组；当前入口：{', '.join(entry_ids)}"
+        responsibility = f"Source entry group for module {name}; confirm the business responsibility from the listed entry evidence."
+        rationale = f"Grouped by source structure and call ownership; candidate entries: {', '.join(entry_ids)}."
         return rationale, responsibility, objects, partners
     previous_reviews = {
         str(review.get("id")): review
@@ -915,7 +942,7 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
                 "responsibility": str(previous_modules.get(name, {}).get("responsibility") or draft_module_facts(name, entry_ids)[1]),
                 "objects": [str(value) for value in previous_modules.get(name, {}).get("objects", [])] or draft_module_facts(name, entry_ids)[2],
                 "partners": [str(value) for value in previous_modules.get(name, {}).get("partners", [])] or draft_module_facts(name, entry_ids)[3],
-                "questions": [str(value) for value in previous_modules.get(name, {}).get("questions", ["确认模块边界及跨模块入口"])],
+                "questions": [str(value) for value in previous_modules.get(name, {}).get("questions", [])],
                 "entry_ids": sorted(entry_ids),
             }
             for index, (name, entry_ids) in enumerate(sorted(groups.items()))
@@ -1096,10 +1123,12 @@ def apply_module_map(scan: ScanResult, path: Path) -> list[str]:
         if not isinstance(override, dict) or str(override.get("id")) not in entry_by_id:
             continue
         entry = entry_by_id[str(override["id"])]
-        for field in ("kind", "identifier", "handler", "caller", "input_summary"):
+        for field in ("kind", "identifier", "handler", "caller", "input_summary", "title"):
             document_field = "type" if field == "kind" else field
             if str(override.get(document_field, "")).strip():
                 setattr(entry, field, str(override[document_field]))
+                if field == "title":
+                    entry.title_unresolved = False
         if override.get("core_capabilities"):
             entry.functions = [str(value) for value in override["core_capabilities"]]
         if override.get("errors") is not None:
@@ -1202,6 +1231,14 @@ def apply_module_map(scan: ScanResult, path: Path) -> list[str]:
             ]
         if len(_description(review)) > 200:
             return [f"entry review {entry.entry_id} combined description exceeds 200 characters"]
+        long_points = [
+            field for field, value in {
+                "purpose": review.purpose, "input": review.input,
+                "outcome": review.outcome, "failure": review.failure,
+            }.items() if len(str(value).strip()) > 50
+        ]
+        if long_points:
+            return [f"entry review {entry.entry_id} business description points exceed 50 characters: {', '.join(long_points)}"]
         invalid_steps = [step.source for step in review.steps if not valid_source(step.source)]
         if invalid_steps:
             return [f"entry review {entry.entry_id} has evidence outside scanned source: {', '.join(invalid_steps)}"]
@@ -1232,6 +1269,8 @@ def apply_module_map(scan: ScanResult, path: Path) -> list[str]:
             errors.append("each exclusion requires candidate, reason, and evidence")
         elif str(exclusion["candidate"]) not in known_candidates:
             errors.append(f"exclusion references an unknown candidate: {exclusion['candidate']}")
+        elif not isinstance(exclusion["evidence"], list) or not exclusion["evidence"]:
+            errors.append(f"exclusion {exclusion['candidate']} evidence must be a non-empty file:line list")
         elif any(not valid_source(value) for value in exclusion["evidence"]):
             errors.append(f"exclusion {exclusion['candidate']} has evidence outside scanned source")
         else:
@@ -1286,6 +1325,7 @@ def apply_module_map(scan: ScanResult, path: Path) -> list[str]:
         for entry_id in module.get("entry_ids", []):
             entry_id = str(entry_id)
             if entry_id in excluded_ids:
+                errors.append(f"excluded entry {entry_id} must not appear in module {name}")
                 continue
             if entry_id in owners:
                 errors.append(f"entry {entry_id} belongs to multiple modules")
@@ -1534,8 +1574,13 @@ def _markdown_coverage(
                         line.strip() for line in preamble.splitlines()
                         if line.strip() and not line.startswith("<!--") and not line.startswith("## ")
                     ]
-                    if len(preamble_lines) != 1:
+                    if not preamble_lines or not preamble_lines[0].startswith("入口类型"):
+                        fact_mismatches.append(f"{entry_id}:missing-entry-introduction")
+                    business_points = [line[2:].strip() for line in preamble_lines[1:] if line.startswith("- ")]
+                    if len(business_points) != len(preamble_lines) - 1:
                         fact_mismatches.append(f"{entry_id}:summary-shape")
+                    if any(len(point) > 50 for point in business_points):
+                        fact_mismatches.append(f"{entry_id}:business-description-over-50")
                     if section[diagram_match.end():].strip():
                         fact_mismatches.append(f"{entry_id}:content-after-diagram")
                 if diagram:
@@ -1789,10 +1834,10 @@ def write_artifacts(
         if comparison == "version_only" and path.is_file():
             _update_version_only(path, scan.git)
         else:
-            path.write_text(
-                redact(render_module(module, entries, scan.git, scan, comparison=comparison, module_meta=module_metadata.get(module))),
-                encoding="utf-8",
-            )
+            rendered = redact(render_module(module, entries, scan.git, scan, comparison=comparison, module_meta=module_metadata.get(module)))
+            temporary = path.with_name(path.name + ".tmp")
+            temporary.write_text(rendered, encoding="utf-8")
+            temporary.replace(path)
     stale_files = {
         str(item.get("file")).replace("\\", "/")
         for item in previous.get("modules", [])

@@ -775,6 +775,69 @@ def _decorated_entries(text: str, language: str, relative: str) -> list[tuple[st
     return found
 
 
+def _platform_message_entries(text: str, relative: str, functions: list[FunctionInfo]) -> list[tuple[str, str, int, str]]:
+    """Find message receivers implemented through platform base classes/registries.
+
+    Annotation-only discovery misses the common ``class X extends Receiver`` shape.
+    This deliberately records the receiver even when the topic or handler is only
+    partially resolvable; the caller then preserves an unresolved finding.
+    """
+    lines = text.splitlines()
+    result: list[tuple[str, str, int, str]] = []
+    class_re = re.compile(
+        r"\bclass\s+([A-Za-z_]\w*)\s+(?:extends|implements)\s+([A-Za-z_]\w*(?:Receiver|Consumer|Listener|MessageHandler|MessageReceiver)\b)"
+    )
+    for match in class_re.finditer(text):
+        class_name = match.group(1)
+        line = text[:match.start()].count("\n") + 1
+        window = "\n".join(lines[line - 1:line + 20])
+        topic_match = re.search(
+            r"(?:topic|topics|queue|destination|channel)\s*(?:=|\(|:)\s*(?:\{\s*)?[\"']([^\"']+)",
+            window,
+            re.I,
+        ) or re.search(r"[\"']([A-Za-z0-9_.:/-]+)[\"']", window)
+        topic = topic_match.group(1) if topic_match else "代码中未确认"
+        handler = "代码中未确认"
+        for function in functions:
+            if function.start >= line and function.start <= line + 25 and function.name.lower() in {"serve", "doserve", "receive", "decode", "handle", "onmessage"}:
+                handler = function.name
+                break
+        result.append(("message", topic, line, handler))
+    registry_re = re.compile(
+        r"\b(?:register|subscribe|add(?:Listener|Consumer)|bind)\w*\s*\(\s*[\"']([^\"']+)[\"']\s*,\s*(?:new\s+)?([A-Za-z_]\w*)",
+        re.I,
+    )
+    for match in registry_re.finditer(text):
+        line = text[:match.start()].count("\n") + 1
+        target = match.group(2)
+        handler = next((f.name for f in functions if f.owner == target and f.name.lower() in {"serve", "doserve", "receive", "handle", "onmessage"}), "代码中未确认")
+        result.append(("message", match.group(1), line, handler))
+    return result
+
+
+def _executor_submissions(text: str, relative: str) -> list[tuple[str, int, str]]:
+    """Return (worker target, submit line, executor expression) for Runnable calls."""
+    found: list[tuple[str, int, str]] = []
+    pattern = re.compile(
+        r"(?P<executor>[A-Za-z_]\w*(?:executor|pool)\w*)\s*\.\s*(?:execute|submit)\s*\(\s*(?P<body>[^;\n]+)",
+        re.I,
+    )
+    for match in pattern.finditer(text):
+        body = match.group("body")
+        targets = re.findall(r"(?:->\s*[^{]*?\b|\b)([A-Za-z_]\w*)\s*\(", body)
+        if not targets:
+            targets = re.findall(r"(?:^|[.&])([A-Za-z_]\w*)\s*::\s*([A-Za-z_]\w*)", body)
+            targets = [item[-1] for item in targets]
+        if not targets:
+            direct = re.match(r"\s*([A-Za-z_]\w*)\s*(?:[,)]|$)", body)
+            if direct:
+                targets = [direct.group(1)]
+        target = next((name for name in targets if name not in {"wrap", "execute", "submit"}), "")
+        line = text[:match.start()].count("\n") + 1
+        found.append((target, line, match.group("executor")))
+    return found
+
+
 def _unrecognized_registration_lines(text: str, language: str, known_lines: set[int]) -> list[int]:
     if language in {"Protocol Buffers", "GraphQL", "Configuration"}:
         return []
@@ -969,6 +1032,8 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
                 if language == "Configuration"
                 else _decorated_entries(text, language, relative)
             )
+            if language != "Configuration":
+                discovered.extend(_platform_message_entries(text, relative, funcs))
             discovered = list(dict.fromkeys(discovered))
             known_lines = {item[2] for item in discovered}
             for registration_line in _unrecognized_registration_lines(text, language, known_lines):
@@ -1152,6 +1217,8 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
                     has_async=bool(bodies and re.search(r"\b(async|await|thread|executor|queue|publish|send)\b", "\n".join(bodies), re.I)),
                     binding_confirmed=True,
                     handler_confirmed=handler_confirmed,
+                    title=_comment_label(text, line + 1),
+                    title_unresolved=not bool(_comment_label(text, line + 1)),
                 ))
         # Treat explicitly submitted background functions as first-class
         # business entrances. They must receive their own ownership and
@@ -1159,11 +1226,10 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
         worker_ids = {entry.entry_id for entry in entries}
         for entry in list(entries):
             body = source_texts.get(entry.file, "")
-            function_names = re.findall(
-                r"\b(?:submit|execute|schedule|enqueue|delay|create_task|spawn)\s*\(\s*([A-Za-z_]\w*)",
-                body,
-                re.IGNORECASE,
-            )
+            submissions = _executor_submissions(body, entry.file)
+            function_names = [item[0] for item in submissions if item[0]]
+            if any(not item[0] for item in submissions):
+                unresolved.append(f"{entry.file}:{entry.line}: executor submission wrapper has no statically resolvable worker")
             for worker_name in dict.fromkeys(function_names):
                 candidates = global_functions.get(worker_name, [])
                 if len(candidates) != 1:
@@ -1197,6 +1263,34 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
                     has_external_call=bool(re.search(r"\b(requests|httpx|urllib|RestTemplate|WebClient|grpc|axios|fetch)\b", worker_body, re.I)),
                     has_persistence=bool(re.search(r"\b(save|insert|update|delete|persist|repository|dao|\.create\s*\()", worker_body, re.I)),
                     has_async=True,
+                    parent_entry_id=entry.entry_id,
+                    submit_source=f"{entry.file}:{next((item[1] for item in submissions if item[0] == worker_name), entry.line)}",
+                    title=_comment_label(source_texts.get(worker_file, ""), worker_line),
+                    title_unresolved=not bool(_comment_label(source_texts.get(worker_file, ""), worker_line)),
+                ))
+        # Also retain workers submitted by code that has no discovered external
+        # entry. Their trigger remains unresolved, but the worker cannot vanish.
+        known_worker_ids = {entry.entry_id for entry in entries if entry.kind == "worker"}
+        for worker_file, worker_text in source_texts.items():
+            for worker_name, submit_line, _executor in _executor_submissions(worker_text, worker_file):
+                candidates = global_functions.get(worker_name, []) if worker_name else []
+                if len(candidates) != 1:
+                    continue
+                target_file, worker = candidates[0]
+                worker_id = f"worker:{worker_name}:{target_file}:{worker.start}"
+                if worker_id in known_worker_ids:
+                    continue
+                known_worker_ids.add(worker_id)
+                module = _module_name(Path(target_file), worker_name, source_texts.get(target_file, ""), worker.start)
+                entries.append(EntryPoint(
+                    entry_id=worker_id, kind="worker", identifier=worker_name,
+                    handler=worker_name, file=target_file, line=worker.start,
+                    module=module, source=target_file, caller="代码中未确认",
+                    input_summary=f"后台任务 {worker_name}", functions=[f"{target_file}:{worker_name}"],
+                    errors=list(worker.errors), behaviors=_behaviors(worker, target_file), has_async=True,
+                    parent_entry_id="", submit_source=f"{worker_file}:{submit_line}",
+                    title=_comment_label(source_texts.get(target_file, ""), worker.start),
+                    title_unresolved=not bool(_comment_label(source_texts.get(target_file, ""), worker.start)),
                 ))
         entries.sort(key=lambda item: (item.module, item.kind, item.identifier, item.file, item.line))
         source_fingerprint = _fingerprint_files(root, files, unresolved.append)
