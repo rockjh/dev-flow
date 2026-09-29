@@ -16,7 +16,11 @@ from .git import source_view
 from .models import BehaviorEvidence, EntryPoint, ErrorEvidence, FunctionInfo, ScanResult
 
 
-EXCLUDED_DIRS = {".git", ".venv", "venv", "node_modules", "dist", "build", "target", "vendor", "docs", "__pycache__"}
+EXCLUDED_DIRS = {
+    ".git", ".idea", ".venv", "venv", "env", ".tox", ".nox", "node_modules", "dist", "build", "target",
+    "vendor", "docs", "logs", "log", "__pycache__", ".gradle", ".mvn", ".pytest_cache",
+}
+_EXCLUDED_DIRS_CASEFOLD = {item.casefold() for item in EXCLUDED_DIRS}
 EXTENSIONS = {
     ".py": "Python", ".java": "Java", ".kt": "Kotlin", ".go": "Go", ".js": "JavaScript",
     ".jsx": "JavaScript", ".ts": "TypeScript", ".tsx": "TypeScript", ".cs": "C#", ".rb": "Ruby",
@@ -175,13 +179,14 @@ def _functions(text: str, language: str, relative: str) -> list[FunctionInfo]:
             ))
         return result
     pattern = re.compile(
-        r"\b(?:public|private|protected|static|final|async|override|function)?\s*[\w<>\[\],.?]+\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:throws [^{]+)?\{|"
-        r"\bfun\s+([A-Za-z_]\w*)\s*\([^;{}]*\)[^{]*\{"
+        r"\b(?:public|private|protected|static|final|abstract|synchronized|native|async|override|function)?\s*"
+        r"(?:@[A-Za-z_$][\w$]*(?:\([^)]*\))?\s*)*"
+        r"[\w.$<>?,\[\]\s]+?\s+([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:throws [^{]+)?\{|"
+        r"\bfun\s+([A-Za-z_]\w*)\s*\([^;{}]*\)[^{]*\{",
+        re.DOTALL,
     )
-    for index, line in enumerate(lines):
-        match = pattern.search(line)
-        if match:
-            starts.append((index, match.group(1) or match.group(2), 0))
+    for match in pattern.finditer(text):
+        starts.append((text[:match.start()].count("\n"), match.group(1) or match.group(2), 0))
     result = []
     class_ranges: list[tuple[int, int, str]] = []
     class_pattern = re.compile(r"\b(?:class|interface|object|struct)\s+([A-Za-z_]\w*)[^\{]*\{")
@@ -495,6 +500,15 @@ def _declaration_behaviors(function: FunctionInfo, relative: str, text: str) -> 
 def _decorated_entries(text: str, language: str, relative: str) -> list[tuple[str, str, int, str]]:
     lines = text.splitlines()
     found: list[tuple[str, str, int, str]] = []
+    constants = dict(re.findall(
+        r"\b(?:(?:public|private|protected)\s+)?(?:(?:static\s+final|final|static|const))\s+(?:String|string)\s+([A-Za-z_]\w*)\s*=\s*[\"']([^\"']+)[\"']",
+        text,
+    ))
+
+    def resolve_value(value: str) -> str:
+        value = value.strip().strip('{}() ')
+        return constants.get(value, value.strip("\"'"))
+
     base_path = ""
     proto_service = ""
     graphql_owner = ""
@@ -612,10 +626,13 @@ def _decorated_entries(text: str, language: str, relative: str) -> list[tuple[st
             kind, identifier = "rpc", mapping.group(1) if mapping else "代码中未确认"
         elif re.search(r"(?:KafkaListener|RabbitListener|JmsListener|PulsarListener|RocketMQMessageListener)\s*\(", annotation_text):
             value = re.search(
-                r"(?:topics|queues|destination|topic|value)\s*=\s*(\{[^}]*\}|[\"'][^\"']+[\"'])|\(\s*[\"']([^\"']+)",
+                r"(?:topics|queues|destination|topic|value)\s*=\s*(\{[^}]*\}|[A-Za-z_]\w*|[\"'][^\"']+[\"'])|\(\s*[\"']([^\"']+)",
                 annotation_text,
             )
-            topics = re.findall(r"[\"']([^\"']+)[\"']", value.group(1) if value and value.group(1) else (value.group(2) if value else ""))
+            raw_topic = value.group(1) if value and value.group(1) else (value.group(2) if value else "")
+            topics = [resolve_value(item) for item in re.findall(r"[\"']([^\"']+)[\"']", raw_topic)]
+            if not topics and raw_topic:
+                topics = [resolve_value(raw_topic)]
             kind, identifier = "message", (topics[0] if topics else "代码中未确认")
         elif (
             (stripped.startswith("@") and re.search(r"@?(?:XxlJob|JobHandler|Scheduled|Cron)\b", annotation_text, re.I))
@@ -663,15 +680,16 @@ def _decorated_entries(text: str, language: str, relative: str) -> list[tuple[st
                 continue
             if kind == "message":
                 topic_values = re.findall(
-                    r"(?:topics|queues|destination|topic|value)\s*=\s*(?:\{([^}]*)\}|([\"'][^\"']+[\"']))",
+                    r"(?:topics|queues|destination|topic|value)\s*=\s*(?:\{([^}]*)\}|([A-Za-z_]\w*|[\"'][^\"']+[\"']))",
                     annotation_text,
                     re.IGNORECASE,
                 )
                 identifiers = [
                     topic
                     for group in topic_values
-                    for topic in re.findall(r"[\"']([^\"']+)[\"']", " ".join(group))
+                    for topic in re.findall(r"[\"']([^\"']+)[\"']|\b([A-Z_]\w*)\b", " ".join(group))
                 ] or [identifier]
+                identifiers = [resolve_value(topic[0] or topic[1]) for topic in identifiers]
                 found.extend((kind, topic, index + 1, handler) for topic in dict.fromkeys(identifiers))
             else:
                 found.append((kind, identifier, index + 1, handler))
@@ -784,6 +802,10 @@ def _platform_message_entries(text: str, relative: str, functions: list[Function
     """
     lines = text.splitlines()
     result: list[tuple[str, str, int, str]] = []
+    constants = dict(re.findall(r"\b(?:(?:public|private|protected)\s+)?(?:(?:static\s+final|final|static|const))\s+(?:String|string)\s+([A-Za-z_]\w*)\s*=\s*[\"']([^\"']+)[\"']", text))
+    def resolve_topic(value: str) -> str:
+        value = value.strip().strip('{}() ')
+        return constants.get(value, value.strip("\"'"))
     class_re = re.compile(
         r"\bclass\s+([A-Za-z_]\w*)\s+(?:extends|implements)\s+([A-Za-z_]\w*(?:Receiver|Consumer|Listener|MessageHandler|MessageReceiver)\b)"
     )
@@ -792,11 +814,11 @@ def _platform_message_entries(text: str, relative: str, functions: list[Function
         line = text[:match.start()].count("\n") + 1
         window = "\n".join(lines[line - 1:line + 20])
         topic_match = re.search(
-            r"(?:topic|topics|queue|destination|channel)\s*(?:=|\(|:)\s*(?:\{\s*)?[\"']([^\"']+)",
+            r"(?:topic|topics|queue|destination|channel)\s*(?:=|\(|:)\s*(?:\{\s*)?([A-Za-z_]\w*|[\"'][^\"']+[\"'])",
             window,
             re.I,
-        ) or re.search(r"[\"']([A-Za-z0-9_.:/-]+)[\"']", window)
-        topic = topic_match.group(1) if topic_match else "代码中未确认"
+        )
+        topic = resolve_topic(topic_match.group(1)) if topic_match else "代码中未确认"
         handler = "代码中未确认"
         for function in functions:
             if function.start >= line and function.start <= line + 25 and function.name.lower() in {"serve", "doserve", "receive", "decode", "handle", "onmessage"}:
@@ -804,14 +826,35 @@ def _platform_message_entries(text: str, relative: str, functions: list[Function
                 break
         result.append(("message", topic, line, handler))
     registry_re = re.compile(
-        r"\b(?:register|subscribe|add(?:Listener|Consumer)|bind)\w*\s*\(\s*[\"']([^\"']+)[\"']\s*,\s*(?:new\s+)?([A-Za-z_]\w*)",
+        r"\b(?:register|subscribe|add(?:Listener|Consumer)|bind)\w*\s*\(\s*([A-Za-z_]\w*|[\"'][^\"']+[\"'])\s*,\s*(?:new\s+)?([A-Za-z_]\w*)",
         re.I,
     )
     for match in registry_re.finditer(text):
         line = text[:match.start()].count("\n") + 1
         target = match.group(2)
         handler = next((f.name for f in functions if f.owner == target and f.name.lower() in {"serve", "doserve", "receive", "handle", "onmessage"}), "代码中未确认")
-        result.append(("message", match.group(1), line, handler))
+        result.append(("message", resolve_topic(match.group(1)), line, handler))
+    return result
+
+
+def _platform_job_entries(text: str, functions: list[FunctionInfo]) -> list[tuple[str, str, int, str]]:
+    """Find XXL-JOB handlers registered through annotations or platform bases."""
+    class_job_match = re.search(r"\b(?:extends|implements)\s+[A-Za-z_\w$]*(?:Job|JobHandler|XxlJob)\b", text, re.I)
+    class_job = bool(class_job_match)
+    class_annotation = re.search(r'''@(?:XxlJob|JobHandler)\s*(?:\(\s*["']([^"']+)")?''', text[:class_job_match.start()] if class_job_match else "", re.I)
+    result: list[tuple[str, str, int, str]] = []
+    for function in functions:
+        if function.name.lower() not in {"doexecute", "execute"}:
+            continue
+        before = text[: text.find(function.body)]
+        annotation = re.search(r'''@(?:XxlJob|JobHandler)\s*(?:\(\s*["']([^"']+)")?''', before[-600:], re.I)
+        if annotation or class_job:
+            identifier = (
+                annotation.group(1) if annotation and annotation.group(1)
+                else class_annotation.group(1) if class_annotation and class_annotation.group(1)
+                else function.name
+            )
+            result.append(("scheduled", identifier, function.start, function.name))
     return result
 
 
@@ -946,7 +989,8 @@ def _source_files(root: Path) -> list[Path]:
         (
             path for path in root.rglob("*")
             if path.is_file()
-            and not any(part in EXCLUDED_DIRS for part in path.parts)
+            and not any(part.casefold() in _EXCLUDED_DIRS_CASEFOLD for part in path.parts)
+            and path.suffix.casefold() not in {".log", ".trace", ".out"}
             and not generated_docs(path)
             and readable_text(path)
         ),
@@ -1000,10 +1044,6 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
             language = EXTENSIONS.get(path.suffix.lower(), "Configuration")
             if language != "Configuration":
                 language_names.add(language)
-                if language not in SYNTAX_AWARE_LANGUAGES:
-                    unresolved.append(
-                        f"{relative}: parser support for {language} is heuristic; manual type/control-flow review is required"
-                    )
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
             except OSError as exc:
@@ -1034,6 +1074,7 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
             )
             if language != "Configuration":
                 discovered.extend(_platform_message_entries(text, relative, funcs))
+                discovered.extend(_platform_job_entries(text, funcs))
             discovered = list(dict.fromkeys(discovered))
             known_lines = {item[2] for item in discovered}
             for registration_line in _unrecognized_registration_lines(text, language, known_lines):
@@ -1200,7 +1241,9 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
                     line=line,
                     module=_module_name(Path(relative), identifier, source_texts.get(relative, ""), line),
                     source=relative,
-                    functions=functions,
+                    # Shared helpers may be reached through multiple paths;
+                    # core capabilities are a unique ordered list.
+                    functions=list(dict.fromkeys(functions)),
                     errors=unique_errors,
                     behaviors=behaviors,
                     caller={
@@ -1292,6 +1335,16 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
                     title=_comment_label(source_texts.get(target_file, ""), worker.start),
                     title_unresolved=not bool(_comment_label(source_texts.get(target_file, ""), worker.start)),
                 ))
+        # Keep one deterministic record per registration/source handler.  The
+        # same entry is often found through both an annotation and a platform
+        # registry, while its stable id must survive repeated scans.
+        unique_entries: dict[tuple[str, str, str, str], EntryPoint] = {}
+        for entry in entries:
+            key = (entry.kind, entry.identifier, entry.file, entry.handler)
+            existing = unique_entries.get(key)
+            if existing is None or entry.line < existing.line:
+                unique_entries[key] = entry
+        entries = list(unique_entries.values())
         entries.sort(key=lambda item: (item.module, item.kind, item.identifier, item.file, item.line))
         source_fingerprint = _fingerprint_files(root, files, unresolved.append)
         return ScanResult(

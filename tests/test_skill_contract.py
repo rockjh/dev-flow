@@ -39,6 +39,17 @@ class SkillContractTests(unittest.TestCase):
             self.assertIn("redacted authoritative", prompt, agent_file)
             self.assertIn("stop when", prompt, agent_file)
 
+    def test_biz_flow_prompt_and_skill_cover_revised_workflow(self) -> None:
+        skill = SKILLS / "doc" / "biz-flow"
+        text = (skill / "SKILL.md").read_text(encoding="utf-8")
+        prompt = yaml.safe_load((skill / "agents" / "openai.yaml").read_text(encoding="utf-8"))["interface"]["default_prompt"]
+        for value in (text, prompt):
+            for required in ("whole project", "doExecute", "doServe", "core_capabilities", "read-only entry", "sequenceDiagram", "autonumber"):
+                self.assertIn(required, value)
+        self.assertIn("fixed order", text)
+        self.assertIn("module-confirmed", text)
+        self.assertIn("references/requirements-matrix.md", text)
+
     @staticmethod
     def _frontmatter(path: Path) -> dict[str, str]:
         lines = path.read_text(encoding="utf-8").splitlines()

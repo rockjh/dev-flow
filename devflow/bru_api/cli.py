@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import json
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 from datetime import datetime
 from pathlib import Path
@@ -43,9 +45,8 @@ from .qa_paths import (
     CONSTRAINTS,
     CONTRACTS,
     EXECUTION,
-    GLOBAL_RESULTS,
-    LOGS,
-    RESULTS,
+    FIXTURES,
+    REPORTS,
 )
 from .constraints import (
     ensure_rule_library,
@@ -62,7 +63,7 @@ from .value_resolution import (
 
 
 def qa_root_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--qa-root", type=Path, default=Path("test/bru-api"))
+    parser.add_argument("--qa-root", type=Path, default=Path("qa"))
 
 
 def shared_cli_mode(qa_root: Path) -> bool:
@@ -141,8 +142,26 @@ def init_command(argv: list[str]) -> int:
         print("ERROR: multiple design roots found; choose one with --design-root:\n" + candidates, file=sys.stderr)
         return 2
     changed = initialize_execution_layout(qa_root, local_scripts=False)
+    # Remove legacy execution by-products. Formal contracts and Bruno assets
+    # are left intact; only known transient/report directories are cleaned.
+    for obsolete in (
+        qa_root / "artifacts", qa_root / "qa-temp",
+        qa_root / REPORTS / "global", qa_root / REPORTS / "modules", qa_root / REPORTS / "logs",
+    ):
+        if obsolete.is_dir():
+            shutil.rmtree(obsolete, ignore_errors=True)
+            changed.append(obsolete)
+    reports_root = qa_root / REPORTS
+    if reports_root.is_dir():
+        for pattern in ("*.log", "*-evidence.json", "*-result.json", "generate-errors*.txt"):
+            for transient in reports_root.rglob(pattern):
+                if transient.is_file():
+                    transient.unlink(missing_ok=True)
+                    changed.append(transient)
     ensure_rule_library(qa_root)
     (qa_root / CONTRACTS / "modules").mkdir(parents=True, exist_ok=True)
+    (qa_root / FIXTURES).mkdir(parents=True, exist_ok=True)
+    (qa_root / "fixtures").mkdir(parents=True, exist_ok=True)
     initial_artifacts = {
         qa_root / CONSTRAINTS / "observed-rules.yaml": {"version": 1, "observations": []},
         qa_root / CONSTRAINTS / "design-rules.yaml": {
@@ -165,7 +184,7 @@ def init_command(argv: list[str]) -> int:
             "openapi_fingerprint": "",
             "coverage": {"openapi_endpoints": 0, "documented_endpoints": 0, "excluded_endpoints": 0},
         },
-        qa_root / CONTRACTS / "fixtures" / "generated" / "manifest.yaml": {"version": 1, "fixtures": []},
+        qa_root / CONTRACTS / "fixtures-manifest.yaml": {"version": 1, "fixtures": []},
     }
     for path, document in initial_artifacts.items():
         if not path.is_file():
@@ -200,6 +219,43 @@ def _write_design_understanding(qa_root: Path, document: dict[str, object]) -> P
     return path
 
 
+def _render_markdown_report(document: dict[str, object]) -> str:
+    """Render a compact human report without retaining machine-only JSON."""
+    summary = document.get("summary", {}) if isinstance(document.get("summary"), dict) else {}
+    lines = [
+        "# API Test Report",
+        "",
+        f"- Status: `{redact(str(document.get('status', 'unknown')))}`",
+        f"- Execution: `{redact(str(document.get('execution', 'not_started')))}`",
+    ]
+    if document.get("generated_at"):
+        lines.append(f"- Execution time: {redact(str(document['generated_at']))}")
+    labels = (("total", "Total cases"), ("executed", "Executed"), ("passed", "Passed"), ("failed", "Failed"), ("not_executed", "Not executed"))
+    for key, label in labels:
+        if key in summary:
+            lines.append(f"- {label}: {summary[key]}")
+    failures = document.get("failures", []) if isinstance(document.get("failures"), list) else []
+    lines.extend(["", "## Failed Interfaces and Cases", ""])
+    lines.extend(f"- `{redact(str(item.get('case_id', '')))}`: {redact(str(item.get('failure_reason') or 'unknown reason'))}" for item in failures if isinstance(item, dict))
+    if not failures:
+        lines.append("- None")
+    gate_failures = document.get("gate_failures", [])
+    if isinstance(gate_failures, list) and gate_failures:
+        lines.extend(["", "## Gate Failures", ""])
+        lines.extend(f"- {redact(str(value))}" for value in gate_failures)
+    unexecuted = document.get("unexecuted", [])
+    if isinstance(unexecuted, list) and unexecuted:
+        lines.extend(["", "## Unexecuted Cases", ""])
+        lines.extend(f"- `{redact(str(item.get('id', item)))}`" if isinstance(item, dict) else f"- `{redact(str(item))}`" for item in unexecuted)
+    formal = document.get("formal_tests", [])
+    protocol = document.get("protocol_tests", [])
+    lines.extend(["", "## Case Classification", "", f"- Formal: {len(formal) if isinstance(formal, list) else 0}", f"- Protocol: {len(protocol) if isinstance(protocol, list) else 0}"])
+    confirmations = document.get("manual_confirmation", []) if isinstance(document.get("manual_confirmation"), list) else []
+    lines.extend(["", "## Manual Confirmation Items", ""])
+    lines.extend(f"- `{redact(str(item.get('case_id', '')))}`" for item in confirmations if isinstance(item, dict))
+    if not confirmations:
+        lines.append("- None")
+    return "\n".join(lines).rstrip() + "\n"
 def _design_report(
     qa_root: Path,
     design_rules: dict[str, object],
@@ -302,9 +358,9 @@ def _design_report(
     }
     report_path: Path | None = None
     try:
-        report_path = qa_root / RESULTS / "design-generation-report.json"
+        report_path = qa_root / REPORTS / "latest.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(redact(report), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        report_path.write_text(_render_markdown_report(report), encoding="utf-8")
     except OSError:
         report_path = None
     formal = len(formal_cases)
@@ -656,7 +712,7 @@ def run_command(argv: list[str]) -> int:
             [sys.executable, "-m", "devflow.bru_api.run_bruno", "--help"], relay_summary=False
         )
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--qa-root", type=Path, default=Path("test/bru-api"))
+    parser.add_argument("--qa-root", type=Path, default=Path("qa"))
     known, remaining = parser.parse_known_args(extra)
     try:
         errors = script_bundle_errors(known.qa_root.resolve())
@@ -741,27 +797,6 @@ def worker_command(argv: list[str], start: bool) -> int:
     return 1 if errors else 0
 
 
-def aggregate_command(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="devflow bru-api aggregate")
-    qa_root_argument(parser)
-    args = parser.parse_args(argv)
-    try:
-        from .run_bruno import aggregate_module_results
-
-        report_path, evidence_path, report = aggregate_module_results(args.qa_root)
-    except (OSError, ValueError, TypeError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    summary = report["summary"]
-    print(
-        f"aggregated total={summary['total']} executed={summary['executed']} passed={summary['passed']} "
-        f"failed={summary['failed']} not_executed={summary['not_executed']} status={report['status']}"
-    )
-    print(f"result_report={report_path}")
-    print(f"execution_evidence={evidence_path}")
-    return 0 if report["status"] == "verified" else 1
-
-
 def preflight_command(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="devflow bru-api preflight", add_help=False)
     qa_root_argument(parser)
@@ -791,14 +826,11 @@ def preflight_command(argv: list[str]) -> int:
         for error in lock_errors:
             print(f"ERROR: {error}", file=sys.stderr)
         return 1
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    result_root = qa_root / GLOBAL_RESULTS
-    log_root = qa_root / LOGS
-    result_root.mkdir(parents=True, exist_ok=True)
-    log_root.mkdir(parents=True, exist_ok=True)
-    static_path = result_root / f"{timestamp}-static-coverage.json"
-    report_path = result_root / f"{timestamp}-preflight.json"
-    log_path = log_root / f"{timestamp}-preflight.log"
+    temporary_root = Path(tempfile.mkdtemp(prefix="devflow-preflight-"))
+    atexit.register(shutil.rmtree, temporary_root, True)
+    static_path = temporary_root / "static-coverage.json"
+    report_path = temporary_root / "preflight.json"
+    log_path = temporary_root / "preflight.log"
     check = subprocess.run(
         [
             sys.executable,
@@ -931,7 +963,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="devflow bru-api")
     commands = (
         "init", "understand", "generate", "materialize", "check", "run", "preflight", "reconcile",
-        "aggregate", "worker-start", "worker-check", "mock-data-generate", "mock-data-clean", "scripts",
+        "worker-start", "worker-check", "mock-data-generate", "mock-data-clean", "scripts",
     )
     parser.add_argument("command", nargs="?", choices=commands)
     if not argv or argv[0] in {"-h", "--help"}:
@@ -948,8 +980,6 @@ def main(argv: list[str] | None = None) -> int:
         return generate_command(remainder)
     if command == "materialize":
         return materialize_command(remainder)
-    if command == "aggregate":
-        return aggregate_command(remainder)
     if command in {"mock-data-generate", "mock-data-clean"}:
         return mock_data_command(remainder, clean=command == "mock-data-clean")
     if command in {"worker-start", "worker-check"}:

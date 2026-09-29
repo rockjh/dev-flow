@@ -784,7 +784,7 @@ def generate_fixtures(
     """Create endpoint-owned fixtures, variables, and a checksum manifest."""
 
     qa_root = qa_root_for_contracts(contracts_root)
-    generated_root = contracts_root / "fixtures" / "generated"
+    generated_root = contracts_root.parent / "fixtures" / "generated"
     generated_root.mkdir(parents=True, exist_ok=True)
     manifest_items: list[dict[str, Any]] = []
     changed: list[Path] = []
@@ -860,7 +860,7 @@ def generate_fixtures(
             updated["cases"] = cases
             cases_path.write_text(render_manifest(updated, cases_path), encoding="utf-8")
             changed.append(cases_path)
-    manifest_path = generated_root / "manifest.yaml"
+    manifest_path = contracts_root / "fixtures-manifest.yaml"
     rendered_manifest = render_manifest({"version": 1, "fixtures": manifest_items}, manifest_path)
     if not manifest_path.is_file() or manifest_path.read_text(encoding="utf-8", errors="strict") != rendered_manifest:
         manifest_path.write_text(rendered_manifest, encoding="utf-8")

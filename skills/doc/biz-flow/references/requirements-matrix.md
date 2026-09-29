@@ -1,24 +1,21 @@
 # Biz-flow Requirements Gate Matrix
 
-This matrix is the review index for requirements 1-16. The CLI and document
-layer enforce the machine column; the resolution column remains explicit human
-evidence and is rejected when it is missing or stale.
+Use this matrix before declaring a run complete. CLI schemas, generated
+reports, and the final Markdown are authoritative; prose analysis must cite
+source evidence for every semantic claim.
 
-| Requirement | Machine gate | Semantic evidence / failure location |
+| Requirement | Required gate | Failure evidence |
 | --- | --- | --- |
-| 1 | `discover` registers `message` entries and async parent/worker edges | source `file:line`, topic/registration and handler; unresolved blocks key paths |
-| 2 | parser validates `devflow:exclude` fields, `file:line`, and overlap | CLI reports directive and evidence |
-| 3 | overview and artifacts use atomic replacement; reviews are never promoted | failed run retains prior Markdown and prints recovery path |
-| 4 | unresolved/resolution schema requires evidence, path, controls, unknowns | critical unresolved findings block `generate` |
-| 5 | placeholder and skeleton text are rejected by `check` | review status and evidence identify missing business semantics |
-| 6 | discovery writes `module_suggestions` grouped by source path | human confirms module boundaries in overview |
-| 7 | title must come from source description or explicit override | generated skeleton is marked `title_unresolved`; durable `check` rejects delivery |
-| 8 | each section starts with an objective `入口类型` paragraph | coverage reports `missing-entry-introduction` |
-| 9 | business points are bullets and each is at most 50 characters | apply/check report entry ID and field |
-| 10 | Mermaid structural validator reports line and syntax point; `mmdc` is used when present | renderer output is preserved as failure evidence |
-| 11 | controls, errors, and evidence are compared against source-derived facts | unresolved branches require structured resolution |
-| 12 | `orchestration.py` creates module single-writer and entry read-only tasks with fingerprint/status/merge fields | scheduler records task boundary and merge result |
-| 13 | overview table includes stable ID, description, trigger, module file, kind, source | check compares table IDs to discovered IDs and directives |
-| 14 | uniqueness, coverage, ownership, evidence, status, placeholders and diagrams are code gates | semantic gaps remain unresolved with evidence |
-| 15 | `biz-flow verify` repeats durable `check`, compares Markdown hashes, and rejects temp files | final verify JSON is the repeatable record |
-| 16 | executor `execute`/`submit` wrappers are scanned independently, including lambdas and method references | unresolved wrapper keeps submit source and blocks silent omission |
+| R1 Whole scan | Discovery covers source/config registrations, platform bases, HTTP/webhook, messages/topics, events, imports, schedulers/XXL-JOB, async, and CLI; excludes non-business paths | Candidate source location and scanner reason |
+| R1 Deduplication | Entry IDs and `core_capabilities` are unique | Duplicate IDs/capabilities in discovery report |
+| R2 Module confirmation | Every entry has exactly one responsibility module or explicit `待确认`; exclusions have reason and real `file:line` evidence; user confirmation is recorded | Module map, overview, and confirmation marker |
+| R3-R5 Delegation | Main role owns scan/partition; each module has one writer; each entry has one read-only analysis result | Orchestration task boundary, fingerprint, status, and merge record |
+| R5 Evidence | Entry result contains function, participants, ordered calls, all reachable branches, loops, async, persistence, external calls, outcomes, source evidence, and unresolved questions | Structured entry review; critical unknowns block generation |
+| R6-R8 Diagram fidelity | Concrete participants and actions; `alt`/`else`, `loop`, and `opt` represent source-backed paths; every entry has `sequenceDiagram` and `autonumber` | Final Markdown diagram validation |
+| R9 Structure | Business title, trigger, function, diagram appear in fixed order; human text has no source paths/line numbers; markers survive redaction | `check` reports section, marker, or redaction violation |
+| R9 Mermaid | Structural syntax is valid; use a renderer when available and report structural-only scope otherwise | Renderer output or structural validator location |
+| R10 Stability | Stable IDs, ownership, order, and content for unchanged source/partition; lock advances only after coverage checks | `verify` twice returns `stable=true` |
+
+Never replace an unknown with a guessed rule or a generic participant. Record
+the evidence and unresolved reason, and stop generation when it affects entry
+existence, ownership, or a key business branch.

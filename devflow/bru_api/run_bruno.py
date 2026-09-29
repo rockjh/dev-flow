@@ -4,11 +4,11 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 import math
 import re
 import subprocess
+import shutil
 import sys
 import tempfile
 import urllib.error
@@ -36,11 +36,8 @@ from .qa_paths import (
     CONSTRAINTS,
     CONTRACTS,
     EXECUTION,
-    GLOBAL_EVIDENCE,
-    GLOBAL_RESULTS,
-    LOGS,
-    MODULE_EVIDENCE,
-    MODULE_RESULTS,
+    LATEST_REPORT,
+    REPORTS,
 )
 from .constraints import (
     check_module_lock,
@@ -57,7 +54,9 @@ from .mock_data import (
     apply_runtime_variables as apply_mock_data_runtime_variables,
     cleanup as cleanup_mock_data,
     prepare as prepare_mock_data,
+    RESULT_DIRECTORY,
 )
+from ..core.redaction import redact
 
 
 ANSI_RED = "\033[31m"
@@ -91,8 +90,52 @@ def log_path(qa_root: Path, module: str | None) -> Path:
     scope = module or "all"
     safe_scope = re.sub(r'[<>:"/\\|?*\s]+', "-", scope).strip("-.") or "all"
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    root = qa_root / LOGS / "modules" / safe_scope if module else qa_root / LOGS
-    return root / f"{timestamp}-run-bruno-{safe_scope}.log"
+    # Logs are diagnostic scratch data. Keep them outside the project so a
+    # completed run cannot turn them into a deliverable asset.
+    return Path(tempfile.gettempdir()) / f"devflow-{timestamp}-run-bruno-{safe_scope}.log"
+
+
+def render_latest_report(report: dict[str, Any]) -> str:
+    """Render the single human-facing execution report."""
+    summary = report.get("summary", {}) if isinstance(report.get("summary"), dict) else {}
+    lines = ["# API Test Execution Report", "", f"- Execution time: {redact(str(report.get('generated_at', datetime.now().astimezone().isoformat())))}"]
+    lines.append(f"- Environment: {redact(str(report.get('environment', 'unavailable')))}")
+    lines.append(f"- Module count: {len(report.get('modules', [])) if isinstance(report.get('modules'), list) else 0}")
+    labels = (("total", "Total cases"), ("executed", "Executed"), ("passed", "Passed"), ("failed", "Failed"), ("not_executed", "Not executed"))
+    lines.extend(f"- {label}: {summary.get(key, 0)}" for key, label in labels)
+    lines.extend(["", "## Failed Interfaces and Cases", ""])
+    failures = report.get("failures", []) if isinstance(report.get("failures"), list) else []
+    lines.extend(
+        f"- `{redact(str(item.get('case_id', '')))}` ({redact(str(item.get('interface') or 'unknown interface'))}): "
+        f"{redact(str(item.get('failure_reason') or 'unknown reason'))}"
+        for item in failures if isinstance(item, dict)
+    )
+    if not failures:
+        lines.append("- None")
+    lines.extend(["", "## Failure Categories", ""])
+    categories: dict[str, int] = {}
+    for item in failures:
+        if isinstance(item, dict):
+            category = str(item.get("failure_category") or "uncategorized")
+            categories[category] = categories.get(category, 0) + 1
+    if categories:
+        lines.extend(f"- {key}: {value}" for key, value in sorted(categories.items()))
+    else:
+        lines.append("- None")
+    confirmations = report.get("manual_confirmation", []) if isinstance(report.get("manual_confirmation"), list) else []
+    lines.extend(["", "## Manual Confirmation Items", ""])
+    lines.extend(f"- `{item.get('case_id', '')}`" for item in confirmations if isinstance(item, dict))
+    if not confirmations:
+        lines.append("- None")
+    lines.extend(["", "## Test Data Preparation and Cleanup", ""])
+    mock_data = report.get("mock_data") if isinstance(report.get("mock_data"), dict) else None
+    if mock_data:
+        lines.append(f"- Preparation status: `{mock_data.get('status', 'unknown')}`")
+        lines.append(f"- Cleanup status: `{mock_data.get('cleanup', 'pending or not required')}`")
+    else:
+        lines.append("- No controlled test data preparation used.")
+    lines.extend(["", "## Version Lock Status", "", f"- `{report.get('version_lock', report.get('status', 'unknown'))}`"])
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def red_warning(message: str) -> str:
@@ -326,7 +369,7 @@ def finish_mock_data_run(
 ) -> int:
     """Offer bounded cleanup after any execution outcome when this run created data."""
 
-    ledger_path = qa_root / "artifacts" / "mock-data" / f"{run_id}.json"
+    ledger_path = qa_root / RESULT_DIRECTORY / f"{run_id}.json"
     if not ledger_path.is_file():
         return 0
     try:
@@ -576,154 +619,6 @@ def result_report(
     }
 
 
-def _report_from_rows(rows: list[dict[str, Any]], scope: str) -> dict[str, Any]:
-    modules: list[dict[str, Any]] = []
-    for module_id in sorted({str(row.get("module", "")) for row in rows}):
-        scoped = [row for row in rows if str(row.get("module", "")) == module_id]
-        modules.append({
-            "module": module_id,
-            "status": "passed" if scoped and all(
-                row.get("status") == "passed" and row.get("needs_manual_confirmation") is not True
-                for row in scoped
-            ) else "attention_required",
-            "total": len(scoped),
-            "executed": sum(row.get("status") != "not_executed" for row in scoped),
-            "passed": sum(row.get("status") == "passed" for row in scoped),
-            "failed": sum(row.get("status") == "failed" for row in scoped),
-            "not_executed": sum(row.get("status") == "not_executed" for row in scoped),
-        })
-    return {
-        "version": 1,
-        "generated_at": datetime.now().astimezone().isoformat(),
-        "scope": scope,
-        "summary": {
-            "total": len(rows),
-            "executed": sum(row.get("status") != "not_executed" for row in rows),
-            "passed": sum(row.get("status") == "passed" for row in rows),
-            "failed": sum(row.get("status") == "failed" for row in rows),
-            "not_executed": sum(row.get("status") == "not_executed" for row in rows),
-        },
-        "modules": modules,
-        "failures": [row for row in rows if row.get("status") == "failed"],
-        "not_executed": [row for row in rows if row.get("status") == "not_executed"],
-        "manual_confirmation": [row for row in rows if row.get("needs_manual_confirmation") is True],
-        "cases": rows,
-    }
-
-
-def aggregate_module_results(qa_root: Path) -> tuple[Path, Path, dict[str, Any]]:
-    """Merge the latest independent module reports and evidence into one global result."""
-
-    qa_root = qa_root.resolve()
-    contracts_root = qa_root / CONTRACTS
-    cases = scope_cases(contracts_root, None)
-    by_module: dict[str, list[dict[str, Any]]] = {}
-    for case in cases:
-        by_module.setdefault(str(case.get("_module", "")), []).append(case)
-    rows: list[dict[str, Any]] = []
-    reconciliation_errors: list[str] = []
-    source_reports: list[str] = []
-    merged_evidence: dict[str, Any] = {
-        "version": 1,
-        "executed": [],
-        "passed": [],
-        "cases": {},
-        "flows": {},
-        "module_evidence": [],
-    }
-    for module_id, module_cases in sorted(by_module.items()):
-        result_root = qa_root / MODULE_RESULTS / module_id
-        candidates = sorted(result_root.glob("*-result.json")) if result_root.is_dir() else []
-        latest = candidates[-1] if candidates else None
-        expected_ids = {str(case.get("id")) for case in module_cases}
-        if latest is None:
-            reconciliation_errors.append(f"module {module_id} has no result report")
-            rows.extend(result_report(
-                module_cases, None, f"module:{module_id}", "insufficient_data", "模块尚未执行",
-            )["cases"])
-            continue
-        document = load_data(latest)
-        source_reports.append(latest.relative_to(qa_root).as_posix())
-        module_rows = {
-            str(row.get("case_id")): row
-            for row in document.get("cases", [])
-            if isinstance(row, dict) and row.get("case_id")
-        } if isinstance(document, dict) else {}
-        if set(module_rows) != expected_ids:
-            missing = sorted(expected_ids - set(module_rows))
-            stale = sorted(set(module_rows) - expected_ids)
-            if missing:
-                reconciliation_errors.append(f"module {module_id} report is missing cases: {', '.join(missing)}")
-            if stale:
-                reconciliation_errors.append(f"module {module_id} report contains stale cases: {', '.join(stale)}")
-        fallback = {
-            str(row["case_id"]): row
-            for row in result_report(
-                module_cases, None, f"module:{module_id}", "insufficient_data", "模块报告缺少当前用例",
-            )["cases"]
-        }
-        rows.extend(copy.deepcopy(module_rows.get(case_id, fallback[case_id])) for case_id in sorted(expected_ids))
-        evidence_reference = document.get("execution_evidence") if isinstance(document, dict) else None
-        evidence_path = qa_root / str(evidence_reference) if evidence_reference else None
-        if evidence_path and evidence_path.is_file():
-            evidence = load_data(evidence_path)
-            merged_evidence["executed"] = list(dict.fromkeys([
-                *merged_evidence["executed"], *evidence.get("executed", []),
-            ]))
-            merged_evidence["passed"] = list(dict.fromkeys([
-                *merged_evidence["passed"], *evidence.get("passed", []),
-            ]))
-            if isinstance(evidence.get("cases"), dict):
-                overlap = set(merged_evidence["cases"]) & set(evidence["cases"])
-                if overlap:
-                    reconciliation_errors.append(
-                        "module evidence repeats case ids: " + ", ".join(sorted(overlap))
-                    )
-                merged_evidence["cases"].update(copy.deepcopy(evidence["cases"]))
-            if isinstance(evidence.get("flows"), dict):
-                overlap = set(merged_evidence["flows"]) & set(evidence["flows"])
-                if overlap:
-                    reconciliation_errors.append(
-                        "module evidence repeats flow ids: " + ", ".join(sorted(overlap))
-                    )
-                merged_evidence["flows"].update(copy.deepcopy(evidence["flows"]))
-            merged_evidence["module_evidence"].append(evidence_path.relative_to(qa_root).as_posix())
-        elif any(row.get("status") != "not_executed" for row in module_rows.values()):
-            reconciliation_errors.append(f"module {module_id} report has no readable execution evidence")
-
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-    evidence_root = qa_root / GLOBAL_EVIDENCE
-    result_root = qa_root / GLOBAL_RESULTS
-    evidence_root.mkdir(parents=True, exist_ok=True)
-    result_root.mkdir(parents=True, exist_ok=True)
-    evidence_path = evidence_root / f"{timestamp}-evidence.json"
-    evidence_path.write_text(json.dumps(merged_evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    write_observed_rules(
-        qa_root,
-        cases,
-        merged_evidence,
-        evidence_path.relative_to(qa_root).as_posix(),
-        qa_root / CONSTRAINTS / "observed-rules.yaml",
-    )
-    report = _report_from_rows(rows, "aggregated-modules")
-    report["execution_evidence"] = evidence_path.relative_to(qa_root).as_posix()
-    report["source_module_reports"] = source_reports
-    constraint_errors = validate_stage(qa_root, "post-execution")
-    all_errors = list(dict.fromkeys([*reconciliation_errors, *constraint_errors]))
-    if all_errors:
-        report["reconciliation_errors"] = all_errors
-        report["status"] = "failed"
-    else:
-        required_incomplete = any(
-            row.get("status") != "passed" or row.get("needs_manual_confirmation") is True
-            for row in rows
-        )
-        report["status"] = "failed" if required_incomplete else "verified"
-    report_path = result_root / f"{timestamp}-result.json"
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return report_path, evidence_path, report
-
-
 def _response_shape(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _response_shape(child) for key, child in value.items()}
@@ -817,11 +712,7 @@ def persist_execution_artifacts(
     default_category: str = "request_failure",
     default_reason: str = "用例未执行",
 ) -> tuple[Path, Path | None, dict[str, Any]]:
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     module_id = str(cases[0].get("_module")) if module and cases else (module or "unknown")
-    result_root = qa_root / MODULE_RESULTS / module_id if module else qa_root / GLOBAL_RESULTS
-    evidence_root = qa_root / MODULE_EVIDENCE / module_id if module else qa_root / GLOBAL_EVIDENCE
-    result_root.mkdir(parents=True, exist_ok=True)
     report = result_report(
         cases,
         evidence,
@@ -829,21 +720,27 @@ def persist_execution_artifacts(
         default_category,
         default_reason,
     )
-    report_path = result_root / f"{timestamp}-result.json"
+    if "environment" not in report:
+        try:
+            config = load_execution_config(qa_root / EXECUTION / "config.yaml")
+            report["environment"] = config.get("active_environment", "unavailable")
+        except (OSError, TypeError, ValueError):
+            report["environment"] = "unavailable"
+    report.setdefault("version_lock", "not_verified")
+    report_path = qa_root / LATEST_REPORT
     evidence_output: Path | None = None
     if evidence is not None:
-        evidence_root.mkdir(parents=True, exist_ok=True)
-        evidence_output = evidence_root / f"{timestamp}-evidence.json"
-        evidence_output.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        evidence_reference = evidence_output.relative_to(qa_root).as_posix()
-        report["execution_evidence"] = evidence_reference
+        # Evidence is intentionally process-local. It is consumed by the
+        # coverage gate and then discarded with the temporary run directory.
+        report["execution_evidence"] = "temporary execution evidence"
         observed_path = (
             qa_root / CONTRACTS / "modules" / str(cases[0].get("_module_directory")) / "observed-rules.yaml"
             if module and cases
             else qa_root / CONSTRAINTS / "observed-rules.yaml"
         )
-        write_observed_rules(qa_root, cases, evidence, evidence_reference, observed_path)
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        write_observed_rules(qa_root, cases, evidence, "temporary execution evidence", observed_path)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(render_latest_report(report), encoding="utf-8")
     return report_path, evidence_output, report
 
 
@@ -861,7 +758,7 @@ def persist_post_execution_constraints(
         result_code = result_code or 1
     else:
         report["status"] = "verified" if result_code == 0 else "failed"
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    report_path.write_text(render_latest_report(report), encoding="utf-8")
     return result_code
 
 
@@ -1153,7 +1050,7 @@ def execute(args: argparse.Namespace, qa_root: Path, execution_log: Path) -> int
         except (MockDataError, OSError, TypeError, ValueError) as exc:
             print(f"ERROR: mock-data preparation failed: {exc}", file=sys.stderr)
             print("Cases that require mock data will not send their requests; independent cases will continue.", file=sys.stderr)
-            ledger_path = qa_root / "artifacts" / "mock-data" / f"{mock_run_id}.json"
+            ledger_path = qa_root / RESULT_DIRECTORY / f"{mock_run_id}.json"
             if ledger_path.is_file():
                 value = load_data(ledger_path)
                 if isinstance(value, dict):
@@ -1327,9 +1224,11 @@ def execute(args: argparse.Namespace, qa_root: Path, execution_log: Path) -> int
             "status": mock_result.get("status", "failed"),
             "ready_case_ids": mock_result.get("ready_case_ids", []),
             "blocked_case_ids": sorted(mock_blocked_case_ids),
-            "ledger": (Path("artifacts") / "mock-data" / f"{mock_run_id}.json").as_posix(),
+            "ledger": (RESULT_DIRECTORY / f"{mock_run_id}.json").as_posix(),
         }
-        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        report["environment"] = config["active_environment"]
+        report["version_lock"] = "warning" if version_warnings else "verified"
+        report_path.write_text(render_latest_report(report), encoding="utf-8")
         constraint_errors = validate_stage(
             qa_root,
             "post-execution",
@@ -1353,6 +1252,10 @@ def execute(args: argparse.Namespace, qa_root: Path, execution_log: Path) -> int
         if evidence_output:
             print(f"  execution_evidence={evidence_output}")
         cleanup_code = finish_mock_data_run(args, qa_root, mock_run_id)
+        report["mock_data"]["cleanup"] = "failed" if cleanup_code else (
+            "completed" if args.clean_mock_data else "not requested"
+        )
+        report_path.write_text(render_latest_report(report), encoding="utf-8")
     return cleanup_code or result_code
 
 
@@ -1403,11 +1306,28 @@ def main(argv: list[str] | None = None) -> int:
     with execution_log.open("x", encoding="utf-8") as log:
         sys.stdout = Tee(original_stdout, log)
         sys.stderr = Tee(original_stderr, log)
+        result_code = 1
         try:
-            return execute(args, qa_root, execution_log)
+            result_code = execute(args, qa_root, execution_log)
         finally:
             sys.stdout = original_stdout
             sys.stderr = original_stderr
+    cleanup_errors: list[str] = []
+    try:
+        execution_log.unlink(missing_ok=True)
+    except OSError as exc:
+        cleanup_errors.append(f"cannot remove execution log: {exc}")
+    try:
+        shutil.rmtree(qa_root / RESULT_DIRECTORY)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        cleanup_errors.append(f"cannot remove temporary mock-data files: {exc}")
+    if cleanup_errors:
+        for error in cleanup_errors:
+            print(f"ERROR: cleanup failed: {error}", file=sys.stderr)
+        return result_code or 1
+    return result_code
 
 
 if __name__ == "__main__":

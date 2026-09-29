@@ -30,7 +30,7 @@ version operations are available explicitly without project-local scripts:
 ```bash
 devflow bru-api scripts version-check --qa-root qa --phase before-generate
 devflow bru-api scripts version-check --qa-root qa --phase before-execute
-devflow bru-api scripts version-complete --qa-root qa --completion-report qa/results/<strict-report>.json --tests-adapted
+devflow bru-api scripts version-complete --qa-root qa --completion-report <temporary-strict-report.json> --tests-adapted
 ```
 
 For a remote `baseUrl`, configure `versionPath` in the active Bruno environment when the deployment exposes a version endpoint. `versionJsonPath`, `versionHeader`, or `expectedVersion` can select a non-standard value. The endpoint must share the `baseUrl` origin, and a failed or mismatched version gate must be resolved before execution.

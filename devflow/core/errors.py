@@ -55,6 +55,6 @@ def classify_failure(command: str, message: str, return_code: int) -> DevflowErr
         return DevflowError("GATE_FAILED", message, ExitCode.GATE_FAILED)
     if return_code == int(ExitCode.TEST_FAILED):
         return DevflowError("TEST_FAILED", message, ExitCode.TEST_FAILED)
-    if command.endswith((".run", ".reconcile", ".aggregate")):
+    if command.endswith((".run", ".reconcile")):
         return DevflowError("TEST_FAILED", message, ExitCode.TEST_FAILED)
     return DevflowError("GATE_FAILED", message, ExitCode.GATE_FAILED)

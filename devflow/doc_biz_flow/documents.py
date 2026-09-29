@@ -47,7 +47,18 @@ def _required_control_counts(scan: ScanResult, entry: EntryPoint) -> tuple[int, 
     )
     required = [0, 0, 0]
     for relative in dict.fromkeys(references):
-        if Path(relative).suffix.lower() != ".py":
+        suffix = Path(relative).suffix.lower()
+        if suffix != ".py":
+            try:
+                text = (scan.root / relative).read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                continue
+            # C-like languages have stable lexical control markers even when
+            # a full compiler is unavailable. Count only the entry call-chain
+            # source files already recorded by discovery.
+            required[0] += len(re.findall(r"\bif\s*\(", text))
+            required[1] += len(re.findall(r"\b(?:for|while)\s*\(", text))
+            required[2] += len(re.findall(r"\bif\s*\([^\n]*\)\s*\{[^{}]*\}\s*else\b", text, re.S))
             continue
         try:
             tree = ast.parse((scan.root / relative).read_text(encoding="utf-8"))
@@ -131,7 +142,22 @@ def _entry_title(entry: EntryPoint) -> str:
     }
     if entry.title and not entry.title_unresolved:
         return entry.title[:80]
-    return f"title_unresolved: {names.get(entry.kind, entry.kind)} entry".strip()
+    # A generated document must still have a business-shaped heading when the
+    # source has no human label.  Keep protocol details in the trigger line.
+    return {
+        "url": "HTTP 请求处理",
+        "webhook": "Webhook 处理",
+        "websocket": "WebSocket 消息处理",
+        "sse": "事件流处理",
+        "rpc": "RPC 业务调用",
+        "message": "消息消费处理",
+        "scheduled": "定时任务处理",
+        "event": "事件监听处理",
+        "cli": "命令行任务",
+        "file": "文件导入处理",
+        "batch": "批处理任务",
+        "worker": "异步任务处理",
+    }.get(entry.kind, "业务入口处理")
 
 
 def _codes(entry: EntryPoint) -> str:
@@ -340,8 +366,8 @@ def _append_error(lines: list[str], error: ErrorEvidence) -> None:
     condition = str(redact(error.condition)).replace("\n", " ")[:100]
     consequence = str(redact(error.consequence)).replace("\n", " ")[:100]
     lines.append(f"alt {error.code}：{condition}")
-    lines.append(f"System-->>Caller: {error.phase}错误；{consequence}")
-    lines.append("System-->>Caller: 协议失败；结果未落库；未投递")
+    lines.append(f"P1-->>P0: {error.phase}错误；{consequence}")
+    lines.append("P1-->>P0: 协议失败；结果未落库；未投递")
     lines.append("end")
 
 
@@ -351,7 +377,7 @@ def _append_error(lines: list[str], error: ErrorEvidence) -> None:
     consequence = _mermaid_text(error.consequence, 100)
     kind = "opt" if error.phase in {"async", "worker"} else "alt"
     lines.append(f"{kind} {_mermaid_text(error.code, 60)}: {condition}")
-    lines.append(f"System-->>Caller: {_mermaid_text('PROTOCOL_FAILURE; PERSISTED=false; DELIVERED=false; ' + consequence)}")
+    lines.append(f"P1-->>P0: {_mermaid_text('业务失败；' + consequence)}")
     lines.append("end")
 
 
@@ -359,17 +385,29 @@ def _diagram(entry: EntryPoint) -> str:
     review = _review(entry)
     lines = [
         "```mermaid",
+        '%%{init: {"sequence": {"actorMargin": 150, "diagramMarginX": 30, "wrap": true}}}%%',
         "sequenceDiagram",
         "autonumber",
-        "participant Caller as 调用方",
-        "participant System as 当前系统",
+        f"participant P0 as {_mermaid_text(entry.caller, 80)}",
+        f"participant P1 as {_mermaid_text(entry.module or '业务平台', 80)}",
     ]
-    participants = {step.participant for step in review.steps if step.participant not in {"当前系统", "调用方"}}
-    aliases = {"数据库": "DB", "缓存/文件": "Storage", "消息/异步系统": "Middleware", "可见外部接口": "External"}
-    for participant in sorted(participants):
-        alias = aliases.get(participant, "P" + str(len(aliases) + 1))
-        aliases.setdefault(participant, alias)
-        lines.append(f"participant {alias} as {participant}")
+    participants: dict[str, str] = {}
+    for step in review.steps:
+        if step.participant in {"当前系统", "调用方"}:
+            continue
+        label = step.participant
+        if step.participant == "数据库":
+            label = f"{entry.module}业务数据库"
+        elif step.participant == "缓存/文件":
+            label = f"{entry.module}文件或缓存"
+        elif step.participant == "消息/异步系统":
+            label = f"{entry.module}消息基础设施"
+        elif step.participant == "可见外部接口":
+            label = f"{entry.module}外部接口"
+        alias = f"P{len(participants) + 1}"
+        participants[label] = alias
+        lines.append(f"participant {alias} as {_mermaid_text(label, 80)}")
+    aliases = {"当前系统": "System", "调用方": "Caller", **{label: alias for label, alias in participants.items()}}
     lines.append(f"Caller->>System: {_mermaid_text(entry.identifier)}")
     lines.append(f"System->>System: {_mermaid_text(f'进入 {entry.handler}')}")
     errors = sorted(entry.errors, key=lambda item: item.line)
@@ -383,6 +421,13 @@ def _diagram(entry: EntryPoint) -> str:
                 emitted_errors.add(index)
         text = _mermaid_text(step.text, 120)
         participant = aliases.get(step.participant, "System")
+        if step.participant in {"数据库", "缓存/文件", "消息/异步系统", "可见外部接口"}:
+            participant = next((alias for label, alias in participants.items() if label.startswith(entry.module) and (
+                (step.participant == "数据库" and "数据库" in label)
+                or (step.participant == "缓存/文件" and "文件或缓存" in label)
+                or (step.participant == "消息/异步系统" and "消息基础设施" in label)
+                or (step.participant == "可见外部接口" and "外部接口" in label)
+            )), "System")
         if step.kind == "alt":
             branch_number += 1
             lines.append(f"alt branch {branch_number}: {text}")
@@ -396,23 +441,15 @@ def _diagram(entry: EntryPoint) -> str:
         elif step.kind == "end":
             lines.append("end")
         else:
-            lines.append(f"System->>{participant}: {text}")
+            lines.append(f"P1->>{participant}: {text}")
     for index, error in enumerate(errors):
         if index not in emitted_errors:
             _append_error(lines, error)
     if errors:
-        lines.append("Note over Caller,System: 协议失败分支；运行时只选择一条互斥路径")
-    persistence = "落库" if entry.has_persistence else "不落库"
-    delivery = "投递/发送" if entry.has_async else "不投递"
-    lines.append(
-        f"System-->>Caller: 协议成功；{persistence}；{delivery}；{str(redact(review.outcome))[:100]}"
-    )
-    lines.pop()
-    lines.append(
-        f"System-->>Caller: PROTOCOL_SUCCESS； PERSISTED={str(entry.has_persistence).lower()}； "
-        f"DELIVERED={str(entry.has_async).lower()}； {str(redact(review.outcome))[:100]}"
-    )
-    lines.append(f"Note over Caller,System: {_mermaid_text(review.outcome)}")
+        lines.append("Note over P0,P1: 协议失败分支；运行时只选择一条互斥路径")
+    lines.append(f"P1-->>P0: {_mermaid_text(str(redact(review.outcome)), 120)}")
+    lines.append(f"Note over P0,P1: {_mermaid_text(review.outcome)}")
+    lines = [line.replace("Caller", "P0").replace("System", "P1") for line in lines]
     lines.append("```")
     return "\n".join(lines)
 
@@ -422,6 +459,8 @@ def _validate_mermaid(diagram: str) -> list[str]:
     if ";" in diagram:
         return ["ASCII semicolon is not allowed in Mermaid sequence labels"]
     lines = [line.strip() for line in diagram.splitlines() if line.strip()]
+    if lines and lines[0].startswith("%%{init:"):
+        lines = lines[1:]
     if not lines or lines[0] != "sequenceDiagram":
         return ["missing sequenceDiagram header"]
     if "autonumber" not in lines[1:]:
@@ -457,7 +496,8 @@ def _validate_mermaid(diagram: str) -> list[str]:
             errors.append(f"line {lines.index(line) + 1}: unsupported sequence statement: {line}")
     if blocks:
         errors.append("unclosed " + ", ".join(blocks))
-    if errors or not shutil.which("mmdc"):
+    renderer = shutil.which("mmdc.cmd") or shutil.which("mmdc")
+    if errors or not renderer:
         return errors
     # Use Mermaid's own parser when the optional CLI is installed. The custom
     # validator above remains the deterministic fallback for normal installs.
@@ -467,7 +507,7 @@ def _validate_mermaid(diagram: str) -> list[str]:
             output = Path(temporary) / "diagram.svg"
             source.write_text(diagram, encoding="utf-8")
             completed = subprocess.run(
-                ["mmdc", "-i", str(source), "-o", str(output), "-q"],
+                [renderer, "-i", str(source), "-o", str(output), "-q"],
                 capture_output=True,
                 text=True,
                 timeout=15,
@@ -536,7 +576,14 @@ def _legacy_entry_text(entry: EntryPoint) -> str:
 def _description(review: EntryReview) -> str:
     """Render short business points; machine validation enforces the limit."""
     values = [review.purpose, review.input, review.outcome, review.failure]
-    return "\n".join(f"- {value.strip()}" for value in values if value and value.strip())
+    def clean(value: object) -> str:
+        text = str(value or "").strip()
+        # Source locations belong to machine evidence, never to the readable
+        # entry body.  Keep the surrounding business sentence intact.
+        text = re.sub(r"(?<![A-Za-z0-9_])[A-Za-z0-9_./\\-]+:\d+(?!\d)", "", text)
+        text = re.sub(r"\s{2,}", " ", text).strip(" ，,;；")
+        return text
+    return "\n".join(f"- {clean(value)}" for value in values if clean(value))
 
 
 def _entry_text(entry: EntryPoint) -> str:
@@ -559,14 +606,15 @@ def _entry_text(entry: EntryPoint) -> str:
 def _entry_intro(entry: EntryPoint) -> str:
     """Objective trigger description kept separate from business prose."""
     if entry.kind in {"url", "webhook", "websocket", "sse"}:
-        return f"入口类型：URL 请求（{entry.identifier}），源码 {entry.file}:{entry.line}。"
+        return f"入口描述：{entry.kind.upper()} {entry.identifier}"
     if entry.kind == "message":
-        return f"入口类型：消息消费者（topic {entry.identifier}），源码 {entry.file}:{entry.line}。"
+        return f"入口描述：TOPIC {entry.identifier}"
     if entry.kind == "scheduled":
-        return f"入口类型：定时任务（{entry.identifier}），源码 {entry.file}:{entry.line}。"
+        return f"入口描述：XXL-JOB {entry.identifier}"
     if entry.kind == "worker":
-        return f"入口类型：线程池任务，提交点 {entry.submit_source or entry.file + ':' + str(entry.line)}，worker {entry.handler}。"
-    return f"入口类型：{entry.kind}，源码 {entry.file}:{entry.line}。"
+        return "入口描述：异步任务提交"
+    labels = {"cli": "CLI 命令", "file": "文件导入", "event": "事件监听", "rpc": "RPC 调用", "batch": "批处理"}
+    return f"入口描述：{labels.get(entry.kind, entry.kind)}"
 
 
 def _module_files(
@@ -1030,6 +1078,12 @@ def apply_module_map(scan: ScanResult, path: Path) -> list[str]:
         return [
             "module map source fingerprint is stale; run biz-flow discover and review/confirm the new map"
         ]
+    capability_owners: dict[str, str] = {}
+    for entry in scan.entries:
+        for capability in entry.functions:
+            owner = capability_owners.setdefault(capability, entry.entry_id)
+            if owner != entry.entry_id:
+                return [f"core capability is assigned to multiple entries: {capability} ({owner}, {entry.entry_id})"]
 
     def source_parts(value: object, fallback: str = "") -> tuple[str, int] | None:
         file, separator, number = str(value or fallback).rpartition(":")
@@ -1452,6 +1506,7 @@ def render_module(
     # Keep generated module content compact: version metadata plus entry summaries and diagrams.
     lines = [
         f"<!-- biz-flow-module: {module} -->",
+        f"# {_display(module)}",
         "",
     ]
     lines.extend(_entry_text(entry) for entry in entries)
@@ -1542,7 +1597,7 @@ def _markdown_coverage(
                 stripped = line.strip()
                 if not stripped or stripped.startswith("<!-- biz-flow-module:"):
                     continue
-                if re.match(r"^>\s+.*Git", stripped):
+                if re.match(r"^>\s+.*Git", stripped) or stripped.startswith("# "):
                     continue
                 fact_mismatches.append(f"{name}:content-outside-entry-sections")
                 break
@@ -1572,9 +1627,9 @@ def _markdown_coverage(
                     preamble = section[:diagram_match.start()]
                     preamble_lines = [
                         line.strip() for line in preamble.splitlines()
-                        if line.strip() and not line.startswith("<!--") and not line.startswith("## ")
+                        if line.strip() and not line.startswith("<!--") and not line.startswith("# ") and not line.startswith("## ")
                     ]
-                    if not preamble_lines or not preamble_lines[0].startswith("入口类型"):
+                    if not preamble_lines or not preamble_lines[0].startswith(("入口类型", "入口描述")):
                         fact_mismatches.append(f"{entry_id}:missing-entry-introduction")
                     business_points = [line[2:].strip() for line in preamble_lines[1:] if line.startswith("- ")]
                     if len(business_points) != len(preamble_lines) - 1:
@@ -1587,32 +1642,14 @@ def _markdown_coverage(
                     diagram_mismatches.extend(
                         f"{entry_id}:mermaid:{problem}" for problem in _validate_mermaid(diagram)
                     )
-                    if "PROTOCOL_SUCCESS" not in diagram:
-                        diagram_mismatches.append(f"{entry_id}:mermaid:missing-protocol-success")
-                    if entry.get("errors") and "PROTOCOL_FAILURE" not in diagram:
-                        diagram_mismatches.append(f"{entry_id}:mermaid:missing-protocol-failure")
+                    if not re.search(r"(?:-->>|->>)P0:", diagram):
+                        diagram_mismatches.append(f"{entry_id}:mermaid:missing-entry-result")
+                    if entry.get("errors") and not re.search(r"业务失败|失败|异常", diagram):
+                        diagram_mismatches.append(f"{entry_id}:mermaid:missing-failure-path")
                     result_messages = [
                         line for line in diagram.splitlines()
-                        if line.startswith("System-->>Caller:")
+                        if line.startswith("P1-->>P0:")
                     ]
-                    if not any(
-                        "PROTOCOL_SUCCESS" in line and "PERSISTED=" in line and "DELIVERED=" in line
-                        and re.search(r"(?:落库|不落库|PERSISTED=)", line)
-                        and re.search(r"(?:投递|发送|不投递|DELIVERED=)", line)
-                        for line in result_messages
-                    ):
-                        diagram_mismatches.append(
-                            f"{entry_id}:mermaid:success-missing-persistence-or-delivery"
-                        )
-                    if entry.get("errors") and not any(
-                        "PROTOCOL_FAILURE" in line and "PERSISTED=" in line and "DELIVERED=" in line
-                        and re.search(r"(?:落库|不落库|PERSISTED=)", line)
-                        and re.search(r"(?:投递|发送|不投递|DELIVERED=)", line)
-                        for line in result_messages
-                    ):
-                        diagram_mismatches.append(
-                            f"{entry_id}:mermaid:failure-missing-persistence-or-delivery"
-                        )
                     error_prefixes = {
                         f"alt {str(error.get('code', ''))}："
                         for error in entry.get("errors", [])
@@ -1657,10 +1694,8 @@ def _markdown_coverage(
                     if "Note over " not in diagram:
                         diagram_mismatches.append(f"{entry_id}:mermaid:missing-note")
                     for message in diagram.splitlines():
-                        if re.match(r"System-->>Caller:", message) and not re.search(
-                            r"(?:PROTOCOL_SUCCESS|PROTOCOL_FAILURE|protocol success|protocol failure)", message, re.I
-                        ):
-                            diagram_mismatches.append(f"{entry_id}:mermaid:message-without-protocol-result")
+                        if re.match(r"P1-->>P0:", message) and not message.split(":", 1)[1].strip():
+                            diagram_mismatches.append(f"{entry_id}:mermaid:empty-entry-result")
                     for error in entry.get("errors", []):
                         if not isinstance(error, dict):
                             continue

@@ -1,4 +1,4 @@
 interface:
-  display_name: "bru-bru-api-generator"
-  short_description: "Run unified API, E2E, and biz-flow workflows"
-  default_prompt: "Use the installed devflow CLI and route only bru-api requests to devflow/test/bru-api. Read only the references required for the selected bru-api workflow. Preserve scoped schemas, locks, ownership, safety, redaction, and artifact rules; stop when evidence is missing, the target is unsafe or ambiguous, or a validation gate fails; return the redacted authoritative report or artifact path with its exit status."
+  display_name: "Bruno API test generator"
+  short_description: "Generate Bruno tests and one Markdown execution report"
+  default_prompt: "Use the installed devflow CLI and route only API test requests to devflow/test/bru-api. Read OpenAPI, source/design evidence, and only the references required for the workflow. Preserve qa contracts, locks, ownership, safety, redaction, and executable Bruno/fixture formats. Generate human-facing Markdown and standard Mermaid sequenceDiagram flows, run static gates and Bruno, and return the redacted authoritative qa/reports/latest.md path with exit status. stop when evidence is missing, the target is ambiguous or unsafe, validation fails, or cleanup fails; never guess or bypass a gate."

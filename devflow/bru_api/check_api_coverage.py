@@ -829,8 +829,18 @@ def validate_module_documentation(path: Path, cases: list[dict[str, Any]]) -> li
         if case.get("flow_required") is True:
             if not re.search(r"```mermaid\s*\n\s*sequenceDiagram\b", block):
                 errors.append(f"flow case {case_id} documentation has no Mermaid sequenceDiagram swimlane")
-            elif len(re.findall(r"(?m)^\s*participant\s+", block)) < 2 or "->>" not in block:
-                errors.append(f"flow case {case_id} Mermaid swimlane has insufficient participants or messages")
+            else:
+                participants = re.findall(r"(?m)^\s*participant\s+([A-Za-z][A-Za-z0-9_]*)\b", block)
+                interactions = re.findall(r"(?m)^\s*([A-Za-z][A-Za-z0-9_]*)\s*(->>|-->>|--)\s*([A-Za-z][A-Za-z0-9_]*)\s*:", block)
+                declared = set(participants)
+                if len(declared) < 2 or not interactions:
+                    errors.append(f"flow case {case_id} Mermaid swimlane has insufficient participants or messages")
+                elif any(source not in declared or target not in declared for source, _, target in interactions):
+                    errors.append(f"flow case {case_id} Mermaid swimlane references an undeclared participant")
+                elif not any(arrow == "->>" for _, arrow, _ in interactions):
+                    errors.append(f"flow case {case_id} Mermaid swimlane has no request message")
+                elif not any(arrow == "-->>" for _, arrow, _ in interactions):
+                    errors.append(f"flow case {case_id} Mermaid swimlane has no response message")
     for case_id in sorted(set(documented_ids) - declared_ids):
         errors.append(f"{path.name} documents unknown case {case_id}")
     return errors

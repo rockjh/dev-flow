@@ -181,7 +181,6 @@ COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
         "one_of": ["--all", "--module"],
         "required": ["--results", "--preflight-results"],
     },
-    "bru-api.aggregate": {"options": {"--qa-root": "path"}},
     "bru-api.worker-start": {"options": {"--qa-root": "path", "--module": "string"}, "required": ["--module"]},
     "bru-api.worker-check": {
         "options": {
@@ -1230,7 +1229,7 @@ BRU_API_DESIGN_RULE_SCHEMA = _object(
 BRU_API_DESIGN_RULES_SCHEMA: dict[str, Any] = {
     "schema_version": BRU_API_SCHEMA_VERSION,
     "contract": "bru-api.design-rules",
-    "path": "test/bru-api/constraints/design-rules.yaml",
+    "path": "qa/constraints/design-rules.yaml",
     "document": _object({
         "version": {"const": 1},
         "source": {"const": "design"},
@@ -1311,7 +1310,7 @@ BRU_API_DESIGN_RULES_SCHEMA: dict[str, Any] = {
 BRU_API_DESIGN_REPORT_SCHEMA: dict[str, Any] = {
     "schema_version": BRU_API_SCHEMA_VERSION,
     "contract": "bru-api.design-generation-report",
-    "path": "test/bru-api/artifacts/design-generation-report.json",
+    "path": "qa/reports/latest.md",
     "document": _object({
         "version": {"const": 1},
         "source": {"const": "design"},
@@ -1336,7 +1335,7 @@ BRU_API_DESIGN_REPORT_SCHEMA: dict[str, Any] = {
 BRU_API_LOGIC_SCHEMA: dict[str, Any] = {
     "schema_version": BRU_API_SCHEMA_VERSION,
     "contract": "bru-api.logic",
-    "path": "test/bru-api/contracts/modules/<module>/logic.yaml",
+    "path": "qa/contracts/modules/<module>/logic.yaml",
     "document": _object({
         "version": {"const": 1},
         "module": NONEMPTY_STRING,
@@ -1379,7 +1378,7 @@ BRU_API_LOGIC_SCHEMA: dict[str, Any] = {
 BRU_API_VALUE_RESOLUTION_SCHEMA: dict[str, Any] = {
     "schema_version": BRU_API_SCHEMA_VERSION,
     "contract": "bru-api.value-resolution",
-    "path": "test/bru-api/contracts/modules/<module>/value-resolution.yaml",
+    "path": "qa/contracts/modules/<module>/value-resolution.yaml",
     "document": _object({
         "version": {"const": 1},
         "module": NONEMPTY_STRING,
@@ -1396,7 +1395,7 @@ BRU_API_VALUE_RESOLUTION_SCHEMA: dict[str, Any] = {
 BRU_API_VERSION_LOCK_SCHEMA: dict[str, Any] = {
     "schema_version": BRU_API_SCHEMA_VERSION,
     "contract": "bru-api.version-lock",
-    "path": "test/bru-api/contracts/version-lock.yaml",
+    "path": "qa/contracts/version-lock.yaml",
     "document": _object({
         "version": {"const": 1},
         "status": NONEMPTY_STRING,

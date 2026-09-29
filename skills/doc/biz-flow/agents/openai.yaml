@@ -1,4 +1,22 @@
 interface:
   display_name: "biz-flow-doc-generator"
   short_description: "Generate confirmed, source-backed business flow Markdown"
-  default_prompt: "Use the installed devflow CLI and route only biz-flow requests to devflow/doc/biz-flow. After discover, show the user the module partition proposal with NN-Chinese filenames, entry counts and exclusions, then wait for explicit confirmation or apply requested edits and ask again. Never treat --confirm as user confirmation. Preserve scoped schemas, locks, ownership, safety, redaction, and artifact rules; stop when evidence is missing, the target is unsafe or ambiguous, or a validation gate fails; return the redacted authoritative report or artifact path with its exit status."
+  default_prompt: >-
+    Use the installed devflow CLI and route only biz-flow requests to
+    devflow/doc/biz-flow. Scan the whole project, including platform
+    registrations, constants/configured topics, cross-line Java methods,
+    doServe, doExecute, async workers, schedulers, imports, events, webhooks,
+    and CLI entries; ignore .idea, logs, caches, build output, generated and
+    vendor paths. Deduplicate entries and core_capabilities, propose one short
+    business-responsibility module per entry, retain uncertain ownership as
+    pending confirmation, and show files, entries, and exclusions for explicit
+    user confirmation before generation. After confirmation, use one module
+    writer and one read-only entry analysis role per entry; return structured
+    evidence for all branches, loops, async, persistence, external calls,
+    outcomes, and unresolved questions. Generate the fixed business-title,
+    trigger, function, sequenceDiagram, and autonumber Mermaid order with
+    concrete participants and source-backed branches. Preserve scoped schemas,
+    locks, ownership, safety, redaction, and artifact rules; stop when evidence
+    is missing, ownership is ambiguous, the target is unsafe, or a validation
+    gate fails; run check and verify and return the redacted authoritative
+    report or artifact path with its exit status and stable result.

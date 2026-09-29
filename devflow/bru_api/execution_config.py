@@ -14,7 +14,7 @@ from typing import Any
 
 sys.dont_write_bytecode = True
 
-from .qa_paths import BRUNO, CONTRACTS, EXECUTION, GLOBAL_EVIDENCE, LOGS, MODULE_EVIDENCE
+from .qa_paths import BRUNO, CONTRACTS, EXECUTION, REPORTS
 
 RUNTIME_CONFIG_ENV = "__QA_EXECUTION_CONFIG"
 DEFAULT_CLI_TIMEOUT = 60.0
@@ -182,8 +182,21 @@ Mock data uses one run-level write decision and one cleanup decision. Use
 `clean-mock-data.bat` / `clean-mock-data.sh` for run-ledger cleanup. All modules are
 selected by default; repeat `--module` to select one or more modules.
 
-运行器会打印阶段进度、每个用例的状态及最终汇总。每次运行都会在 `qa/results/logs/` 新建按时间和
-执行范围命名的日志。版本不一致只会以红色告警显示，不会阻塞用例执行。
+The runner writes only the Markdown summary at `qa/reports/latest.md`; logs and
+machine-only evidence stay in a temporary run directory and are deleted before
+completion.
+
+```mermaid
+sequenceDiagram
+    participant R as 执行入口
+    participant B as Bruno
+    participant A as API
+    R->>B: 启动测试集合
+    B->>A: 发送接口请求
+    A-->>B: 返回 HTTP 响应
+    B-->>R: 返回执行结果
+    R->>R: 写入 latest.md
+```
 
 远程环境可在活动环境的 `vars {}` 中配置 `versionPath`。默认用
 `version-lock.yaml` 的业务提交作为期望值，也可用 `expectedVersion` 覆盖；特殊响应可配置
@@ -580,8 +593,7 @@ def initialize_execution_layout(qa_root: Path, local_scripts: bool | None = None
         changed.append(new_environments)
     else:
         new_environments.mkdir(parents=True, exist_ok=True)
-    for path in (qa_root / GLOBAL_EVIDENCE, qa_root / MODULE_EVIDENCE, qa_root / LOGS):
-        path.mkdir(parents=True, exist_ok=True)
+    (qa_root / REPORTS).mkdir(parents=True, exist_ok=True)
 
     if config_path.is_file():
         changed.extend(migrate_legacy_execution_config(config_path, new_environments, tooling))

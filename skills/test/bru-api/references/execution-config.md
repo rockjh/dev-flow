@@ -15,6 +15,6 @@ Allowed coverage profiles are `contract-draft` and `full-matrix`. `verified` is 
 
 The generated launchers are thin convenience assets and call the installed `devflow bru-api` commands; they contain no Python implementation. Run launchers cover tests plus standalone mock-data generation and cleanup on CMD and Shell. `devflow bru-api scripts` reports the installed domain schema and does not synchronize files.
 
-Preflight validates the project lock, QA lock, execution configuration, environment syntax, static coverage, target URL, required variables, tool availability, and report destinations before Bruno runs. Authoritative reports remain below `qa/results/`.
+Preflight validates the project lock, QA lock, execution configuration, environment syntax, static coverage, target URL, required variables, tool availability, and the `qa/reports/latest.md` destination before Bruno runs. All machine-only preflight data is temporary.
 
 The active environment name is also the mock-data safety boundary. Production aliases and environments listed by the operator as protected reject creation and deletion before authorization is considered. Data-source credentials are read from process environment variables named in `constraints/mock-data.yaml`; only non-sensitive defaults and empty credential placeholders may appear in the checked-in Bruno environment.

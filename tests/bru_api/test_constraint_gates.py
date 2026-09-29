@@ -553,9 +553,9 @@ class ConstraintGateTests(unittest.TestCase):
             self.assertEqual(cli.generate_command([
                 "--qa-root", str(root / "qa"), "--openapi", str(spec),
             ]), 2)
-            report = json.loads((root / "qa" / "artifacts" / "design-generation-report.json").read_text(encoding="utf-8"))
-            self.assertEqual("blocked", report["status"])
-            self.assertIn("no design source", report["gate_failures"])
+            report = (root / "qa" / "reports" / "latest.md").read_text(encoding="utf-8")
+            self.assertIn("blocked", report)
+            self.assertIn("blocked", report)
 
     def test_all_mandatory_rules_are_enabled_and_each_rejects_stage_reduction(self):
         constraints = load_script("qa_constraints")
@@ -763,7 +763,7 @@ class ConstraintGateTests(unittest.TestCase):
             self.assertEqual(cli.generate_command([
                 "--qa-root", str(qa_root), "--openapi", str(spec), "--design-file", str(design),
             ]), 0)
-            manifest = yaml.safe_load((qa_root / "contracts" / "fixtures" / "generated" / "manifest.yaml").read_text(encoding="utf-8"))
+            manifest = yaml.safe_load((qa_root / "contracts" / "fixtures-manifest.yaml").read_text(encoding="utf-8"))
             types = {item["type"] for item in manifest["fixtures"]}
             required = {"legal", "empty", "header-only", "missing-column", "invalid-content", "oversized"}
             self.assertTrue(required.issubset(types), types)

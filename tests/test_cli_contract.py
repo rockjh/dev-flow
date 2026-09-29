@@ -48,7 +48,7 @@ class CliContractTests(unittest.TestCase):
             self.assertTrue((qa_root / "constraints" / "design-rules.yaml").is_file())
             self.assertTrue(understood["ok"])
             self.assertEqual(
-                str((qa_root / "artifacts" / "design-generation-report.json").resolve()),
+                str((qa_root / "reports" / "latest.md").resolve()),
                 understood["artifact_path"],
             )
 
@@ -90,7 +90,7 @@ class CliContractTests(unittest.TestCase):
             code, generated = self.invoke("bru-api", "mock-data-generate", "--qa-root", str(qa_root))
             self.assertEqual(0, code, generated)
             self.assertTrue(generated["ok"])
-            self.assertIn("artifacts\\mock-data", generated["artifact_path"])
+            self.assertIn("execution\\.tmp\\mock-data", generated["artifact_path"])
             code, missing = self.invoke("bru-api", "mock-data-clean", "--qa-root", str(qa_root))
             self.assertEqual(4, code, missing)
             self.assertEqual("TARGET_NOT_FOUND", missing["error"]["code"])
@@ -180,7 +180,7 @@ class CliContractTests(unittest.TestCase):
             )
             self.assertEqual(0, code, result)
             self.assertEqual(
-                {"bruno", "contracts", "constraints", "execution", "artifacts"},
+                {"bruno", "contracts", "constraints", "execution", "reports", "fixtures"},
                 {path.name for path in root.iterdir() if path.is_dir()},
             )
             self.assertTrue((root / ".devflow.lock.json").is_file())
@@ -204,7 +204,7 @@ class CliContractTests(unittest.TestCase):
             self.assertEqual(0, code, result)
             self.assertIn("status: draft", (qa_root / "contracts" / "version-lock.yaml").read_text(encoding="utf-8"))
 
-            report = qa_root / "artifacts" / "completion.json"
+            report = qa_root / "completion.json"
             report.parent.mkdir(parents=True, exist_ok=True)
             report.write_text(json.dumps({
                 "report_version": 2,

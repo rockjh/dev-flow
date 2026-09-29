@@ -35,7 +35,7 @@ def iter_files(root: Path):
         yield root
         return
     for path in root.rglob("*"):
-        fixture_payload = any(part.casefold() == "fixtures" for part in path.parts) and path.name != "manifest.yaml"
+        fixture_payload = any(part.casefold() == "fixtures" for part in path.parts)
         if path.is_file() and not fixture_payload and path.suffix.lower() in TEXT_SUFFIXES and ".git" not in path.parts:
             yield path
 

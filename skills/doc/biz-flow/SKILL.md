@@ -1,101 +1,89 @@
 ---
 name: devflow/doc/biz-flow
-description: DevFlow biz-flow domain skill.
+description: Discover source-backed business entry points and generate confirmed business-flow Markdown.
 ---
 
-Use the installed `devflow` CLI and the explicitly mapped `devflow/doc/biz-flow` domain. Preserve domain scoped schemas, locks, redaction, ownership and artifact rules.
+Use the installed `devflow` executable and route only to `devflow biz-flow`.
+The project root is the explicit `--project` target. Generated artifacts belong
+under `<project>/docs/biz-flow`; do not write toolkit source, credentials, or
+process-local JSON outside that root. Preserve core schemas, redaction, locks,
+ownership, and artifact paths.
 
-## Required workflow
+## Workflow and ownership
 
-Documents live in the project root under `docs/biz-flow`, the only
-supported document root. Each business module has exactly one Markdown file. Every
-Prefer Swagger/OpenAPI summaries, tags, descriptions, Javadoc, and nearby code
-comments for module names. Use the route or source file as a stable fallback
-when no explicit description exists. Clearly related entry points sharing that
-label belong in the same Markdown file. Every discovered business entry point belongs to exactly one module, including HTTP
-and webhook routes, scheduled jobs, XXL-JOB handlers, thread-pool workers,
-message consumers, event subscriptions, file/import triggers, and CLI commands.
+1. Run `devflow biz-flow init`, then `devflow biz-flow discover`.
+2. Scan the whole project repository before deciding modules. Include source,
+   configuration, registrations, platform base classes, HTTP/webhook routes,
+   message consumers and topics resolved from constants/config/registration,
+   event listeners, file/import triggers, CLI commands, async workers,
+   schedulers, and XXL-JOB `doExecute` handlers. Handle cross-line Java
+   signatures and platform receivers such as `doServe`. Ignore `.idea`, logs,
+   caches, build output, generated/vendor assets, and other non-business paths;
+   they must not become entries or affect source-change decisions.
+3. Deduplicate entry IDs and `core_capabilities`. Assign each entry to one
+   short business-responsibility module. Keep uncertain ownership as `待确认`;
+   never infer ownership from URL, topic, controller, class, or directory
+   alone. Exclusions require a reason and real `file:line` evidence:
+   `<!-- devflow:exclude id="..." reason="..." evidence="path:line" -->`.
+4. Show the user the proposed module names, files, entry IDs/triggers, and
+   exclusions before generation. Record the user's confirmation in the module
+   map and require `<!-- devflow:module-confirmed -->`; `--confirm` alone is
+   insufficient.
+5. After confirmation, run one module role per Markdown file. That role is the
+   sole writer for its file and must start one read-only entry role for every
+   entry. Entry roles return structured analysis only; they never edit files.
+   Record entry, function, participants, ordered calls, every reachable branch,
+   loops, async work, persistence, external calls, success/failure outcomes,
+   source evidence, and unresolved questions. Re-analyze affected entries and
+   shared call chains on incremental updates.
 
-On first use, run `biz-flow init`, then `biz-flow discover`. Review the
-Markdown overview `docs/biz-flow/业务流程覆盖总览.md`, resolve module ownership,
-and edit its `devflow:module` directives to merge, split, move, or rename
-modules. Record exclusions with `devflow:exclude` directives including a reason
-and source evidence. Explicitly confirm the partition (for example with `biz-flow generate
---confirm`). Do not generate documents from an unconfirmed partition. JSON
-discovery, progress, and evidence data is process-local and must not remain in
-the project.
+Read only the workflow references needed for the operation, beginning with
+`references/analysis-policy.md`, `references/requirements-matrix.md`, and
+`references/verification.md`.
 
-Use this exact exclusion syntax:
-`<!-- devflow:exclude id="<stable-entry-id>" reason="<why excluded>" evidence="<relative/source.java:42>" -->`.
-`id` must be discovered, `reason` is required, and `evidence` must be a real
-scanned source location in `file:line` form. `evidence="health"` is invalid.
-An excluded id must not also appear in a `devflow:module` directive; the CLI
-rejects duplicate, unknown, malformed, and overlapping directives.
+## Generated document contract
 
-For Java/Kotlin and other heuristic parsers, record each unresolved finding as
-a structured resolution containing source evidence, the confirmed path,
-control conditions, and remaining unknowns. Never batch-fill a template or
-describe unknown behavior as confirmed. Unknowns affecting entry existence,
-ownership, or a key branch block generation; only explicitly marked
-non-critical unknowns may remain for human review.
+Each module file has a short business title and one section per entry. Every
+entry section uses this fixed order:
 
-Use `references/requirements-matrix.md` to map each requirement to its code
-gate, semantic evidence, and failure behavior before declaring completion.
+1. **Business title**: a short business description such as `设备关系同步` or
+   `SIM批量导入`, never a URL, topic, class, method, or path.
+2. **Entry description**: a concise trigger such as `POST /v0/internal/...`,
+   `TOPIC SD-MNO-terminal-device_report`, or `XXL-JOB 每日用量统计`. Do not put
+   source paths, line numbers, or full class names here.
+3. **Business function**: one sentence for a simple flow, or source-backed
+   bullets for normal, empty, duplicate, invalid-state, external-failure,
+   asynchronous, and exception cases. Never invent rules.
+4. **Business sequence diagram**: a Mermaid `sequenceDiagram` with
+   `autonumber` and this default init header:
 
-After a successful generation or update, run `devflow biz-flow verify`. It
-executes the durable check twice and fails if Markdown changes between runs or
-temporary generation files remain. The verification result is the final
-repeatability gate for delivery.
+   ```mermaid
+   %%{init: {"sequence": {"actorMargin": 150, "diagramMarginX": 30, "wrap": true}}}%%
+   sequenceDiagram
+       autonumber
+   ```
 
-Discover platform-base-class and registry message receivers without requiring
-Spring annotations. Resolve topics from constants, configuration, or
-registration and trace `serve`, `doServe`, `receive`, and `decode`. Scan
-executor `execute`/`submit` independently, including lambdas, method
-references, `AsyncContext.wrap`, and custom wrappers; retain an unresolved
-finding when a worker cannot be statically resolved.
+Use concrete participants known from source (for example XXL-JOB, RCP平台,
+RCP数据库, or mno-operator), and name actual actions, conditions, queries,
+responses, writes, transactions, message publication/consumption, async
+submission, return values, and exception propagation. Use `alt`/`else` for
+branches, `loop` for iteration, and `opt` only for genuinely optional paths.
+Do not replace known facts with “current system”, “database”, “call service”,
+or “process data”. Every analyzed branch must have a diagram path; unresolved
+key behavior blocks generation and non-critical unknowns remain explicitly
+recorded with evidence.
 
-After module confirmation, orchestration may run one module role per Markdown
-file in parallel. Each module role is the sole writer for its file and may
-delegate one read-only entry role per entry; entry roles return only structured
-steps, branches, evidence, and resolutions. Record input fingerprint, task
-boundary, output status, and merge result. Incremental runs skip module
-partitioning and schedule only affected module and entry roles.
+## Gates and updates
 
-Each generated module document contains only its entry flow sections. The
-confirmed review for every entry must keep each short description field at or
-below 200 characters; the CLI rejects longer values. Every entry section has a
-Mermaid `sequenceDiagram` with `autonumber`. Preserve branches with
-`alt`/`else`, loops with `loop`, and optional interruptions with `opt`. The
-generated diagram states protocol success or failure and whether the path
-persists data or publishes/sends a message. Use `Note` for non-interrupting
-facts such as degraded consistency or an empty snapshot. Never invent
-unresolved behavior; resolve it with source evidence or record a structured
-resolution.
+Run `devflow biz-flow check` after generation/update. It must validate unique
+ownership, exclusions, business short titles, section order, absence of source
+paths/line numbers in human-readable text, one diagram per entry, concrete
+participants/actions, branch coverage, Mermaid syntax, and intact structured
+`devflow` markers in the final Markdown. Run `devflow biz-flow verify`; it runs
+the durable check twice and must report `stable=true`. If no Mermaid renderer is
+available, report the structural validation scope explicitly.
 
-## Revision-aware updates
-
-Successful generation writes the single-value lock
-`biz-flow.yaml` (`git_commit: <commit>`). For `biz-flow update`, read
-that commit first, compare it with the target `HEAD`, and inspect all commits in
-between. Re-analyze a module when an entry is added, removed, moved, or changed,
-or when a shared call, configuration, state rule, persistence, lock, async path,
-external integration, or error mapping changes. Remove deleted entries from
-their Markdown file, align changed entries, and add new entries to the one
-confirmed owning module. If ownership is unclear, the CLI rejects the map until
-the caller chooses a new module or an existing module. Update the YAML lock
-only after the document and coverage checks pass.
-
-Use `biz-flow check` after generation/update. Its coverage, ownership, source
-fingerprint, version, error-evidence, Mermaid, stale-entry, and
-description-length checks are the release gate. The durable output is the
-Markdown overview, one Markdown file per module, and `biz-flow.yaml`; failed
-validation never advances the YAML revision lock.
-
-Module files must use the canonical `NN-中文模块名.md` form. The filename in
-each `devflow:module` directive, the `## Module List` row, and the actual file
-must match exactly. After `discover`, show the user the proposed module name,
-Chinese filename, entry count and IDs, and exclusions with reasons. Generation
-and update require the explicit `<!-- devflow:module-confirmed -->` marker
-recording that user confirmation; `--confirm` alone is not confirmation.
-Mermaid labels are sanitized by the CLI; ASCII semicolons are rejected and
-available Mermaid renderers are used for real parsing.
+Update `biz-flow.yaml` only after document and coverage checks pass. Compare
+the locked revision to the target, add/remove/move entries accurately, and
+preserve stable IDs, module ownership, order, and content when source and
+confirmed partition are unchanged.

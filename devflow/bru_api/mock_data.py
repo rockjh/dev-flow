@@ -33,7 +33,8 @@ from .qa_paths import BRUNO, CONSTRAINTS, CONTRACTS, EXECUTION
 
 INVENTORY_FILE = "mock-data.yaml"
 MODULE_PLAN_FILE = "mock-data.yaml"
-RESULT_DIRECTORY = Path("artifacts") / "mock-data"
+# Runtime ledger only; the runner removes this directory after each attempt.
+RESULT_DIRECTORY = Path("execution") / ".tmp" / "mock-data"
 RUN_NAMESPACE_ENV = "DEVFLOW_DATA_NAMESPACE"
 READY_ENV = "DEVFLOW_MOCK_DATA_READY"
 STEP_EXISTS_ENV = "DEVFLOW_STEP_EXISTS"

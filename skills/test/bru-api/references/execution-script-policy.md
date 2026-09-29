@@ -1,20 +1,17 @@
-# Shared E2E execution policy
+# Bruno API execution policy
 
-Generated projects do not contain gate engines, checker scripts, Python runner scripts, or copies of the shared runtime. The optional root `run-e2e.bat` and `run-e2e.sh` launchers only forward arguments to the installed `devflow e2e run`; they contain no gate logic. Execute only the installed commands:
+Generated projects contain Bruno requests, fixtures, contracts, execution configuration, and Markdown documentation only. They do not contain a copied runner, checker, or toolkit source. Execute only the installed commands:
 
 Scenario and common business modules import evidence, preflight, polling, and restoration helpers from `devflow.e2e_runtime`; never recreate those helpers under `common/`.
 
 ```text
-devflow e2e init --project .
-devflow e2e check --project . --gate <stage>
-devflow e2e source-status --project .
-devflow e2e run --project .
-devflow e2e run --project . --scenario <scenario-name>
-devflow e2e run --project . --static-only
+devflow bru-api check --qa-root qa --all
+devflow bru-api preflight --qa-root qa
+devflow bru-api run --qa-root qa
 ```
 
-The engine owns the fixed stage order, content-addressed seals, one-hour session boundary, an active read-only local environment probe for every run request, source checks, collection, read-only smoke, business execution, JUnit validation, restoration, and final report. Caller pytest arguments are accepted only for the final business invocation and cannot change selection or success semantics.
+The runner validates contracts, locks, static coverage, the configured environment, and the Bruno collection before sending requests. It writes the single redacted human-facing report to `qa/reports/latest.md`.
 
-`devflow e2e run` removes inherited pytest plugin and option injection, invokes subprocesses without a shell, and writes the authoritative redacted report to `artifacts/e2e-run.json`. Console output contains only a bounded summary and report pointer unless `--full` is explicit.
+Raw Bruno JSON, normalized evidence, logs, and preflight files are temporary process data and are removed after the command finishes. They must not be copied into `qa/` or committed as formal assets.
 
-The project `.devflow.lock.json` binds execution to an exact devflow release and a separate E2E gate schema version. Missing or mismatched locks are precondition failures; copied older code is never used as a fallback.
+Stop on missing evidence, unsafe or ambiguous targets, failed validation, version-lock mismatch, or cleanup failure. The project `qa/.devflow.lock.json` binds execution to the installed release and API schema version.

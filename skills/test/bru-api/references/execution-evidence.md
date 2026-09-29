@@ -2,11 +2,13 @@
 
 Static manifests prove intent. Normalized evidence proves what ran, and result reports explain what happened.
 
-The runner keeps Bruno's raw report only in a temporary directory. It removes headers, redacts sensitive keys and token-shaped values, limits response size/depth, and persists normalized evidence under:
+The runner keeps Bruno's raw report and normalized evidence only in a process
+temporary directory. It removes headers, redacts sensitive keys and
+token-shaped values, and limits response size/depth. Temporary evidence is
+never written below `qa/`.
 
 ```text
-qa/results/global/evidence/<timestamp>-evidence.json
-qa/results/modules/evidence/<module-id>/<timestamp>-evidence.json
+%TEMP%/qa-bruno-<run-id>/execution-evidence.json
 ```
 
 Pass status requires an executed request, successful request status, no runtime error, at least one assertion/test observation, and every observation passing. A top-level Bruno `pass` value alone is insufficient.
@@ -24,7 +26,9 @@ duplicate case IDs, failed events, or out-of-order steps fail reconciliation.
 
 ## Result Report
 
-Every attempted run writes an immutable report under `qa/results/global/` or `qa/results/modules/<module-id>/`, including static/preflight failures that prevented requests.
+Every attempted run overwrites the single human-facing report at
+`qa/reports/latest.md`, including static/preflight failures that prevented
+requests. No JSON result report is retained.
 
 ```json
 {
@@ -63,16 +67,15 @@ Module runs validate `module-lock.yaml`, write only module-owned logs/evidence/r
 
 The coordinator validates and merges module evidence before the final all-module run.
 
-Run `devflow bru-api aggregate` after independent module execution. It
-requires the latest module report to contain exactly the module's current case
-IDs, rejects missing or repeated evidence, reruns post-execution constraints,
-and writes merged global evidence plus a result-first global report. A failed
-module remains visible without hiding successful modules.
-
-Before retaining any evidence or report, the shared post-execution constraints scan contracts, Bruno requests, evidence, and results for credentials.
+The coordinator runs all selected modules in one invocation, so no separate
+aggregation command or module result directory exists. The shared
+post-execution constraints scan contracts, Bruno requests, and the Markdown
+report for credentials before completion.
 
 ## Mock-data Ledger
 
-Each preparation attempt writes a redacted ledger below `qa/results/mock-data/`, including the environment, run namespace, selected modules, target data sources, estimate, one write-authorization decision, reused ranges, possible or verified creations, failures, cleanup authorization, cleanup results, and absence-verification results. Before every write, the ledger freezes that step's exact cleanup and verification scripts plus its non-secret runtime identifiers. Later cleanup uses only this frozen run-owned contract, so it remains available after source or case files change; it still refuses a changed environment or connection target.
+Each preparation attempt writes a redacted ledger below the process temporary
+run directory. The ledger is deleted after cleanup and is never delivered as a
+QA asset.
 
 If preparation is denied or fails, cases with setup steps are reported as `not_executed` with an insufficient-data reason; unrelated cases remain runnable. A retained or interrupted run can be cleaned later by its run ID.

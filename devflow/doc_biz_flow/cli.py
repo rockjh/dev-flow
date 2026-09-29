@@ -32,7 +32,7 @@ from .discovery import source_fingerprint, scan
 from .documents import apply_module_map, coverage, write_artifacts, write_discovery, _validate_mermaid
 from .git import changed_paths, working_tree_paths
 from .models import BehaviorEvidence, EntryPoint, ErrorEvidence, GitInfo, ScanResult
-from .orchestration import build_agent_plan, validate_agent_plan
+from .orchestration import build_agent_plan, complete_agent_plan, validate_agent_plan
 
 
 _PROTECTED_NAMES = {"prod", "prd", "live", "production"}
@@ -1166,6 +1166,8 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
         _remove_transient_artifacts(docs_root)
         return 8
     _write_overview_report(docs_root, result, report)
+    completed_plan = complete_agent_plan(agent_plan, {entry.module for entry in result.entries})
+    write_json(docs_root / "biz-flow-agent-plan.json", completed_plan)
     _write_recorded_commit(docs_root, result.git.target)
     _remove_transient_artifacts(docs_root)
     print(
@@ -1275,13 +1277,14 @@ def check_command(argv: list[str]) -> int:
                     failures.append(f"{path.name}:{entry_id}: business description point exceeds 50 characters")
                 if any(marker in section for marker in ("pending business steps", "confirmed business steps", "执行已确认的业务步骤", "待补充业务步骤")):
                     failures.append(f"{path.name}:{entry_id}: placeholder business text is forbidden")
+        mermaid_renderer = shutil.which("mmdc.cmd") or shutil.which("mmdc")
         payload = {
             "version_match": recorded_commit == result.git.target,
             "markdown_documents": len(documents),
             "mermaid_errors": failures,
-            "mermaid_parser": "mmdc" if shutil.which("mmdc") else "fallback-structural",
+            "mermaid_parser": "mmdc" if mermaid_renderer else "fallback-structural",
             "mermaid_parser_warning": "mmdc is not installed; only built-in structural validation was applied"
-            if not shutil.which("mmdc") else "",
+            if not mermaid_renderer else "",
         }
         print(json.dumps(payload, ensure_ascii=False))
         return 0 if payload["version_match"] and not failures else 1

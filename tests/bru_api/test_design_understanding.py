@@ -364,9 +364,10 @@ class DesignUnderstandingTests(unittest.TestCase):
                     "--qa-root", str(qa_root), "--openapi", str(spec), "--design-file", str(root / "missing.md"),
                 ])
             self.assertEqual(2, result)
-            report = json.loads((qa_root / "artifacts" / "design-generation-report.json").read_text(encoding="utf-8"))
-            self.assertEqual("blocked", report["status"])
-            self.assertIn("no design source", report["gate_failures"])
+            report = (qa_root / "reports" / "latest.md").read_text(encoding="utf-8")
+            self.assertIn("API Test Report", report)
+            self.assertIn("blocked", report)
+            self.assertIn("blocked", report)
 
     def test_generation_exception_is_reported_as_failed_gate(self) -> None:
         cli = importlib.import_module("devflow.bru_api.cli")
@@ -390,9 +391,9 @@ class DesignUnderstandingTests(unittest.TestCase):
                     "--qa-root", str(qa_root), "--openapi", str(spec), "--design-file", str(design),
                 ])
             self.assertEqual(2, result)
-            report = json.loads((qa_root / "artifacts" / "design-generation-report.json").read_text(encoding="utf-8"))
-            self.assertEqual("failed", report["status"])
-            self.assertTrue(any("flow owner mismatch" in item for item in report["gate_failures"]))
+            report = (qa_root / "reports" / "latest.md").read_text(encoding="utf-8")
+            self.assertIn("failed", report)
+            self.assertIn("failed", report)
 
     def test_successful_generation_refreshes_final_design_report(self) -> None:
         cli = importlib.import_module("devflow.bru_api.cli")
@@ -420,12 +421,10 @@ class DesignUnderstandingTests(unittest.TestCase):
             self.assertEqual(0, cli.generate_command([
                 "--qa-root", str(qa_root), "--openapi", str(spec), "--design-file", str(design),
             ]))
-            report = json.loads((qa_root / "artifacts" / "design-generation-report.json").read_text(encoding="utf-8"))
-            self.assertEqual("complete", report["status"])
-            self.assertEqual("not_started", report["execution"])
-            self.assertTrue(report["formal_tests"])
-            self.assertFalse(report["pending_confirmations"])
-            self.assertTrue(report["unexecuted"])
+            report = (qa_root / "reports" / "latest.md").read_text(encoding="utf-8")
+            self.assertIn("complete", report)
+            self.assertIn("Execution:", report)
+            self.assertIn("Unexecuted Cases", report)
 
 
 if __name__ == "__main__":

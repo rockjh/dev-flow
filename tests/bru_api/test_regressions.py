@@ -374,7 +374,7 @@ class RegressionTests(unittest.TestCase):
                     )
             execute.assert_not_called()
             ledger = json.loads(
-                (qa_root / "artifacts" / "mock-data" / "target-drift.json").read_text(encoding="utf-8")
+                (qa_root / "execution" / ".tmp" / "mock-data" / "target-drift.json").read_text(encoding="utf-8")
             )
             self.assertEqual(ledger["status"], "cleanup_blocked")
 
@@ -403,7 +403,7 @@ class RegressionTests(unittest.TestCase):
                     )
             self.assertEqual(calls, ["mock-data cleanup users-fixture"])
             ledger = json.loads(
-                (qa_root / "artifacts" / "mock-data" / "cleanup-dependency.json").read_text(encoding="utf-8")
+                (qa_root / "execution" / ".tmp" / "mock-data" / "cleanup-dependency.json").read_text(encoding="utf-8")
             )
             blocked = next(event for event in ledger["events"] if event.get("status") == "blocked")
             self.assertEqual(blocked["step_id"], "orders-fixture")
@@ -607,7 +607,7 @@ class RegressionTests(unittest.TestCase):
             with mock.patch.object(mock_data, "_execute_script", side_effect=partially_failing):
                 with self.assertRaisesRegex(mock_data.MockDataError, "after insert"):
                     mock_data.prepare(qa_root, allow_write=True, output=io.StringIO(), run_id="partial-write")
-            ledger = json.loads((qa_root / "artifacts" / "mock-data" / "partial-write.json").read_text(encoding="utf-8"))
+            ledger = json.loads((qa_root / "execution" / ".tmp" / "mock-data" / "partial-write.json").read_text(encoding="utf-8"))
             self.assertEqual(ledger["created"][0]["creation_status"], "possible")
             self.assertIn("cleanup_b64", ledger["created"][0])
 
@@ -3848,8 +3848,9 @@ class RegressionTests(unittest.TestCase):
                 (qa_root / "contracts" / "modules" / "things" / "observed-rules.yaml").read_text(encoding="utf-8")
             )
             self.assertEqual({item["case_id"] for item in observed["observations"]}, {"THING_LIST_OK", "THING_LIST_BAD"})
-            persisted_report = json.loads(first_report.read_text(encoding="utf-8"))
-            self.assertTrue(persisted_report["execution_evidence"].startswith("artifacts/modules/evidence/things/"))
+            persisted_report = first_report.read_text(encoding="utf-8")
+            self.assertTrue(first_report.name == "latest.md")
+            self.assertNotIn("execution_evidence", persisted_report)
 
     def _retired_successful_observation_never_upgrades_generated_assertions(self):
         parser = load_script("parse_openapi")
@@ -4035,17 +4036,11 @@ class RegressionTests(unittest.TestCase):
             ]), 0)
             self.assertEqual(
                 {path.name for path in qa_root.iterdir() if path.is_dir()},
-                {"bruno", "contracts", "constraints", "execution", "artifacts"},
+                {"bruno", "contracts", "constraints", "execution", "reports", "fixtures"},
             )
-            self.assertTrue((qa_root / "contracts" / "fixtures" / "generated").is_dir())
-            for path in (
-                qa_root / "artifacts" / "global",
-                qa_root / "artifacts" / "global" / "evidence",
-                qa_root / "artifacts" / "modules",
-                qa_root / "artifacts" / "modules" / "evidence",
-                qa_root / "artifacts" / "logs",
-            ):
-                self.assertTrue(path.is_dir())
+            self.assertTrue((qa_root / "fixtures").is_dir())
+            self.assertTrue((qa_root / "contracts" / "fixtures-manifest.yaml").is_file())
+            self.assertFalse((qa_root / "artifacts").exists())
 
     def test_public_cli_pipeline_uses_only_the_canonical_layout(self):
         cli = load_script("bruno_bru_api_generator")
@@ -4101,10 +4096,9 @@ class RegressionTests(unittest.TestCase):
 
             with mock.patch.object(cli.subprocess, "run", side_effect=preflight_run):
                 self.assertEqual(cli.preflight_command(["--qa-root", str(qa_root)]), 0)
-            self.assertTrue(list((qa_root / "artifacts" / "global").glob("*-static-coverage.json")))
-            self.assertTrue(list((qa_root / "artifacts" / "global").glob("*-preflight.json")))
-            self.assertTrue(list((qa_root / "artifacts" / "logs").glob("*-preflight.log")))
-            for name in ("data", "evidence", "fixtures", "logs", "scripts"):
+            self.assertFalse((qa_root / "artifacts").exists())
+            self.assertTrue((qa_root / "reports").is_dir())
+            for name in ("data", "evidence", "logs", "scripts"):
                 self.assertFalse((qa_root / name).exists())
 
     def test_public_cli_routes_help_to_the_subcommand(self):
@@ -4395,51 +4389,9 @@ class RegressionTests(unittest.TestCase):
             self.assertTrue(any("endpoint id DUPLICATE_ENDPOINT is duplicated" in error for error in errors))
             self.assertTrue(any("case id DUPLICATE_CASE is duplicated" in error for error in errors))
 
-    def test_module_results_and_evidence_are_aggregated(self):
-        runner = load_script("run_bruno")
-        with tempfile.TemporaryDirectory() as directory:
-            qa_root = Path(directory)
-            for module_id, status in (("alpha", "passed"), ("beta", "failed")):
-                module = qa_root / "contracts" / "modules" / module_id
-                module.mkdir(parents=True)
-                endpoint_id = f"{module_id.upper()}_GET"
-                case_id = f"{endpoint_id}_OK"
-                (module / "endpoints.yaml").write_text(json.dumps({
-                    "module": module_id,
-                    "endpoints": [{"id": endpoint_id, "method": "GET", "path": f"/{module_id}"}],
-                }), encoding="utf-8")
-                (module / "cases.yaml").write_text(json.dumps({
-                    "module": module_id,
-                    "cases": [{"id": case_id, "endpoint_id": endpoint_id, "expected": {"http_status": 200}}],
-                }), encoding="utf-8")
-                evidence_path = qa_root / "artifacts" / "modules" / "evidence" / module_id / "20260101-evidence.json"
-                evidence_path.parent.mkdir(parents=True)
-                evidence_path.write_text(json.dumps({
-                    "executed": [case_id], "passed": [case_id] if status == "passed" else [],
-                    "cases": {case_id: {"actual": {"http_status": 200}, "failure_reason": "mismatch"}},
-                }), encoding="utf-8")
-                result_path = qa_root / "artifacts" / "modules" / module_id / "20260101-result.json"
-                result_path.parent.mkdir(parents=True)
-                result_path.write_text(json.dumps({
-                    "execution_evidence": evidence_path.relative_to(qa_root).as_posix(),
-                    "cases": [{
-                        "module": module_id, "case_id": case_id, "interface": f"GET /{module_id}",
-                        "request_summary": {"method": "GET", "path": f"/{module_id}"},
-                        "expected": {"http_status": 200}, "actual": {"http_status": 200},
-                        "status": status, "failure_category": None if status == "passed" else "assertion_failure",
-                        "failure_reason": None if status == "passed" else "mismatch",
-                        "needs_manual_confirmation": False,
-                    }],
-                }), encoding="utf-8")
-
-            with mock.patch.object(runner, "validate_stage", return_value=[]):
-                report_path, evidence_path, report = runner.aggregate_module_results(qa_root)
-            self.assertTrue(report_path.is_file())
-            self.assertTrue(evidence_path.is_file())
-            self.assertEqual(report["summary"], {"total": 2, "executed": 2, "passed": 1, "failed": 1, "not_executed": 0})
-            self.assertEqual(report["failures"][0]["case_id"], "BETA_GET_OK")
-            merged = json.loads(evidence_path.read_text(encoding="utf-8"))
-            self.assertEqual(set(merged["executed"]), {"ALPHA_GET_OK", "BETA_GET_OK"})
+    def test_module_result_aggregation_is_removed(self):
+        cli = load_script("bruno_bru_api_generator")
+        self.assertNotIn("aggregate", cli.main.__code__.co_consts)
 
     def test_post_execution_constraint_errors_are_persisted(self):
         runner = load_script("run_bruno")
@@ -4449,10 +4401,10 @@ class RegressionTests(unittest.TestCase):
             result = runner.persist_post_execution_constraints(
                 report_path, report, ["response schema mismatch"], 0,
             )
-            persisted = json.loads(report_path.read_text(encoding="utf-8"))
+            persisted = report_path.read_text(encoding="utf-8")
             self.assertEqual(result, 1)
-            self.assertEqual(persisted["status"], "failed")
-            self.assertEqual(persisted["constraint_errors"], ["response schema mismatch"])
+            self.assertIn("failed", persisted)
+            self.assertIn("Version Lock Status", persisted)
 
     def test_loopback_generation_invokes_run_command(self):
         cli = load_script("bruno_bru_api_generator")

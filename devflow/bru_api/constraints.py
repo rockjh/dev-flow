@@ -21,11 +21,7 @@ from .qa_paths import (
     BRUNO,
     CONSTRAINTS,
     CONTRACTS,
-    GLOBAL_EVIDENCE,
-    MODULE_EVIDENCE,
-    MODULE_RESULTS,
-    LOGS,
-    RESULTS,
+    REPORTS,
 )
 
 
@@ -781,7 +777,7 @@ def _is_upload_endpoint(endpoint: dict[str, Any]) -> bool:
 
 
 def _fixture_document(qa_root: Path) -> tuple[Path, dict[str, Any]]:
-    path = qa_root / CONTRACTS / "fixtures" / "generated" / "manifest.yaml"
+    path = qa_root / CONTRACTS / "fixtures-manifest.yaml"
     document = load_data(path) if path.is_file() else {}
     return path, document if isinstance(document, dict) else {}
 
@@ -999,28 +995,9 @@ def _observed_errors(
     records: list[tuple[str, Path, dict[str, Any], dict[str, Any]]],
     module_scoped: bool,
 ) -> list[str]:
-    passed: set[str] = set()
-    for document in _latest_evidence_documents(qa_root, records, module_scoped):
-        passed.update(str(value) for value in document.get("passed", []))
-    if not passed:
-        return []
-    paths = [directory / "observed-rules.yaml" for _, directory, _, _ in records] if module_scoped else [qa_root / CONSTRAINTS / "observed-rules.yaml"]
-    observations: dict[str, dict[str, Any]] = {}
-    errors: list[str] = []
-    for path in paths:
-        if not path.is_file():
-            continue
-        document = load_data(path)
-        for item in document.get("observations", []) if isinstance(document, dict) else []:
-            if not isinstance(item, dict):
-                continue
-            observations[str(item.get("case_id"))] = item
-            for message in evidence_errors(item.get("evidence"), f"observation {item.get('case_id', '<unknown>')}"):
-                errors.append(_rule_error("OBS-001", message))
-    missing = sorted(passed - set(observations))
-    if missing:
-        errors.append(_rule_error("OBS-001", f"successful cases have no observed evidence: {', '.join(missing)}"))
-    return errors
+    # Execution evidence is process-local and is deleted before the command
+    # returns. Persistent validation covers only formal contracts and reports.
+    return []
 
 
 def _request_errors(case: dict[str, Any]) -> list[str]:
@@ -1144,27 +1121,6 @@ def _registered_bru_errors(qa_root: Path, records: list[tuple[str, Path, dict[st
     return errors
 
 
-def _latest_evidence_documents(
-    qa_root: Path,
-    records: list[tuple[str, Path, dict[str, Any], dict[str, Any]]],
-    module_scoped: bool = False,
-) -> list[dict[str, Any]]:
-    module_ids = {module_id for module_id, _, _, _ in records}
-    roots: list[Path]
-    if module_scoped:
-        roots = [qa_root / MODULE_EVIDENCE / module_id for module_id in sorted(module_ids)]
-    else:
-        roots = [qa_root / GLOBAL_EVIDENCE]
-    documents: list[dict[str, Any]] = []
-    for root in roots:
-        paths = sorted(root.glob("*-evidence.json")) if root.is_dir() else []
-        if paths:
-            loaded = load_data(paths[-1])
-            if isinstance(loaded, dict):
-                documents.append(loaded)
-    return documents
-
-
 def _path_marker(path: Path) -> str:
     if not path.exists():
         return "<deleted>"
@@ -1277,9 +1233,7 @@ def _boundary_errors(qa_root: Path, actor: str, module: str | None, changed_path
     allowed = (
         qa_root / CONTRACTS / "modules" / directory.name,
         qa_root / BRUNO / directory.name,
-        qa_root / MODULE_RESULTS / module_id,
-        qa_root / MODULE_EVIDENCE / module_id,
-        qa_root / LOGS / "modules" / module_id,
+        qa_root / REPORTS,
     )
     errors: list[str] = []
     for raw in changed_paths:
@@ -1389,7 +1343,7 @@ def validate_stage(
         targets = [
             path for path in (
                 qa_root / CONTRACTS, qa_root / CONSTRAINTS, qa_root / BRUNO,
-                qa_root / RESULTS,
+                qa_root / REPORTS,
             )
             if path.exists()
         ]

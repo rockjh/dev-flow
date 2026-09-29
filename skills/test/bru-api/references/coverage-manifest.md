@@ -203,12 +203,10 @@ Example flow-required case block:
 ```mermaid
 sequenceDiagram
     participant C as 自动化用例
-    participant B as Bruno
-    participant S as 业务服务
-    C->>B: 准备“创建用户成功”请求
-    B->>S: POST /system/user
-    S-->>B: 返回 HTTP 200
-    B-->>C: 校验状态码、业务结果和响应字段
+    participant A as API
+    C->>A: POST /system/user
+    A-->>C: 返回 HTTP 200
+    C->>C: 校验状态码、业务结果和响应字段
 ```
 <!-- CASE_END: USER_CREATE_OK -->
 ````

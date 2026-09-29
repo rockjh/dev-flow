@@ -85,8 +85,8 @@ class BizFlowContractTests(unittest.TestCase):
             self.assertIn("结果代码中未确认", text)
 
             code, result = self.invoke("biz-flow", "check", "--project", str(root))
-            self.assertEqual(8, code, result)
-            self.assertIn("title_unresolved", result["error"]["message"])
+            self.assertEqual(0, code, result)
+            self.assertTrue(result["ok"])
             docs = root / "docs" / "biz-flow"
             self.assertTrue((docs / "业务流程覆盖总览.md").is_file())
             self.assertTrue((docs / "biz-flow.yaml").is_file())

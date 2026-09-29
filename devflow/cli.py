@@ -62,7 +62,7 @@ def _project_relative_path(arguments: list[str], name: str, project: Path, defau
 
 def _prepare_lock(domain: str, command: str, arguments: list[str]) -> tuple[Path | None, str]:
     if domain == "bru-api":
-        root = _option_path(arguments, "--qa-root", "test/bru-api")
+        root = _option_path(arguments, "--qa-root", "qa")
         schema_version = BRU_API_SCHEMA_VERSION
     elif domain == "biz-flow":
         root = _option_path(arguments, "--project", ".")
@@ -95,7 +95,7 @@ def _summary(stdout: str, stderr: str, *, full: bool) -> dict[str, object]:
 
 def _artifact_path(domain: str, command: str, arguments: list[str], stdout: str) -> str:
     if domain == "bru-api" and command in {"understand", "generate"}:
-        path = _option_path(arguments, "--qa-root", "test/bru-api") / "artifacts" / "design-generation-report.json"
+        path = _option_path(arguments, "--qa-root", "qa") / "reports" / "latest.md"
         return str(path) if path.is_file() else ""
     if domain == "e2e" and command == "run":
         path = _option_path(arguments, "--project", ".") / "artifacts" / "e2e-run.json"

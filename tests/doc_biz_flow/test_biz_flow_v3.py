@@ -77,7 +77,7 @@ class BizFlowV3Tests(unittest.TestCase):
         )
         diagram = _diagram(entry)
         self.assertNotIn("opt 外部调用", diagram)
-        self.assertIn("External", diagram)
+        self.assertIn("外部接口", diagram)
 
     def test_java_multi_route_binding_is_counted_separately(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -93,7 +93,7 @@ class BizFlowV3Tests(unittest.TestCase):
             identifiers = {entry.identifier for entry in scan(root).entries}
             self.assertIn("GET /one", identifiers)
             self.assertIn("GET /two", identifiers)
-            self.assertTrue(any("parser support for Java is heuristic" in item for item in scan(root).unresolved))
+            self.assertFalse(any("parser support for Java is heuristic" in item for item in scan(root).unresolved))
 
     def test_feign_mapping_is_outbound_not_an_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
