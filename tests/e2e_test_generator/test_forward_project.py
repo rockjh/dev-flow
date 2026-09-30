@@ -11,9 +11,6 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from devflow import __version__
-from devflow.core.artifacts import write_lock
-from devflow.core.schema import E2E_GATE_SCHEMA_VERSION
 from devflow.e2e_test_generator.assets import initialize
 from devflow.e2e_test_generator.contracts import _generate_artifacts
 
@@ -110,7 +107,6 @@ class ForwardProjectTests(unittest.TestCase):
             }), encoding="utf-8")
             _, generation_errors = _generate_artifacts(project, design_files=[design], openapi_files=[protocol])
             self.assertEqual([], generation_errors)
-            write_lock(project, tool_version=__version__, domain="e2e", schema_version=E2E_GATE_SCHEMA_VERSION)
 
             missing_environment = os.environ.copy()
             missing_environment.pop("EVIDENCE_CONNECTION", None)

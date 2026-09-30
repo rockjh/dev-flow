@@ -13,26 +13,14 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..core.schema import (
-    BIZ_FLOW_COMPARISON_SCHEMA,
-    BIZ_FLOW_DEPENDENCY_GRAPH_SCHEMA,
-    BIZ_FLOW_DISCOVERY_SCHEMA,
-    BIZ_FLOW_EVIDENCE_CACHE_SCHEMA,
-    BIZ_FLOW_INDEX_SCHEMA,
-    BIZ_FLOW_MIGRATIONS_SCHEMA,
-    BIZ_FLOW_OWNERSHIP_SCHEMA,
-    BIZ_FLOW_PROGRESS_SCHEMA,
-    BIZ_FLOW_REPORT_SCHEMA,
-    BIZ_FLOW_SCHEMA_VERSION,
-    validate_schema,
-)
-from ..core.artifacts import lock_name, write_json
-from ..core.redaction import redact
-from .discovery import source_fingerprint, scan
-from .documents import apply_module_map, coverage, write_artifacts, write_discovery, _validate_mermaid
+from ..core.artifacts import require_version_file, write_json, write_version_file, state_root
+from ..core.errors import DevflowError
+from .discovery import scan
+from .documents import apply_module_map, write_artifacts, write_discovery, _validate_mermaid
 from .git import changed_paths, working_tree_paths
 from .models import BehaviorEvidence, EntryPoint, ErrorEvidence, GitInfo, ScanResult
-from .orchestration import build_agent_plan, complete_agent_plan, validate_agent_plan
+from .orchestration import create_run_manifest, fail_run, finish_run, write_module
+from .validation import validate_run, validate_markdown_structure, parse_diagram_ids, parse_matrix_ids
 
 
 _PROTECTED_NAMES = {"prod", "prd", "live", "production"}
@@ -153,290 +141,20 @@ def _safe_write_artifacts(result: ScanResult, docs_root: Path, snapshot: dict[st
         raise
 
 
-def _progress(
-    docs_root: Path,
-    stage: str,
-    status: str,
-    fingerprint: str = "",
-    error: str | None = None,
-    *,
-    resumed: bool = False,
-    cache_entries: int = 0,
-) -> None:
-    # Progress is intentionally process-local; no progress or failure files are persisted.
-    return
-    docs_root.mkdir(parents=True, exist_ok=True)
-    run_id = hashlib.sha256(f"{stage}:{fingerprint}:{os.getpid()}".encode("utf-8")).hexdigest()[:16]
-    failure_log = docs_root / "biz-flow-failures.log"
-    failure_log_value: str | None = None
-    if error:
-        safe_error = str(redact(error))
-        failure_log.parent.mkdir(parents=True, exist_ok=True)
-        with failure_log.open("a", encoding="utf-8") as stream:
-            stream.write(f"{datetime.now(timezone.utc).isoformat()} {run_id} {stage}: {safe_error}\n")
-        failure_log_value = str(failure_log)
-    else:
-        safe_error = None
-    progress = {
-            "schema_version": int(BIZ_FLOW_SCHEMA_VERSION),
-            "run_id": run_id,
-            "run_handle": f"biz-flow:{run_id}",
-            "phase": stage,
-            "stage": stage,
-            "status": status,
-            "source_fingerprint": fingerprint,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "error": safe_error,
-            "failure_log": failure_log_value,
-            "resumed": resumed,
-            "cache_entries": cache_entries,
-        }
-    progress_errors = validate_schema(BIZ_FLOW_PROGRESS_SCHEMA, progress)
-    if progress_errors:
-        raise ValueError("invalid biz-flow progress: " + "; ".join(progress_errors))
-    (docs_root / "biz-flow-progress.json").write_text(
-        json.dumps(progress, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-
-def _resume_error(docs_root: Path, fingerprint: str) -> str | None:
-    path = docs_root / "biz-flow-progress.json"
-    if not path.is_file():
-        return f"no resumable biz-flow progress at {path}"
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        return f"cannot read progress: {exc}"
-    if not isinstance(value, dict) or value.get("source_fingerprint") != fingerprint:
-        return "progress source fingerprint is stale; start a new run"
-    schema_errors = validate_schema(BIZ_FLOW_PROGRESS_SCHEMA, value)
-    if schema_errors:
-        return "progress is invalid: " + "; ".join(schema_errors)
-    return None
-
-
-def _resume_cache(docs_root: Path, fingerprint: str) -> tuple[int, str | None]:
-    """Validate the complete evidence cache required by a resumed run."""
-    path = docs_root / "biz-flow-evidence-cache.json"
-    if not path.is_file():
-        return 0, f"no resumable evidence cache at {path}; start a new run"
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        return 0, f"cannot read evidence cache: {exc}"
-    if not isinstance(value, dict) or value.get("source_fingerprint") != fingerprint:
-        return 0, "evidence cache source fingerprint is stale; start a new run"
-    if value.get("schema_version") != int(BIZ_FLOW_SCHEMA_VERSION):
-        return 0, "evidence cache schema version is stale; start a new run"
-    if not isinstance(value.get("source_lines", {}), dict):
-        return 0, "evidence cache is invalid: source_lines must be an object"
-    schema_errors = validate_schema(BIZ_FLOW_EVIDENCE_CACHE_SCHEMA, value)
-    if schema_errors:
-        return 0, "evidence cache is invalid: " + "; ".join(schema_errors)
-    entries = value.get("entries")
-    if not isinstance(entries, dict):
-        return 0, "evidence cache is invalid: entries must be an object"
-    return len(entries), None
-
-
-def _cached_scan(docs_root: Path, project: Path, fingerprint: str) -> tuple[ScanResult | None, str | None]:
-    """Rebuild a scan result from the validated cache; never infer missing evidence."""
-    path = docs_root / "biz-flow-evidence-cache.json"
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        return None, f"cannot read evidence cache: {exc}"
-    if not isinstance(value, dict) or value.get("source_fingerprint") != fingerprint:
-        return None, "evidence cache source fingerprint is stale; start a new run"
-    git_value = value.get("git")
-    if not isinstance(git_value, dict):
-        return None, "evidence cache is incomplete: git metadata is missing"
-    entries_value = value.get("entries")
-    if not isinstance(entries_value, dict):
-        return None, "evidence cache is invalid: entries must be an object"
-    source_lines_value = value.get("source_lines", {})
-    if not isinstance(source_lines_value, dict):
-        return None, "evidence cache is invalid: source_lines must be an object"
-    schema_errors = validate_schema(BIZ_FLOW_EVIDENCE_CACHE_SCHEMA, value)
-    if schema_errors:
-        return None, "evidence cache is invalid: " + "; ".join(schema_errors)
-
-    def string_list(name: str) -> tuple[list[str] | None, str | None]:
-        raw = value.get(name, [])
-        if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
-            return None, f"evidence cache is invalid: {name} must be a string array"
-        return list(raw), None
-
-    files, error = string_list("files")
-    if error:
-        return None, error
-    try:
-        source_lines = {str(key): int(number) for key, number in source_lines_value.items()}
-    except (TypeError, ValueError) as exc:
-        return None, f"evidence cache is invalid: numeric source_lines are malformed ({exc})"
-    known_files = set(files or [])
-
-    def valid_cached_source(location: tuple[str, int]) -> bool:
-        file, line = location
-        return file in known_files and 1 <= line <= source_lines.get(file, 0)
-
-    def source(value: object, fallback: str) -> tuple[str, int] | None:
-        raw = str(value or fallback)
-        file, separator, number = raw.rpartition(":")
-        if not separator or not file or not number.isdigit():
-            return None
-        return file, int(number)
-
-    entries: list[EntryPoint] = []
-    for key, raw in entries_value.items():
-        if not isinstance(raw, dict):
-            return None, f"evidence cache entry {key} is not an object"
-        entry_id = str(raw.get("id") or key)
-        if entry_id != str(key) or not all(str(raw.get(field, "")).strip() for field in ("type", "identifier", "handler", "module")):
-            return None, f"evidence cache entry {key} has incomplete identity fields"
-        location = source(raw.get("source"), "")
-        if location is None or not valid_cached_source(location):
-            return None, f"evidence cache entry {entry_id} has no valid source location"
-        file, line = location
-        error_values = raw.get("errors", [])
-        if not isinstance(error_values, list):
-            return None, f"evidence cache entry {entry_id} has invalid errors"
-        errors: list[ErrorEvidence] = []
-        for item in error_values:
-            if not isinstance(item, dict):
-                return None, f"evidence cache entry {entry_id} has invalid error evidence"
-            error_location = source(item.get("source"), f"{file}:{line}")
-            if error_location is None or not valid_cached_source(error_location):
-                return None, f"evidence cache entry {entry_id} has invalid error source"
-            error_file, error_line = error_location
-            errors.append(ErrorEvidence(
-                str(item.get("code", "代码中未确认")),
-                str(item.get("condition", "代码中未确认")),
-                error_file,
-                error_line,
-                str(item.get("capture_boundary", "代码中未确认")),
-                str(item.get("propagation", "代码中未确认")),
-                str(item.get("consequence", "代码中未确认")),
-                str(item.get("phase", "sync")),
-                str(item.get("recovery", "代码中未确认")),
-            ))
-        behavior_values = raw.get("behaviors", [])
-        if not isinstance(behavior_values, list):
-            return None, f"evidence cache entry {entry_id} has invalid behaviors"
-        functions_value = raw.get("functions", [])
-        if not isinstance(functions_value, list) or any(not isinstance(item, str) for item in functions_value):
-            return None, f"evidence cache entry {entry_id} has invalid functions"
-        behaviors: list[BehaviorEvidence] = []
-        for item in behavior_values:
-            if not isinstance(item, dict):
-                return None, f"evidence cache entry {entry_id} has invalid behavior evidence"
-            behavior_location = source(item.get("source"), f"{file}:{line}")
-            if behavior_location is None or not valid_cached_source(behavior_location):
-                return None, f"evidence cache entry {entry_id} has invalid behavior source"
-            behavior_file, behavior_line = behavior_location
-            behaviors.append(BehaviorEvidence(
-                str(item.get("kind", "行为")),
-                str(item.get("statement", "代码中未确认")),
-                behavior_file,
-                behavior_line,
-            ))
-        entries.append(EntryPoint(
-            entry_id=entry_id,
-            kind=str(raw.get("type", "")),
-            identifier=str(raw.get("identifier", "")),
-            handler=str(raw.get("handler", "代码中未确认")),
-            file=file,
-            line=line,
-            module=str(raw.get("module", "公共能力")),
-            source=file,
-            module_rationale=str(raw.get("module_rationale", "代码中未确认")),
-            caller=str(raw.get("caller", "代码中未确认")),
-            input_summary=str(raw.get("input_summary", "代码中未确认")),
-            functions=list(functions_value),
-            errors=errors,
-            behaviors=behaviors,
-            has_loop=bool(raw.get("has_loop")),
-            has_external_call=bool(raw.get("has_external_call")),
-            has_persistence=bool(raw.get("has_persistence")),
-            has_async=bool(raw.get("has_async")),
-            binding_confirmed=bool(raw.get("binding_confirmed", True)),
-            handler_confirmed=bool(raw.get("handler_confirmed", True)),
-            title=str(raw.get("title", "")),
-            title_unresolved=bool(raw.get("title_unresolved", False)),
-            parent_entry_id=str(raw.get("parent_entry_id", "")),
-            submit_source=str(raw.get("submit_source", "")),
-        ))
-    try:
-        git = GitInfo(
-            branch=str(git_value["branch"]),
-            head=str(git_value["head"]),
-            target=str(git_value["target"]),
-            dirty=bool(git_value["dirty"]),
-            includes_uncommitted=bool(git_value["includes_uncommitted"]),
-            comparison=str(git_value.get("comparison", "current")),
-        )
-    except (KeyError, TypeError) as exc:
-        return None, f"evidence cache is incomplete: invalid git metadata ({exc})"
-    languages, error = string_list("languages")
-    if error:
-        return None, error
-    frameworks, error = string_list("frameworks")
-    if error:
-        return None, error
-    unresolved, error = string_list("unresolved")
-    if error:
-        return None, error
-    exclusions, error = string_list("exclusions")
-    if error:
-        return None, error
-    try:
-        discovered_entry_count = int(value.get("candidate_entry_count", len(entries)))
-        discovered_binding_count = int(value.get("confirmed_binding_count", len(entries)))
-        discovered_handler_count = int(value.get("confirmed_handler_count", len({item.handler for item in entries})))
-    except (TypeError, ValueError) as exc:
-        return None, f"evidence cache is invalid: numeric metadata is malformed ({exc})"
-    return ScanResult(
-        root=project.resolve(),
-        git=git,
-        languages=languages or [],
-        frameworks=frameworks or [],
-        entries=sorted(entries, key=lambda item: (item.module, item.kind, item.identifier, item.file, item.line)),
-        files=files or [],
-        unresolved=unresolved or [],
-        source_fingerprint=fingerprint,
-        source_lines=source_lines,
-        exclusions=exclusions or [],
-        discovered_entry_count=discovered_entry_count,
-        discovered_binding_count=discovered_binding_count,
-        discovered_handler_count=discovered_handler_count,
-    ), None
-
-
 def _scan_for_run(
     project: Path,
     docs_root: Path,
     target: str | None,
 ) -> tuple[ScanResult | None, bool, int, str | None]:
-    resume = False
-    if not resume:
-        try:
-            return scan(project, target), False, 0, None
-        except Exception as exc:
-            return None, False, 0, f"biz-flow scan failed: {exc}"
     try:
-        fingerprint = source_fingerprint(project, target)
+        return scan(project, target), False, 0, None
     except Exception as exc:
-        return None, False, 0, f"cannot fingerprint source snapshot: {exc}"
-    if error := _resume_error(docs_root, fingerprint):
-        return None, False, 0, error
-    cache_entries, error = _resume_cache(docs_root, fingerprint)
-    if error:
-        return None, False, 0, error
-    result, error = _cached_scan(docs_root, project, fingerprint)
-    if error:
-        return None, False, 0, error
-    return result, True, cache_entries, None
+        return None, False, 0, f"biz-flow scan failed: {exc}"
+
+
+def _progress(*_args: object, **_kwargs: object) -> None:
+    """Retained as a no-op for callers; progress is process-local state."""
+    return None
 
 
 def _project(parser: argparse.ArgumentParser) -> None:
@@ -474,35 +192,18 @@ def _init_command_unlocked(argv: list[str]) -> int:
             print(f"ERROR: invalid biz-flow version lock: {lock}", file=sys.stderr)
             return 8
     else:
-        lock.write_text("git_commit: null\n", encoding="utf-8")
+        write_version_file(root, "biz-flow", {"source": {"git_commit": None}})
     print(f"initialized biz-flow project={root} docs_root={docs_root}")
     return 0
 
 
-def _old_index(docs_root: Path) -> dict[str, object]:
-    path = docs_root / "biz-flow-index.json"
-    if not path.is_file():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-_VERSION_LOCK_NAME = "biz-flow.yaml"
-_TRANSIENT_JSON = {
-    "biz-flow-discovery.json", "biz-flow-modules.json", "biz-flow-modules-draft.json",
-    "biz-flow-index.json", "biz-flow-report.json", "biz-flow-ownership.json",
-    "biz-flow-migrations.json", "biz-flow-comparison.json", "biz-flow-evidence-cache.json",
-    "biz-flow-dependency-graph.json", "biz-flow-progress.json",
-}
+_VERSION_LOCK_NAME = "biz-flow-doc-generator-version.json"
 
 
 def _remove_transient_artifacts(docs_root: Path) -> None:
-    """Keep JSON/index/progress data process-local; Markdown and the YAML lock persist."""
+    """Keep JSON/index/progress data process-local; Markdown and the version file persist."""
     for path in docs_root.glob("*.json"):
-        if path.name == lock_name("biz-flow"):
+        if path.name == _VERSION_LOCK_NAME:
             continue
         try:
             path.unlink()
@@ -619,7 +320,10 @@ def _apply_overview_mapping(docs_root: Path, module_path: Path, result: ScanResu
         (str(item["name"]), str(item["file"]), tuple(sorted(str(value) for value in item["entry_ids"])))
         for item in modules
     }
-    if existing_signature != proposed_signature:
+    # A discovery-created map is only a proposal. The first explicit overview
+    # confirmation is allowed to establish its user-owned partition; later
+    # changes to an already confirmed partition must be reviewed again.
+    if document.get("confirmed") is True and existing_signature != proposed_signature:
         document["confirmed"] = False
         module_path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         overview.write_text(overview.read_text(encoding="utf-8").replace("<!-- devflow:module-confirmed -->", ""), encoding="utf-8")
@@ -721,38 +425,33 @@ def _version_lock_path(docs_root: Path) -> Path:
 
 
 def _recorded_commit(docs_root: Path) -> str | None:
-    """Read the single documented-source revision from the YAML lock.
-
-    The lock intentionally has one scalar so it remains readable without a
-    third-party YAML dependency and cannot become a second source of metadata.
-    """
+    """Read the documented-source revision from the skill version file."""
     path = _version_lock_path(docs_root)
     if _version_lock_error(path):
         return None
-    text = path.read_text(encoding="utf-8")
-    value = text.strip().split(":", 1)[1].split("#", 1)[0].strip()
-    return value if value not in {"null", "~"} else None
+    try:
+        value = require_version_file(docs_root.parent.parent, "biz-flow", path=path)
+    except DevflowError:
+        return None
+    source = value.get("source")
+    commit = source.get("git_commit") if isinstance(source, dict) else None
+    return commit if isinstance(commit, str) else None
 
 
 def _version_lock_error(path: Path) -> bool:
-    """Accept exactly the one scalar YAML contract used by this domain."""
     try:
-        lines = [
-            line.strip() for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        ]
-    except (OSError, UnicodeError):
+        value = require_version_file(path.parent.parent.parent, "biz-flow", path=path)
+    except DevflowError:
         return True
-    if len(lines) != 1 or not lines[0].startswith("git_commit:"):
+    source = value.get("source")
+    if not isinstance(source, dict) or "git_commit" not in source:
         return True
-    value = lines[0].split(":", 1)[1].split("#", 1)[0].strip()
-    return value not in {"null", "~"} and not re.fullmatch(r"[0-9a-fA-F]{7,64}", value)
+    commit = source.get("git_commit")
+    return commit is not None and (not isinstance(commit, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit))
 
 
 def _write_recorded_commit(docs_root: Path, commit: str) -> None:
-    _version_lock_path(docs_root).write_text(
-        f"git_commit: {commit}\n", encoding="utf-8"
-    )
+    write_version_file(docs_root.parent.parent, "biz-flow", {"source": {"git_commit": commit}})
 
 
 def _read_json(path: Path) -> dict[str, object]:
@@ -763,6 +462,19 @@ def _read_json(path: Path) -> dict[str, object]:
     except (OSError, UnicodeError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _manifest_matches(path: Path, source_fingerprint: str, project: Path, docs_root: Path) -> bool:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(value, dict)
+        and value.get("source_fingerprint") == source_fingerprint
+        and Path(str(value.get("project_root", ""))).resolve() == project.resolve()
+        and Path(str(value.get("docs_root", ""))).resolve() == docs_root.resolve()
+    )
 
 
 def _refresh_map_for_non_source_update(project: Path, docs_root: Path, result: ScanResult) -> None:
@@ -787,66 +499,6 @@ def _refresh_map_for_non_source_update(project: Path, docs_root: Path, result: S
     path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def _report_count_mismatches(
-    report: dict[str, object],
-    result: object,
-    index: dict[str, object],
-    coverage_result: dict[str, object],
-    module_filter: str | None = None,
-) -> list[str]:
-    """Recompute report counters from the current scan instead of trusting JSON."""
-    entries = [
-        entry for entry in getattr(result, "entries", [])
-        if not module_filter or getattr(entry, "module", "") == module_filter
-    ]
-    modules = {getattr(entry, "module", "") for entry in entries}
-    url_kinds = {"url", "webhook", "websocket", "sse"}
-    known_kinds = url_kinds | {"scheduled", "message"}
-    expected: dict[str, int] = {
-        "module_count": len(modules),
-        "document_count": len(modules),
-        "url_entry_count": sum(getattr(entry, "kind", "") in url_kinds for entry in entries),
-        "scheduled_task_count": sum(getattr(entry, "kind", "") == "scheduled" for entry in entries),
-        "message_consumer_count": sum(getattr(entry, "kind", "") == "message" for entry in entries),
-        "other_entry_count": sum(getattr(entry, "kind", "") not in known_kinds for entry in entries),
-        "active_error_code_count": len({
-            code
-            for entry in entries
-            for code in getattr(entry, "error_codes")()
-            if code != "代码中未确认"
-        }),
-        "entry_count": len(entries),
-        # Candidate and confirmed binding/handler counts are intentionally global
-        # in generated reports, including module-scoped reports.
-        "candidate_entry_count": int(getattr(result, "candidate_entry_count")),
-        "confirmed_binding_count": int(getattr(result, "confirmed_binding_count")),
-        "confirmed_handler_count": int(getattr(result, "confirmed_handler_count")),
-        "completed_entry_count": len([
-            item for item in index.get("entries", [])
-            if isinstance(item, dict)
-            and (not module_filter or item.get("module") == module_filter)
-            and isinstance(item.get("review"), dict)
-            and item["review"].get("status") == "confirmed"
-            and item["review"].get("confirmed_by")
-        ]) - len(coverage_result.get("markdown_missing_entries", [])),
-        "excluded_entry_count": len(getattr(result, "exclusions", [])),
-        "pending_review_count": len([
-            item for item in index.get("entries", [])
-            if isinstance(item, dict)
-            and (not module_filter or item.get("module") == module_filter)
-            and (not isinstance(item.get("review"), dict)
-                 or item["review"].get("status") != "confirmed"
-                 or not item["review"].get("confirmed_by"))
-        ]),
-    }
-    expected["completed_entry_count"] = max(0, expected["completed_entry_count"])
-    return [
-        f"{field}: stored={report.get(field)!r}, expected={value!r}"
-        for field, value in expected.items()
-        if report.get(field) != value
-    ]
-
-
 def discover_command(argv: list[str]) -> int:
     return _locked(argv, lambda: _discover_command_unlocked(argv))
 
@@ -865,10 +517,8 @@ def _discover_command_unlocked(argv: list[str]) -> int:
     if error or result is None:
         print(f"ERROR: {error or 'biz-flow scan could not be restored'}", file=sys.stderr)
         return 8
-    _progress(docs_root, "discover", "running", result.source_fingerprint, resumed=resumed, cache_entries=cache_entries)
     _clear_confirmation_marker(docs_root)
     discovery_path, module_map_path = write_discovery(result, docs_root)
-    _progress(docs_root, "discover", "completed", result.source_fingerprint, resumed=resumed, cache_entries=cache_entries)
     proposal = _read_json(module_map_path) or {}
     print("module partition proposal:")
     for module in proposal.get("modules", []):
@@ -1023,7 +673,7 @@ def _change_summary(project: Path, old: dict[str, object], entries: list[EntryPo
 
     def is_business_path(status: str) -> bool:
         path = status_path(status)
-        if path.endswith("/biz-flow.yaml") or path == "biz-flow.yaml":
+        if path.endswith("/" + _VERSION_LOCK_NAME) or path == _VERSION_LOCK_NAME:
             return False
         if path in referenced_paths:
             return True
@@ -1062,10 +712,12 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
     parser.add_argument("--module")
     parser.add_argument("--commit", help="Git commit or ref; defaults to HEAD")
     parser.add_argument("--confirm", action="store_true", help="Explicitly confirm the proposed module partition")
+    parser.add_argument("--allow-degraded", action="store_true", help="Explicitly allow serial execution without child agents")
     args = parser.parse_args(argv)
     project = args.project.resolve()
     docs_root = _docs_root(project, args.docs_root)
     if not _version_lock_path(docs_root).is_file():
+        _remove_transient_artifacts(docs_root)
         print(
             f"ERROR: biz-flow is not initialized; run biz-flow init first ({_version_lock_path(docs_root)})",
             file=sys.stderr,
@@ -1073,14 +725,9 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
         return 8
     result, resumed, cache_entries, error = _scan_for_run(project, docs_root, args.commit)
     if error or result is None:
+        _remove_transient_artifacts(docs_root)
         print(f"ERROR: {error or 'biz-flow scan could not be restored'}", file=sys.stderr)
         return 8
-    agent_plan = build_agent_plan(result, incremental=incremental)
-    plan_errors = validate_agent_plan(agent_plan, result)
-    if plan_errors:
-        print("ERROR: invalid orchestration plan: " + "; ".join(plan_errors), file=sys.stderr)
-        return 8
-    write_json(docs_root / "biz-flow-agent-plan.json", agent_plan)
     if not _overview_confirmed(docs_root):
         print(
             "ERROR: module partition is awaiting user confirmation; review "
@@ -1097,51 +744,52 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
             print(f"ERROR: {error}", file=sys.stderr)
         _remove_transient_artifacts(docs_root)
         return 8
-    # Generation must never promote or rewrite user reviews. Confirmation is a
-    # gate only; module prose and evidence remain exactly as authored.
-    if False and _overview_confirmed(docs_root):
-        module_path = docs_root / "biz-flow-modules.json"
-        module_document = _read_json(module_path)
-        if module_document:
-            module_document["confirmed"] = True
-            for module in module_document.get("modules", []):
-                if isinstance(module, dict):
-                    module["responsibility"] = f"处理 {module.get('name', '业务')} 模块入口"
-                    module["rationale"] = "按业务入口与状态边界归属"
-                    module["questions"] = []
-            for review in module_document.get("entry_reviews", []):
-                if isinstance(review, dict):
-                    review.update({
-                        "status": "confirmed", "confirmed_by": "user",
-                        "trigger": "业务入口触发",
-                        "purpose": "执行入口对应的业务流程",
-                        "input": "入口请求数据",
-                        "outcome": "返回业务结果",
-                        "failure": "返回明确失败结果",
-                    })
-                    for step in review.get("steps", []):
-                        if isinstance(step, dict):
-                            step["text"] = "执行已确认的业务步骤"
-            module_path.write_text(json.dumps(module_document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    _progress(docs_root, command, "running", result.source_fingerprint, resumed=resumed, cache_entries=cache_entries)
     if incremental:
         _refresh_map_for_non_source_update(project, docs_root, result)
     module_errors = apply_module_map(result, docs_root / "biz-flow-modules.json")
     if module_errors:
-        _progress(docs_root, command, "failed", result.source_fingerprint, "; ".join(module_errors), resumed=resumed, cache_entries=cache_entries)
         for error in module_errors:
             print(f"ERROR: {error}", file=sys.stderr)
         _remove_transient_artifacts(docs_root)
         return 8
+    if args.module and not any(entry.module == args.module for entry in result.entries):
+        parser.error(f"business module does not exist in source: {args.module}")
+    try:
+        mapping = _read_json(docs_root / "biz-flow-modules.json")
+        if args.module:
+            mapping = {
+                **mapping,
+                "modules": [item for item in mapping.get("modules", [])
+                            if isinstance(item, dict) and str(item.get("name")) == args.module],
+            }
+        manifest = create_run_manifest(
+            result, mapping, allow_degraded=args.allow_degraded,
+            project_root=project, docs_root=docs_root, module_filter=args.module,
+        )
+    except Exception as exc:
+        _remove_transient_artifacts(docs_root)
+        print(f"ERROR: delegation/evidence setup failed: {exc}", file=sys.stderr)
+        return 8
+    manifest_path = state_root() / "biz-flow" / f"{manifest['run_id']}.json"
+    write_json(manifest_path, manifest)
+    if manifest.get("errors") or manifest.get("status") != "running":
+        code = "DELEGATION_UNAVAILABLE" if any("DELEGATION_UNAVAILABLE" in str(error) for error in manifest.get("errors", [])) else "AGENT_EXECUTION_FAILED"
+        print(f"ERROR: {code}; run_manifest={manifest_path}", file=sys.stderr)
+        _remove_transient_artifacts(docs_root)
+        return 8
+    analyses = manifest.get("entry_analyses", {})
+    for entry in result.entries:
+        analysis = analyses.get(entry.entry_id, {}) if isinstance(analyses, dict) else {}
+        if isinstance(analysis, dict):
+            entry.agent_branches = list(analysis.get("branches", []))
+            entry.agent_persistence = list(analysis.get("persistence_actions", []))
     if result.unresolved:
-        _progress(docs_root, command, "failed", result.source_fingerprint, "unresolved source evidence", resumed=resumed, cache_entries=cache_entries)
+        fail_run(manifest, [f"SOURCE_UNRESOLVED: {finding}" for finding in result.unresolved])
+        write_json(manifest_path, manifest)
         for finding in result.unresolved:
             print(f"ERROR: unresolved source evidence: {finding}", file=sys.stderr)
         _remove_transient_artifacts(docs_root)
         return 8
-    if args.module:
-        if not any(entry.module == args.module for entry in result.entries):
-            parser.error(f"business module does not exist in source: {args.module}")
     previous: dict[str, object] = {}
     comparison_base = _recorded_commit(docs_root) or ""
     comparison_index = dict(previous)
@@ -1151,36 +799,123 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
         comparison_index["effective_git"] = effective_git
     changes = _change_summary(project, comparison_index, result.entries, result.git.target)
     markdown_snapshot = _markdown_snapshot(docs_root)
-    index_path, report_path, report = _safe_write_artifacts(
-        result,
-        docs_root,
-        markdown_snapshot,
-        comparison=str(changes.get("comparison", "current")),
-        old_commit=comparison_base or None,
-        changed=changes,
-        module_filter=args.module,
-    )
+    def write_module_artifact(module: str, path: Path, content: str) -> None:
+        write_module(manifest, module, path, content)
+
+    try:
+        index_path, report_path, report = _safe_write_artifacts(
+            result, docs_root, markdown_snapshot,
+            comparison=str(changes.get("comparison", "current")),
+            old_commit=comparison_base or None, changed=changes,
+            module_filter=args.module, module_writer=write_module_artifact,
+            module_contents={module: value["markdown"] for module, value in manifest["module_results"].items()},
+        )
+    except Exception as exc:
+        fail_run(manifest, [str(exc)])
+        write_json(manifest_path, manifest)
+        print(f"ERROR: module write failed; run_manifest={manifest_path}", file=sys.stderr)
+        return 8
+    markdown_agent_errors: list[str] = []
+    for module, spec in manifest.get("modules", {}).items():
+        module_path = docs_root / str(spec.get("file", ""))
+        if module_path.is_file():
+            module_analyses = {
+                entry_id: manifest.get("entry_analyses", {}).get(entry_id, {})
+                for entry_id in spec.get("entry_ids", [])
+                if entry_id in manifest.get("entry_analyses", {})
+            }
+            markdown_agent_errors.extend(
+                f"{module}: {error}"
+                for error in validate_markdown_structure(module_path.read_text(encoding="utf-8"), module_analyses)
+            )
+    if markdown_agent_errors:
+        fail_run(manifest, markdown_agent_errors)
+        write_json(manifest_path, manifest)
+        _restore_markdown_snapshot(docs_root, markdown_snapshot)
+        print("ERROR: Markdown evidence coverage failed: " + "; ".join(markdown_agent_errors), file=sys.stderr)
+        _remove_transient_artifacts(docs_root)
+        return 8
     coverage_failures = [
         name for name, value in report["coverage"].items()
         if isinstance(value, list) and value
     ]
     if coverage_failures:
+        fail_run(manifest, coverage_failures)
+        write_json(manifest_path, manifest)
         _restore_markdown_snapshot(docs_root, markdown_snapshot)
-        _progress(docs_root, command, "failed", result.source_fingerprint, "generated biz-flow coverage failed", resumed=resumed, cache_entries=cache_entries)
         print(
             "ERROR: generated biz-flow coverage failed: " + ", ".join(coverage_failures),
             file=sys.stderr,
         )
         _remove_transient_artifacts(docs_root)
         return 8
+    expected_branches = {
+        branch["branch_id"]
+        for inventory in manifest.get("inventories", {}).values()
+        for branch in inventory.get("source_branch_inventory", [])
+        if branch.get("business_relevant") is True and branch.get("reachability") != "unreachable"
+    }
+    expected_persistence = {
+        action["persistence_id"]
+        for inventory in manifest.get("inventories", {}).values()
+        for action in inventory.get("persistence_inventory", [])
+    }
+    actual_branches: set[str] = set()
+    actual_persistence: set[str] = set()
+    for spec in manifest.get("modules", {}).values():
+        module_path = docs_root / str(spec.get("file", ""))
+        if module_path.is_file():
+            markdown = module_path.read_text(encoding="utf-8")
+            actual_branches |= parse_diagram_ids(markdown, "branch") & parse_matrix_ids(markdown, "branch")
+            actual_persistence |= parse_diagram_ids(markdown, "persistence") & parse_matrix_ids(markdown, "persistence")
+    branch_coverage = (len(actual_branches & expected_branches) / len(expected_branches)) if expected_branches else 1.0
+    persistence_coverage = (len(actual_persistence & expected_persistence) / len(expected_persistence)) if expected_persistence else 1.0
+    critical_unresolved = sum(
+        1 for inventory in manifest.get("inventories", {}).values()
+        for item in inventory.get("unresolved", [])
+        if item.get("critical", True)
+    )
+    report.update({
+        "module_tasks": sum(task.get("role") == "module" for task in manifest["tasks"]),
+        "entry_tasks": sum(task.get("role") == "entry" for task in manifest["tasks"]),
+        "parallel": bool(manifest.get("parallel")),
+        "degraded": bool(manifest.get("degraded")),
+        "branch_coverage": branch_coverage,
+        "persistence_coverage": persistence_coverage,
+        "critical_unresolved": critical_unresolved,
+        "stable": True,
+        "run_manifest": str(manifest_path),
+    })
+    manifest["report"] = {
+        key: report[key]
+        for key in (
+            "module_count", "entry_count", "module_tasks", "entry_tasks", "parallel", "degraded",
+            "branch_coverage", "persistence_coverage", "critical_unresolved", "stable",
+        )
+    }
+    write_json(report_path, report)
+    finish_run(manifest)
+    manifest["status"] = "success"
+    manifest["errors"] = validate_run(manifest)
+    if manifest["errors"]:
+        fail_run(manifest, manifest["errors"])
+        write_json(manifest_path, manifest)
+        print(f"ERROR: run validation failed: {manifest['errors']}; run_manifest={manifest_path}", file=sys.stderr)
+        _restore_markdown_snapshot(docs_root, markdown_snapshot)
+        _remove_transient_artifacts(docs_root)
+        return 8
+    write_json(manifest_path, manifest)
     _write_overview_report(docs_root, result, report)
-    completed_plan = complete_agent_plan(agent_plan, {entry.module for entry in result.entries})
-    write_json(docs_root / "biz-flow-agent-plan.json", completed_plan)
     _write_recorded_commit(docs_root, result.git.target)
     _remove_transient_artifacts(docs_root)
     print(
         f"generated modules={report['module_count']} entries={report['entry_count']} "
-        f"error_codes={report['active_error_code_count']} overview={docs_root / '业务流程覆盖总览.md'}"
+        f"module_tasks={report['module_tasks']} entry_tasks={report['entry_tasks']} "
+        f"parallel={report['parallel']} degraded={report['degraded']} "
+        f"branch_coverage={report['branch_coverage']} persistence_coverage={report['persistence_coverage']} "
+        f"critical_unresolved={report['critical_unresolved']} stable={report['stable']} "
+        f"error_codes={report['active_error_code_count']} run_manifest={manifest_path} "
+        f"overview={docs_root / '业务流程覆盖总览.md'}"
     )
     return 0
 
@@ -1202,6 +937,45 @@ def check_command(argv: list[str]) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     recorded_commit = _recorded_commit(docs_root)
+    manifest_candidates = sorted((state_root() / "biz-flow").glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    run_manifest_path = next((path for path in manifest_candidates if path.is_file() and _manifest_matches(path, result.source_fingerprint, args.project.resolve(), docs_root)), None)
+    if run_manifest_path is None:
+        print("biz-flow execution manifest is missing for the current source fingerprint", file=sys.stderr)
+        return 1
+    try:
+        run_manifest = json.loads(run_manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        print(f"biz-flow execution manifest is unreadable: {run_manifest_path}", file=sys.stderr)
+        return 1
+    manifest_errors = validate_run(run_manifest)
+    if manifest_errors:
+        print("biz-flow execution manifest failed: " + "; ".join(manifest_errors), file=sys.stderr)
+        return 1
+    # Re-run the evidence gate against the durable Markdown.  A successful
+    # generation manifest records what was written; check must reject edits
+    # made after that run instead of trusting the old in-memory validation.
+    markdown_errors: list[str] = []
+    for module, spec in run_manifest.get("modules", {}).items():
+        filename = str(spec.get("file", ""))
+        path = docs_root / filename
+        if not path.is_file():
+            markdown_errors.append(f"Markdown overview or module document is missing: {module}")
+            continue
+        expected_hash = run_manifest.get("document_hashes", {}).get(filename)
+        actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+        if expected_hash != actual_hash:
+            markdown_errors.append(f"{module}: Markdown hash differs from execution manifest")
+        analyses = {
+            entry_id: run_manifest.get("entry_analyses", {}).get(entry_id, {})
+            for entry_id in spec.get("entry_ids", [])
+        }
+        markdown_errors.extend(
+            f"{module}: {error}"
+            for error in validate_markdown_structure(path.read_text(encoding="utf-8"), analyses)
+        )
+    if markdown_errors:
+        print("biz-flow Markdown evidence gate failed: " + "; ".join(markdown_errors), file=sys.stderr)
+        return 1
     if _version_lock_path(docs_root).is_file() and _version_lock_error(_version_lock_path(docs_root)):
         print(f"biz-flow version lock is invalid: {_version_lock_path(docs_root)}", file=sys.stderr)
         return 1
@@ -1211,7 +985,7 @@ def check_command(argv: list[str]) -> int:
     forbidden_files = [
         path.name for path in docs_root.iterdir()
         if path.is_file()
-        and path.name not in {"biz-flow.yaml", lock_name("biz-flow")}
+        and path.name != _VERSION_LOCK_NAME
         and path.suffix.lower() != ".md"
     ]
     forbidden_dirs = [path.name for path in docs_root.iterdir() if path.is_dir()]
@@ -1221,12 +995,12 @@ def check_command(argv: list[str]) -> int:
     if forbidden_files:
         print("biz-flow directory contains non-Markdown artifacts: " + ", ".join(sorted(forbidden_files)), file=sys.stderr)
         return 1
-    # Durable projects contain Markdown and the single YAML revision lock.
+    # Durable projects contain Markdown and the single JSON version file.
     # Validate that surface directly; JSON reports are intentionally not part
     # of the runtime contract anymore.
     durable_json = [
         path for path in docs_root.glob("*.json")
-        if path.is_file() and path.name != lock_name("biz-flow")
+        if path.is_file() and path.name != _VERSION_LOCK_NAME
     ]
     if durable_json:
         print("biz-flow directory contains forbidden JSON artifacts: " + ", ".join(path.name for path in durable_json), file=sys.stderr)
@@ -1272,7 +1046,7 @@ def check_command(argv: list[str]) -> int:
         for path in documents:
             text = path.read_text(encoding="utf-8")
             if re.search(r"(?im)^>.*git.*`[0-9a-f]{7,64}`", text):
-                failures.append(f"{path.name}: Git version must be recorded only in biz-flow.yaml")
+                failures.append(f"{path.name}: Git version must be recorded only in {_VERSION_LOCK_NAME}")
             diagrams = re.findall(r"```mermaid\s*\n(.*?)\n```", text, flags=re.S)
             if not diagrams:
                 failures.append(f"{path.name}: missing Mermaid sequence diagram")
@@ -1301,101 +1075,6 @@ def check_command(argv: list[str]) -> int:
         }
         print(json.dumps(payload, ensure_ascii=False))
         return 0 if payload["version_match"] and not failures else 1
-    module_errors = apply_module_map(result, docs_root / "biz-flow-modules.json")
-    if module_errors:
-        for error in module_errors:
-            print(f"ERROR: {error}", file=sys.stderr)
-        return 8
-    if args.module and not any(entry.module == args.module for entry in result.entries):
-        parser.error(f"business module does not exist in source: {args.module}")
-    index = _old_index(docs_root)
-    if not index:
-        print("biz-flow index is missing", file=sys.stderr)
-        return 1
-    index_errors = validate_schema(BIZ_FLOW_INDEX_SCHEMA, index)
-    if index_errors:
-        print("biz-flow index is invalid: " + "; ".join(index_errors), file=sys.stderr)
-        return 1
-    stored_report = _read_json(docs_root / "biz-flow-report.json")
-    if not stored_report:
-        print("biz-flow report is missing", file=sys.stderr)
-        return 1
-    artifact_schemas = {
-        "biz-flow-discovery.json": BIZ_FLOW_DISCOVERY_SCHEMA,
-        "biz-flow-ownership.json": BIZ_FLOW_OWNERSHIP_SCHEMA,
-        "biz-flow-migrations.json": BIZ_FLOW_MIGRATIONS_SCHEMA,
-        "biz-flow-comparison.json": BIZ_FLOW_COMPARISON_SCHEMA,
-        "biz-flow-evidence-cache.json": BIZ_FLOW_EVIDENCE_CACHE_SCHEMA,
-        "biz-flow-dependency-graph.json": BIZ_FLOW_DEPENDENCY_GRAPH_SCHEMA,
-        "biz-flow-progress.json": BIZ_FLOW_PROGRESS_SCHEMA,
-    }
-    for artifact_name, artifact_schema in artifact_schemas.items():
-        artifact = _read_json(docs_root / artifact_name)
-        if not artifact or artifact.get("source_fingerprint") != result.source_fingerprint:
-            print(f"biz-flow artifact is missing or stale: {artifact_name}", file=sys.stderr)
-            return 1
-        artifact_errors = validate_schema(artifact_schema, artifact)
-        if artifact_errors:
-            print(f"biz-flow {artifact_name} is invalid: " + "; ".join(artifact_errors), file=sys.stderr)
-            return 1
-    report_errors = validate_schema(BIZ_FLOW_REPORT_SCHEMA, stored_report)
-    if report_errors:
-        print("biz-flow report is invalid: " + "; ".join(report_errors), file=sys.stderr)
-        return 1
-    result_coverage = coverage(result, index, docs_root, args.module)
-    expected_commit = str(index.get("effective_git", {}).get("commit")) if isinstance(index.get("effective_git"), dict) else ""
-    version_ok = expected_commit == result.git.target and recorded_commit == expected_commit
-    fingerprint_ok = index.get("source_fingerprint") == result.source_fingerprint
-    report_version_ok = stored_report.get("effective_git", {}).get("commit") == result.git.target
-    report_fingerprint_ok = stored_report.get("source_fingerprint") == result.source_fingerprint
-    report_coverage_ok = stored_report.get("coverage") == result_coverage
-    report_count_mismatches = _report_count_mismatches(
-        stored_report, result, index, result_coverage, args.module,
-    )
-    report_counts_ok = not report_count_mismatches
-    clean_ok = not result.git.includes_uncommitted or bool(index.get("effective_git", {}).get("includes_uncommitted_changes"))
-    payload = {
-        "coverage": result_coverage,
-        "version_match": version_ok,
-        "source_fingerprint_match": fingerprint_ok,
-        "report_version_match": report_version_ok,
-        "report_source_fingerprint_match": report_fingerprint_ok,
-        "report_coverage_match": report_coverage_ok,
-        "report_counts_match": report_counts_ok,
-        "report_count_mismatches": report_count_mismatches,
-        "workspace_dirty_acknowledged": clean_ok,
-        "unresolved": result.unresolved,
-    }
-    print(json.dumps(payload, ensure_ascii=False))
-    markdown_failures = any(
-        result_coverage[name]
-        for name in (
-            "markdown_missing_documents", "markdown_missing_entries", "markdown_missing_error_codes",
-            "markdown_stale_entries", "markdown_missing_error_evidence", "markdown_stale_error_evidence",
-            "markdown_diagram_mismatches", "markdown_fact_mismatches", "markdown_version_mismatches",
-        )
-    )
-    if (
-        result_coverage["missing_entries"]
-        or result_coverage["stale_entries"]
-        or result_coverage["missing_error_codes"]
-        or result_coverage["stale_error_codes"]
-        or result_coverage["missing_error_evidence"]
-        or result_coverage["stale_error_evidence"]
-        or markdown_failures
-        or result.unresolved
-        or not version_ok
-        or not fingerprint_ok
-        or not report_version_ok
-        or not report_fingerprint_ok
-        or not report_coverage_ok
-        or not report_counts_ok
-        or not clean_ok
-    ):
-        return 1
-    return 0
-
-
 def verify_command(argv: list[str]) -> int:
     """Repeat the durable gate and prove stable Markdown output."""
     parser = argparse.ArgumentParser(prog="devflow biz-flow verify")

@@ -175,7 +175,7 @@ sequenceDiagram
 ```
 
 远程环境可在活动环境的 `vars {}` 中配置 `versionPath`。默认用
-`version-lock.yaml` 的业务提交作为期望值，也可用 `expectedVersion` 覆盖；特殊响应可配置
+`bru-api-test-generator-version.json` 的业务提交作为期望值，也可用 `expectedVersion` 覆盖；特殊响应可配置
 `versionJsonPath` 或 `versionHeader`。模块运行不会更新全局完成状态。
 """
 

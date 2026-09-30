@@ -420,7 +420,7 @@ def versions_match(expected: str, actual: str) -> bool:
 
 
 def locked_business_version(contracts_root: Path) -> str | None:
-    path = contracts_root / "version-lock.yaml"
+    path = contracts_root / "bru-api-test-generator-version.json"
     if not path.is_file():
         return None
     document = load_data(path)

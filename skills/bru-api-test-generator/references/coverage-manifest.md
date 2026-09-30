@@ -4,7 +4,7 @@ Use module manifests as the source of truth. The global index is generated from 
 
 ## Version Lock
 
-Keep `version-lock.yaml` and `qa-lock.yaml` at the contracts root. The first
+Keep `bru-api-test-generator-version.json` and `qa-lock.yaml` at the contracts root. The first
 records a current-workspace source digest excluding `qa/**`; the second records
 OpenAPI, module, case, and generation-state fingerprints. A stale lock is not a
 passing state.
@@ -26,7 +26,6 @@ expected intermediate state, not completion evidence.
 
 ```yaml
 version: 1
-generator_version: 2.0.0
 openapi_sha256: ...
 design_sha256: ...
 last_generated_at: ...

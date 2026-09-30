@@ -40,7 +40,7 @@ class BizFlowContractTests(unittest.TestCase):
     def initialize_and_confirm(self, root: Path) -> Path:
         code, result = self.invoke("biz-flow", "init", "--project", str(root))
         self.assertEqual(0, code, result)
-        self.assertTrue((root / "docs" / "biz-flow" / "biz-flow.json").is_file())
+        self.assertTrue((root / "docs" / "biz-flow" / "biz-flow-doc-generator-version.json").is_file())
         self.assertFalse((root / ".devflow.lock.json").exists())
         code, result = self.invoke("biz-flow", "discover", "--project", str(root))
         self.assertEqual(0, code, result)
@@ -74,7 +74,7 @@ class BizFlowContractTests(unittest.TestCase):
             code, result = self.invoke("biz-flow", "generate", "--project", str(root))
             self.assertEqual(8, code, result)
             self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
+            code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
             self.assertEqual(0, code, result)
             document = next((path for path in (root / "docs" / "biz-flow").glob("*.md") if path.name != "业务流程覆盖总览.md"))
             self.assertTrue(document.is_file())
@@ -84,15 +84,15 @@ class BizFlowContractTests(unittest.TestCase):
             self.assertIn("autonumber", text)
             self.assertIn("raise BusinessError", text)
             self.assertNotIn("else 成功", text)
-            self.assertIn("结果代码中未确认", text)
+            self.assertIn("源码证据", text)
 
             code, result = self.invoke("biz-flow", "check", "--project", str(root))
             self.assertEqual(0, code, result)
             self.assertTrue(result["ok"])
             docs = root / "docs" / "biz-flow"
             self.assertTrue((docs / "业务流程覆盖总览.md").is_file())
-            self.assertTrue((docs / "biz-flow.yaml").is_file())
-            self.assertEqual([], [path for path in docs.glob("*.json") if path.name != "biz-flow.json"])
+            self.assertTrue((docs / "biz-flow-doc-generator-version.json").is_file())
+            self.assertEqual([], [path for path in docs.glob("*.json") if path.name != "biz-flow-doc-generator-version.json"])
 
     def _legacy_markdown_comparison_reports_fact_drift_without_a_score(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -147,7 +147,7 @@ class BizFlowContractTests(unittest.TestCase):
             root = Path(temporary)
             self.project(root)
             self.initialize_and_confirm(root)
-            self.invoke("biz-flow", "generate", "--project", str(root))
+            self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
             docs = root / "docs" / "biz-flow"
             document = docs / "00-resources.md"
             subprocess.run(["git", "add", "."], cwd=root, check=True)
@@ -259,7 +259,7 @@ class BizFlowContractTests(unittest.TestCase):
             root = Path(temporary)
             self.project(root)
             self.initialize_and_confirm(root)
-            self.invoke("biz-flow", "generate", "--project", str(root))
+            self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
             next((path for path in (root / "docs" / "biz-flow").glob("*.md") if path.name != "业务流程覆盖总览.md")).unlink()
             code, result = self.invoke("biz-flow", "check", "--project", str(root))
             self.assertEqual(8, code, result)
@@ -270,7 +270,7 @@ class BizFlowContractTests(unittest.TestCase):
             root = Path(temporary)
             self.project(root)
             self.initialize_and_confirm(root)
-            self.invoke("biz-flow", "generate", "--project", str(root))
+            self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
             document = root / "docs" / "biz-flow" / "00-resources.md"
             text = document.read_text(encoding="utf-8")
             expected = json.loads(
@@ -306,9 +306,9 @@ class BizFlowContractTests(unittest.TestCase):
             subprocess.run(["git", "add", "app.py"], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "helper branch"], cwd=root, check=True)
             self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
+            code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
             self.assertEqual(8, code, result)
-            self.assertIn("markdown_diagram_mismatches", result["error"]["message"])
+            self.assertEqual("GATE_FAILED", result["error"]["code"])
 
     def _legacy_check_requires_current_discovery_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -335,7 +335,7 @@ class BizFlowContractTests(unittest.TestCase):
             index = json.loads(index_path.read_text(encoding="utf-8"))
             index["modules"][0]["file"] = "../outside.md"
             index_path.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
+            code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
             self.assertEqual(0, code, result)
             self.assertEqual("sentinel", outside.read_text(encoding="utf-8"))
 
@@ -360,7 +360,7 @@ class BizFlowContractTests(unittest.TestCase):
             subprocess.run(["git", "add", "app.py"], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "caught and visible errors"], cwd=root, check=True)
             self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
+            code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
             self.assertEqual(0, code, result)
             text = next((path for path in (root / "docs" / "biz-flow").glob("*.md") if path.name != "业务流程覆盖总览.md")).read_text(encoding="utf-8")
             self.assertIn("VISIBLE_ERROR", text)
@@ -412,7 +412,7 @@ class BizFlowContractTests(unittest.TestCase):
             self.initialize_and_confirm(root)
             app = root / "app.py"
             app.write_text(app.read_text(encoding="utf-8").replace("RESOURCE_NOT_FOUND", "RESOURCE_CHANGED"), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
+            code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
             self.assertEqual(8, code, result)
             self.assertIn("source fingerprint is stale", result["error"]["message"])
 
@@ -447,7 +447,7 @@ class BizFlowContractTests(unittest.TestCase):
             root = Path(temporary)
             self.project(root)
             self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
+            code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
             self.assertEqual(0, code, result)
             report_path = root / "docs" / "biz-flow" / "biz-flow-report.json"
             report = json.loads(report_path.read_text(encoding="utf-8"))

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from ..core.errors import ExitCode
+from ..core.artifacts import write_version_file, version_file
 from .assets import initialize
 from .contracts import _generate_artifacts
 from .discovery import PROTOCOL_SUFFIXES, discover_documents, discover_protocols, read_only_environment_probe
@@ -65,6 +66,8 @@ def init_command(argv: list[str]) -> int:
         print("DOCUMENT_CONFIRMATION_REQUIRED: formal artifact generation requires confirmed document candidates", file=sys.stderr)
         return int(ExitCode.GATE_FAILED)
     changed = initialize(project)
+    if not version_file(project, "e2e").is_file():
+        write_version_file(project, "e2e", {"document_baseline": {"git_commit": None}})
     if args.design_root or args.design_file or args.openapi_root or args.openapi_file or args.runtime_urls:
         result, errors = _generate_artifacts(
             project,

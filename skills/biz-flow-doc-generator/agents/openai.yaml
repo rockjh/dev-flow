@@ -13,13 +13,21 @@ interface:
     触发器、功能、sequenceDiagram、autonumber Mermaid 顺序生成文档，参与者和分支
     必须有源代码依据。多个入口必须拆成多个入口章节和时序图，每个入口章节独立维护
     分支矩阵；矩阵至少包含分支条件、数据读取与比较、数据写入与副作用、响应结果。
-    数据库参与者必须写出具体表名和中文名，例如 `accounts`（账号表）和 `sessions`（会话表），
-    不得使用“账号库”“会话库”或“数据库”作为最终名称。分支矩阵不放源代码函数依据，
+    持久化参与者必须写出证据中的真实资源名和中文业务名；关系型资源使用真实表名（中文业务名），
+    文档集合、KV 命名空间、搜索索引、对象存储和文件资源使用各自真实对象名，不能用“数据库”“资源”或“持久化对象”泛化。
+    分支矩阵不放源代码函数依据，
     也不在业务文档中生成单独的源代码证据章节。保留作用域 schema、锁、归属、安全、脱敏和产物规则；证据缺失、
     归属不明确、目标不安全或校验门禁失败时停止。新 example 必须达到 `example/user-login`
     的可发布形态：README 命令顺序为 init、discover、确认、generate、check、verify，
-    生成后具有模块 Markdown、覆盖总览、`biz-flow.yaml` 和 `biz-flow.json`，且 discover 报告
+    生成后具有模块 Markdown、覆盖总览和 `biz-flow-doc-generator-version.json`，且 discover 报告
     `unresolved=0`。Python 示例关键步骤使用静态可追踪写法（显式路由、`if key in TABLE` 与
     `TABLE[key]`、显式字段读写和列表切片赋值），不要使用 `dict.get`、`setdefault`、动态属性、
-    容器别名或动态注册。运行 check 和 verify，返回已脱敏的
+    容器别名或动态注册。skill_version 为 1.0.0，只读写 docs/biz-flow/biz-flow-doc-generator-version.json。
+    主代理只负责扫描、入口识别、模块候选、确认、创建模块任务、汇总和最终校验；禁止直接分析入口、
+    编写模块 Markdown、代替失败代理或猜测规则。每个模块代理必须一次性批量启动本模块全部只读入口代理，
+    等待批次完成后才可写自己的文件；入口代理只读一个入口并返回 entry_id、source_fingerprint、participants、
+    calls、branches、persistence_actions、async_actions、external_calls、outcomes、unresolved，禁止写文件或修改映射。
+    Python 必须从源码生成候选 branch_id 和 persistence_id，并比较入口结果、Mermaid 注释、分支矩阵和覆盖结果；
+    unknown 可达业务分支或缺少真实存储对象时停止。没有真实子代理运行时默认返回 DELEGATION_UNAVAILABLE；只有用户明确
+    允许 --allow-degraded 才可串行，并保留 degraded=true、parallel=false。运行 check 和 verify，返回已脱敏的
     权威（redacted authoritative）报告或产物路径、退出状态及稳定性结果；所有面向人的标题、描述、Markdown 和报告正文必须使用中文；stop when 证据缺失、归属不明确、目标不安全或校验门禁失败。

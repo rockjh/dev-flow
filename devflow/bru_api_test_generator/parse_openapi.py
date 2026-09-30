@@ -18,7 +18,6 @@ sys.dont_write_bytecode = True
 
 from .execution_config import initialize_execution_layout
 from .qa_paths import EXECUTION
-from .tool_version import GENERATOR_VERSION
 
 HTTP_METHODS = {
     "get",
@@ -1762,7 +1761,6 @@ def write_partitioned(
         previous_module = previous_modules.get(module_id, {}) if isinstance(previous_modules, dict) else {}
         module_unchanged = bool(
             incremental
-            and previous_state.get("generator_version") == GENERATOR_VERSION
             and previous_state.get("coverage_profile") == coverage_profile
             and previous_state.get("design_sha256") == design_sha256
             and isinstance(previous_module, dict)
@@ -1968,7 +1966,6 @@ def write_partitioned(
         or summary["new_endpoint_ids"]
         or summary["deleted_endpoint_ids"]
         or summary["manual_review_cases"]
-        or previous_state.get("generator_version") != GENERATOR_VERSION
         or previous_state.get("coverage_profile") != coverage_profile
         or previous_state.get("design_sha256") != design_sha256
     )
@@ -1979,7 +1976,6 @@ def write_partitioned(
     )
     generation_state = {
         "version": 1,
-        "generator_version": GENERATOR_VERSION,
         "coverage_profile": coverage_profile,
         "openapi_sha256": manifest.get("source", {}).get("sha256"),
         "design_sha256": design_sha256,

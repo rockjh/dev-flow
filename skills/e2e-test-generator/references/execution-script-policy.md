@@ -17,4 +17,6 @@ devflow e2e run --project . --static-only
 
 `devflow e2e run` 会移除继承的 pytest 插件和选项注入，不经过 shell 调用子进程，并将脱敏权威报告写入 `artifacts/e2e-run.json`。除非明确指定 `--full`，控制台只输出有界摘要和报告指针。
 
-项目的 `.devflow.lock.json` 将执行绑定到精确的 devflow 发布版本和独立的端到端门禁 schema 版本。锁缺失或不匹配属于前置条件失败；绝不使用复制的旧代码作为回退。
+项目的 `analysis/e2e-test-generator-version.json` 将执行绑定到 `devflow/e2e-test-generator` 的
+`skill_version`，并保留独立的端到端门禁 schema 版本。锁缺失、skill 元数据不匹配或业务指纹过期属于
+前置条件失败；绝不使用复制的旧代码作为回退。

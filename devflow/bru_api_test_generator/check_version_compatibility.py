@@ -14,6 +14,8 @@ from typing import Any
 
 sys.dont_write_bytecode = True
 
+from ..core.artifacts import require_version_file, write_version_file
+from ..core.errors import DevflowError
 from .manifest_io import load_data
 
 
@@ -199,13 +201,7 @@ def change_classes(paths: list[str], rules: dict[str, Any]) -> dict[str, list[st
 
 
 def dump_lock(path: Path, lock: dict[str, Any]) -> None:
-    try:
-        import yaml  # type: ignore[import-not-found]
-
-        rendered = yaml.safe_dump(lock, allow_unicode=True, sort_keys=False)
-    except ModuleNotFoundError:
-        rendered = json.dumps(lock, ensure_ascii=True, indent=2) + "\n"
-    path.write_text(rendered, encoding="utf-8")
+    write_version_file(path.parent.parent, "bru-api", lock, path=path)
 
 
 def main() -> int:
@@ -213,8 +209,8 @@ def main() -> int:
     parser.add_argument("business_repo", type=Path)
     parser.add_argument("contracts_root", type=Path)
     parser.add_argument("--rules", type=Path, help="impact-rules.yaml override")
-    parser.add_argument("--write", action="store_true", help="advance version-lock.yaml")
-    parser.add_argument("--init", action="store_true", help="create a draft version-lock baseline without execution evidence")
+    parser.add_argument("--write", action="store_true", help="advance the bru-api version file")
+    parser.add_argument("--init", action="store_true", help="create a draft version baseline without execution evidence")
     parser.add_argument("--tests-adapted", action="store_true", help="confirm affected Bruno tests were adapted and run")
     parser.add_argument("--allow-draft", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
@@ -237,9 +233,14 @@ def main() -> int:
     if not args.business_repo.is_dir():
         parser.error(f"business repository does not exist: {args.business_repo}")
 
-    lock_path = args.contracts_root / "version-lock.yaml"
+    lock_path = args.contracts_root / "bru-api-test-generator-version.json"
     if args.init:
         if lock_path.exists():
+            try:
+                require_version_file(args.contracts_root.parent.parent, "bru-api", path=lock_path)
+            except DevflowError as exc:
+                print(f"ERROR: {exc.message}")
+                return 3
             print(f"ERROR: version lock already exists: {lock_path}")
             return 3
         digest = source_digest(args.business_repo, exclude_root=args.contracts_root.parent)
@@ -247,6 +248,9 @@ def main() -> int:
         current_ref = "filesystem"
         initialized_at = datetime.now(timezone.utc).isoformat()
         lock = {
+            "skill": "devflow/bru-api-test-generator",
+            "skill_version": "1.0.0",
+            "artifact_root": "qa/contracts",
             "version": 1,
             "status": "draft",
             "business": {
@@ -292,9 +296,15 @@ def main() -> int:
     if not lock_path.is_file():
         raise SystemExit(f"missing version lock: {lock_path}")
 
+    try:
+        require_version_file(args.contracts_root.parent.parent, "bru-api", path=lock_path)
+    except DevflowError as exc:
+        print(f"ERROR: {exc.message}")
+        return 3
+
     lock = load_data(lock_path)
     if not isinstance(lock, dict):
-        raise SystemExit("version-lock.yaml must contain an object")
+        raise SystemExit("bru-api-test-generator-version.json must contain an object")
     lock_status = str(lock.get("status", "")).strip().lower()
     draft_bootstrap = args.allow_draft and args.phase == "before-execute" and lock_status == "draft"
     draft_completion = args.phase == "complete" and args.write and lock_status == "draft"
@@ -361,7 +371,7 @@ def main() -> int:
         if args.as_json:
             print(json.dumps(report, ensure_ascii=True, indent=2))
         else:
-            print("ERROR: business repository has no filesystem baseline; initialize version-lock.yaml after review")
+            print("ERROR: business repository has no filesystem baseline; initialize the version file after review")
         return 2
 
     paths = ["<filesystem source digest changed>"]

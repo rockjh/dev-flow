@@ -18,6 +18,8 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 
 from ..core.redaction import redact
+from ..core.artifacts import require_version_file, write_version_file
+from ..core.errors import DevflowError
 from .execution_config import initialize_execution_layout
 from .design_rules import (
     apply_to_contracts,
@@ -195,8 +197,14 @@ def init_command(argv: list[str]) -> int:
     if not inventory_path.is_file():
         write_discovery(qa_root, [])
         changed.append(inventory_path)
-    version_lock = qa_root / CONTRACTS / "version-lock.yaml"
-    if not version_lock.is_file():
+    version_lock = qa_root / CONTRACTS / "bru-api-test-generator-version.json"
+    if version_lock.is_file():
+        try:
+            require_version_file(qa_root.parent, "bru-api", path=version_lock)
+        except DevflowError as exc:
+            print(f"ERROR: invalid bru-api version file: {exc}", file=sys.stderr)
+            return 8
+    else:
         code = version_gate(qa_root, "--init")
         if code:
             return code
@@ -457,10 +465,9 @@ def generate_command(argv: list[str]) -> int:
         return 2
     initialize_execution_layout(qa_root, local_scripts=False)
     ensure_rule_library(qa_root)
-    if (qa_root / ".devflow.lock.json").is_file():
-        version_code = version_gate(qa_root, "--phase", "before-generate")
-        if version_code:
-            return version_code
+    version_code = version_gate(qa_root, "--phase", "before-generate")
+    if version_code:
+        return version_code
     from .execution_config import environment_file, load_bruno_environment_document, load_execution_config
 
     execution_config = load_execution_config(qa_root / EXECUTION / "config.yaml")
@@ -570,7 +577,7 @@ def generate_command(argv: list[str]) -> int:
         materialize(contracts, qa_root / BRUNO, execution_config_path=qa_root / EXECUTION / "config.yaml")
         write_value_resolutions(qa_root)
         write_qa_lock(contracts)
-        version_lock = contracts / "version-lock.yaml"
+        version_lock = contracts / "bru-api-test-generator-version.json"
         if version_lock.is_file():
             lock = load_document(version_lock)
             if isinstance(lock, dict):
@@ -580,7 +587,7 @@ def generate_command(argv: list[str]) -> int:
                     "sha256": manifest.get("source", {}).get("sha256"),
                 }
                 lock["design"] = design_summary(design_rules)
-                version_lock.write_text(render_manifest(lock, version_lock), encoding="utf-8")
+                write_version_file(qa_root.parent, "bru-api", lock, path=version_lock)
     except (OSError, TypeError, ValueError, SystemExit) as exc:
         message = f"generation failed: {exc}"
         print(f"ERROR: {message}", file=sys.stderr)
@@ -700,7 +707,7 @@ def coverage_command(argv: list[str], reconcile: bool) -> int:
         command.extend(["--preflight-results", str(args.preflight_results.resolve())])
     if args.write_status:
         command.append("--write-status")
-    if (qa_root / ".devflow.lock.json").is_file():
+    if (qa_root / CONTRACTS / "bru-api-test-generator-version.json").is_file():
         command.append("--allow-draft-version")
     return run_child(command)
 
@@ -802,7 +809,7 @@ def preflight_command(argv: list[str]) -> int:
     qa_root_argument(parser)
     known, remaining = parser.parse_known_args(argv)
     qa_root = known.qa_root.resolve()
-    if (qa_root / ".devflow.lock.json").is_file():
+    if (qa_root / CONTRACTS / "bru-api-test-generator-version.json").is_file():
         version_code = version_gate(qa_root, "--phase", "before-execute", "--allow-draft")
         if version_code:
             return version_code
@@ -902,12 +909,12 @@ def scripts_command(argv: list[str]) -> int:
     parser.add_argument("--tests-adapted", action="store_true")
     parser.add_argument("--rules", type=Path)
     args = parser.parse_args(argv)
-    from .tool_version import CONTRACT_SCHEMA_VERSION
+    from ..core.schema import BRU_API_SCHEMA_VERSION
 
     if args.action == "status":
         if args.phase or args.completion_report or args.tests_adapted or args.rules or args.business_repo:
             parser.error("version options require a version-* action")
-        print(f"shared runtime active; bru-api schema={CONTRACT_SCHEMA_VERSION}")
+        print(f"shared runtime active; bru-api schema={BRU_API_SCHEMA_VERSION}")
         return 0
     options: list[str]
     if args.action == "version-init":

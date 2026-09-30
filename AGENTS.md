@@ -18,7 +18,7 @@
 
 ## 生成资产与发布
 
-生成项目包含业务资产和调用已安装 `devflow` 的轻量启动器，不得包含工具包源代码。项目锁是领域资产根目录下的领域专用项目锁（对于 `biz-flow`，路径为 `docs/biz-flow/biz-flow.json`）；共享状态位于 `~/.local/state/devflow/`；Skill 目标目录为 `DEVFLOW_SKILL_HOME` 或 `~/.agents/skills/devflow/`。
+生成项目包含业务资产和调用已安装 `devflow` 的轻量启动器，不得包含工具包源代码。每个 skill 只使用自己的权威版本文件：`docs/biz-flow/biz-flow-doc-generator-version.json`、`qa/contracts/bru-api-test-generator-version.json` 或 `analysis/e2e-test-generator-version.json`；共享状态位于 `~/.local/state/devflow/`；Skill 目标目录为 `DEVFLOW_SKILL_HOME` 或 `~/.agents/skills/devflow/`。
 
 npm 流程依次使用 `npm/dist/` 中的内嵌 wheel、pipx、一个 Skill 目录，最后运行 `devflow doctor`。包装器解析 pipx 安装的绝对路径，绝不能通过 `PATH` 递归启动自身。禁用 npm postinstall 时，`npx dev-flow install` 是显式恢复命令。
 

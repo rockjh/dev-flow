@@ -14,9 +14,11 @@ from typing import Any
 import yaml
 
 from ..core.schema import E2E_DOCUMENT_BASELINE_SCHEMA, E2E_DOCUMENT_STATE_SCHEMA, SCENARIO_DOCUMENT_SCHEMA, validate_schema
+from ..core.artifacts import require_version_file, write_version_file
+from ..core.errors import DevflowError
 
 
-BASELINE_NAME = "e2e.yaml"
+BASELINE_NAME = "e2e-test-generator-version.json"
 STATE_NAME = ".devflow/e2e-document-state.json"
 REQUIRED_SECTIONS = (
     "场景名称", "测试目标", "业务入口", "前置条件", "测试数据", "关键步骤",
@@ -193,16 +195,21 @@ def _issue(code: str, reason: str, path: Path | str = "", scenario: str = "", li
 
 
 def validate_baseline(project: Path) -> tuple[str | None, list[DocumentIssue]]:
-    path = project / "docs" / "e2e" / BASELINE_NAME
+    path = project / "analysis" / BASELINE_NAME
     if not path.is_file():
-        return None, [_issue("DOCUMENT_BASELINE_MISSING", "docs/e2e/e2e.yaml does not exist", path)]
+        return None, [_issue("DOCUMENT_BASELINE_MISSING", "analysis/e2e-test-generator-version.json does not exist", path)]
     try:
-        value = yaml.load(path.read_text(encoding="utf-8"), Loader=_UniqueLoader)
-    except (OSError, UnicodeError, yaml.YAMLError) as exc:
-        return None, [_issue("DOCUMENT_BASELINE_INVALID", f"invalid YAML: {exc}", path)]
-    if validate_schema(E2E_DOCUMENT_BASELINE_SCHEMA, value) or not isinstance(value, dict) or set(value) != {"git_commit"}:
-        return None, [_issue("DOCUMENT_BASELINE_INVALID", "top level must contain only git_commit", path)]
-    commit = value.get("git_commit")
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return None, [_issue("DOCUMENT_BASELINE_INVALID", f"invalid JSON: {exc}", path)]
+    try:
+        require_version_file(project, "e2e", path=path)
+    except DevflowError as exc:
+        return None, [_issue("DOCUMENT_BASELINE_INVALID", str(exc), path)]
+    baseline = value.get("document_baseline") if isinstance(value, dict) else None
+    commit = baseline.get("git_commit") if isinstance(baseline, dict) else None
+    if commit is None:
+        return None, [_issue("DOCUMENT_BASELINE_MISSING", "document_baseline.git_commit has not been recorded", path)]
     if not isinstance(commit, str) or not _SHA.fullmatch(commit):
         return None, [_issue("DOCUMENT_BASELINE_INVALID", "git_commit must be a complete 40 character SHA", path)]
     _, error = _git(project, "cat-file", "-e", f"{commit}^{{commit}}")
@@ -606,7 +613,7 @@ def run_document_gate(project: Path, command: str, *, allow_initial: bool = Fals
     dirty_paths = [
         line[3:] for line in (dirty or "").splitlines()
         if len(line) > 3
-        and not line[3:].startswith(("docs/e2e/", ".devflow/", ".devflow.lock.json", "artifacts/", "discovery/"))
+        and not line[3:].startswith(("docs/e2e/", ".devflow/", "artifacts/", "discovery/", "analysis/e2e-test-generator-version.json"))
     ]
     if dirty_paths:
         report.dirty_source_paths = dirty_paths[:20]
@@ -621,8 +628,13 @@ def advance_baseline(project: Path, report: GateReport) -> bool:
     """Advance the lock only after the caller's downstream gate has passed."""
     if not report.allowed or not report.baseline_pending or not report.current_commit:
         return False
-    path = project / "docs" / "e2e" / BASELINE_NAME
-    path.write_text(f"git_commit: {report.current_commit}\n", encoding="utf-8")
+    path = project / "analysis" / BASELINE_NAME
+    try:
+        value = require_version_file(project, "e2e", path=path)
+    except DevflowError:
+        return False
+    value["document_baseline"] = {"git_commit": report.current_commit}
+    write_version_file(project, "e2e", value, path=path)
     state = _load_state(project)
     if state:
         state.pop("pending_changes", None)

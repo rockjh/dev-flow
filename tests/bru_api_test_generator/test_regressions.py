@@ -29,6 +29,30 @@ def load_script(name: str):
     return importlib.import_module(f"devflow.bru_api_test_generator.{aliases.get(name, name)}")
 
 
+def write_version_file(qa_root: Path, *, status: str = "draft") -> None:
+    checker = load_script("check_version_compatibility")
+    contracts = qa_root / "contracts"
+    contracts.mkdir(parents=True, exist_ok=True)
+    digest = checker.source_digest(qa_root.parent, exclude_root=qa_root)
+    (contracts / "bru-api-test-generator-version.json").write_text(
+        json.dumps({
+            "skill": "devflow/bru-api-test-generator",
+            "skill_version": "1.0.0",
+            "artifact_root": "qa/contracts",
+            "version": 1,
+            "status": status,
+            "business": {
+                "repo": str(qa_root.parent),
+                "commit": f"filesystem:{digest[:16]}",
+                "ref": "filesystem",
+                "source_digest": digest,
+                "baseline_status": status,
+            },
+        }),
+        encoding="utf-8",
+    )
+
+
 def module_command(name: str) -> list[str]:
     aliases = {"bruno_bru_api_generator": "cli", "qa_constraints": "constraints"}
     return [sys.executable, "-m", f"devflow.bru_api_test_generator.{aliases.get(name, name)}"]
@@ -2115,7 +2139,7 @@ class RegressionTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            lock = load_script("manifest_io").load_data(contracts / "version-lock.yaml")
+            lock = load_script("manifest_io").load_data(contracts / "bru-api-test-generator-version.json")
             self.assertEqual(lock["status"], "draft")
             self.assertEqual(lock["business"]["baseline_status"], "draft")
             blocked = subprocess.run(
@@ -2165,7 +2189,7 @@ class RegressionTests(unittest.TestCase):
                 check=False, capture_output=True, text=True, encoding="utf-8",
             )
             self.assertEqual(updated.returncode, 0, updated.stdout + updated.stderr)
-            lock = load_script("manifest_io").load_data(contracts / "version-lock.yaml")
+            lock = load_script("manifest_io").load_data(contracts / "bru-api-test-generator-version.json")
             self.assertEqual(lock["status"], "current")
             self.assertEqual(lock["business"]["baseline_status"], "current")
 
@@ -2254,7 +2278,11 @@ class RegressionTests(unittest.TestCase):
             qa_root = Path(directory) / "qa"
             design = Path(directory) / "design.md"
             design.write_text("# Reviewed design\n", encoding="utf-8")
-            with mock.patch.object(cli, "run_child", return_value=2) as run:
+            write_version_file(qa_root)
+            def run_child(command, **_kwargs):
+                return 0 if "devflow.bru_api_test_generator.check_version_compatibility" in command else 2
+
+            with mock.patch.object(cli, "run_child", side_effect=run_child) as run:
                 code = cli.generate_command([
                     "--qa-root", str(qa_root),
                     "--design-file", str(design),
@@ -2502,8 +2530,15 @@ class RegressionTests(unittest.TestCase):
             source = repo / "main.go"
             source.write_text("package main\n", encoding="utf-8")
             digest = checker.source_digest(repo)
-            (contracts / "version-lock.yaml").write_text(
-                json.dumps({"version": 1, "business": {"commit": f"filesystem:{digest[:16]}", "source_digest": digest}}),
+            (contracts / "bru-api-test-generator-version.json").write_text(
+                json.dumps({
+                    "skill": "devflow/bru-api-test-generator",
+                    "skill_version": "1.0.0",
+                    "artifact_root": "qa/contracts",
+                    "version": 1,
+                    "status": "current",
+                    "business": {"commit": f"filesystem:{digest[:16]}", "source_digest": digest},
+                }),
                 encoding="utf-8",
             )
             source.write_text("package main\nfunc changed() {}\n", encoding="utf-8")
@@ -3055,8 +3090,11 @@ class RegressionTests(unittest.TestCase):
                 "openapi_sha256": hashlib.sha256(openapi.read_bytes()).hexdigest(),
                 "errors": [],
             }), encoding="utf-8")
-            version_lock = contracts / "version-lock.yaml"
+            version_lock = qa_root / "contracts" / "bru-api-test-generator-version.json"
             version_lock.write_text(json.dumps({
+                "skill": "devflow/bru-api-test-generator",
+                "skill_version": "1.0.0",
+                "artifact_root": "qa/contracts",
                 "status": "current",
                 "business": {
                     "commit": business_sha,
@@ -3256,7 +3294,7 @@ class RegressionTests(unittest.TestCase):
             root = Path(directory)
             contracts = root / "contracts"
             contracts.mkdir()
-            (contracts / "version-lock.yaml").write_text(
+            (contracts / "bru-api-test-generator-version.json").write_text(
                 json.dumps({"business": {"commit": "abcdef1234567890"}}), encoding="utf-8",
             )
             environment = {
@@ -4048,8 +4086,11 @@ class RegressionTests(unittest.TestCase):
             ]), 0)
             checker = load_script("check_version_compatibility")
             digest = checker.source_digest(root)
-            (qa_root / "contracts" / "version-lock.yaml").write_text(
-                yaml.safe_dump({
+            (qa_root / "contracts" / "bru-api-test-generator-version.json").write_text(
+                json.dumps({
+                    "skill": "devflow/bru-api-test-generator",
+                    "skill_version": "1.0.0",
+                    "artifact_root": "qa/contracts",
                     "version": 1,
                     "status": "current",
                     "business": {"commit": f"filesystem:{digest[:16]}", "source_digest": digest},
@@ -4061,6 +4102,8 @@ class RegressionTests(unittest.TestCase):
             self.assertFalse((qa_root / "scripts").exists())
 
             def preflight_run(command, **_kwargs):
+                if "devflow.bru_api_test_generator.check_version_compatibility" in command:
+                    return subprocess.CompletedProcess(command, 0, "", "")
                 if "devflow.bru_api_test_generator.check_api_coverage" in command:
                     return subprocess.CompletedProcess(command, 0, json.dumps({"static_ok": True}), "")
                 output = Path(command[command.index("--output") + 1])
@@ -4182,6 +4225,7 @@ class RegressionTests(unittest.TestCase):
                 "## GET /things\nRule ID: THINGS_LIST\nAssert: $.data = []\n",
                 encoding="utf-8",
             )
+            write_version_file(qa_root)
 
             def capture_partition(value, *_args, **_kwargs):
                 captured["manifest"] = value
@@ -4395,6 +4439,7 @@ class RegressionTests(unittest.TestCase):
             spec.write_text(json.dumps(source_document), encoding="utf-8")
             design = Path(directory) / "design.md"
             design.write_text("# No API operations\n", encoding="utf-8")
+            write_version_file(qa_root)
             summary = {"changed_modules": [], "skipped_modules": [], "deleted_endpoint_ids": [], "manual_review_cases": []}
             with (
                 mock.patch.object(cli, "initialize_execution_layout"),

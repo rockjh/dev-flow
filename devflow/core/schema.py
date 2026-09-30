@@ -241,12 +241,12 @@ COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "biz-flow.generate": {
         "options": {
-            "--project": "path", "--docs-root": "path", "--module": "string", "--commit": "string", "--confirm": "boolean",
+            "--project": "path", "--docs-root": "path", "--module": "string", "--commit": "string", "--confirm": "boolean", "--allow-degraded": "boolean",
         }
     },
     "biz-flow.update": {
         "options": {
-            "--project": "path", "--docs-root": "path", "--module": "string", "--commit": "string", "--confirm": "boolean",
+            "--project": "path", "--docs-root": "path", "--module": "string", "--commit": "string", "--confirm": "boolean", "--allow-degraded": "boolean",
         }
     },
     "biz-flow.check": {
@@ -1393,8 +1393,11 @@ BRU_API_VALUE_RESOLUTION_SCHEMA: dict[str, Any] = {
 BRU_API_VERSION_LOCK_SCHEMA: dict[str, Any] = {
     "schema_version": BRU_API_SCHEMA_VERSION,
     "contract": "bru-api.version-lock",
-    "path": "qa/contracts/version-lock.yaml",
+    "path": "qa/contracts/bru-api-test-generator-version.json",
     "document": _object({
+        "skill": {"const": "devflow/bru-api-test-generator"},
+        "skill_version": NONEMPTY_STRING,
+        "artifact_root": {"const": "qa/contracts"},
         "version": {"const": 1},
         "status": NONEMPTY_STRING,
         "business": {"type": "object", "additionalProperties": True},
@@ -1415,7 +1418,7 @@ BRU_API_VERSION_LOCK_SCHEMA: dict[str, Any] = {
             "design_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             "openapi_fingerprint": {"type": "string"},
         }, ("sha256", "documents", "rule_count")),
-    }, ("version", "status", "business")),
+    }, ("skill", "skill_version", "artifact_root", "version", "status", "business")),
 }
 
 E2E_INPUT_DOCUMENT_SCHEMA = _object({
@@ -1596,10 +1599,13 @@ E2E_INPUT_SUMMARY_SCHEMA = _object({
 E2E_VERSION_LOCK_SCHEMA: dict[str, Any] = {
     "schema_version": E2E_GATE_SCHEMA_VERSION,
     "contract": "e2e.version-lock",
-    "path": "analysis/version-lock.yaml",
+    "path": "analysis/e2e-test-generator-version.json",
     "document": _object({
         "version": {"const": 1},
-        "tool": _object({"name": {"const": "devflow"}, "version": NONEMPTY_STRING, "e2e_schema": {"const": E2E_GATE_SCHEMA_VERSION}}),
+        "skill": {"const": "devflow/e2e-test-generator"},
+        "skill_version": NONEMPTY_STRING,
+        "artifact_root": {"const": "analysis"},
+        "document_baseline": _object({"git_commit": {"type": ["string", "null"]}}),
         "design": E2E_INPUT_SUMMARY_SCHEMA,
         "protocol": E2E_INPUT_SUMMARY_SCHEMA,
         "source": _array(_object({"repo": NONEMPTY_STRING, "commit": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"}}), unique=True),
@@ -1614,7 +1620,10 @@ E2E_VERSION_LOCK_SCHEMA: dict[str, Any] = {
             "scenario_data_changed": {"type": "boolean"}, "cleanup_changed": {"type": "boolean"},
         }),
         "scenarios": _object({"data_sha256": NONEMPTY_STRING, "cleanup_sha256": NONEMPTY_STRING}),
-    }),
+    }, (
+        "version", "skill", "skill_version", "artifact_root", "document_baseline",
+        "design", "protocol", "source", "support", "scenario_generation", "changes", "scenarios",
+    )),
 }
 E2E_SCENARIO_PLAN_SCHEMA: dict[str, Any] = {
     "schema_version": E2E_GATE_SCHEMA_VERSION,
@@ -1635,6 +1644,114 @@ E2E_SCENARIO_PLAN_SCHEMA: dict[str, Any] = {
         }, ("id", "title", "participants", "design_rule_ids", "protocol_refs", "required_coverage")), minimum=1),
     }),
 }
+
+BIZ_FLOW_BRANCH_SCHEMA = _object({
+    "branch_id": {"type": "string", "minLength": 1},
+    "source_file": {"type": "string", "minLength": 1},
+    "source_line": {"type": "integer", "minimum": 1},
+    "condition": {"type": "string", "minLength": 1},
+    "outcomes": _array({"type": "string"}, minimum=1),
+    "effects": _array({"type": "string"}),
+    "reachability": {"enum": ["reachable", "unreachable", "unknown"]},
+    "business_relevant": {"type": ["boolean", "null"]},
+})
+BIZ_FLOW_PERSISTENCE_SCHEMA = _object({
+    "persistence_id": {"type": "string", "minLength": 1},
+    "resource_type": {"enum": ["relational_table", "document_collection", "kv_namespace", "search_index", "object_storage", "file_resource", "external_resource"]},
+    "resource_name": {"type": "string", "minLength": 1},
+    "display_name": {"type": "string"},
+    "operation": {"type": "string", "minLength": 1},
+    "condition": {"type": ["string", "null"]},
+    "fields": _array({"type": "string"}),
+    "source_file": {"type": "string", "minLength": 1},
+    "source_line": {"type": "integer", "minimum": 1},
+})
+BIZ_FLOW_UNRESOLVED_SCHEMA = _object({
+    "code": {"type": "string", "minLength": 1},
+    "critical": {"type": "boolean"},
+    "evidence": {"type": "string", "minLength": 1},
+    "reason": {"type": "string"},
+}, required=("code", "critical", "evidence"))
+BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA = _object({
+    "entry_id": {"type": "string", "minLength": 1},
+    "source_fingerprint": {"type": "string", "minLength": 1},
+    "participants": _array({"type": "string", "minLength": 1}, minimum=1),
+    "calls": _array({"type": "string", "minLength": 1}),
+    "branches": _array(_object({**BIZ_FLOW_BRANCH_SCHEMA["properties"],
+        "label": {"type": "string", "minLength": 1},
+        "outcome_labels": _array({"type": "string", "minLength": 1}),
+        "exclusion_reason": {"type": "string"},
+    }, required=(*BIZ_FLOW_BRANCH_SCHEMA["required"], "label", "outcome_labels"))),
+    "persistence_actions": _array(_object({**BIZ_FLOW_PERSISTENCE_SCHEMA["properties"],
+        "operation_label": {"type": "string", "minLength": 1},
+    })),
+    "async_actions": _array({"type": "string", "minLength": 1}),
+    "external_calls": _array({"type": "string", "minLength": 1}),
+    "outcomes": _array({"type": "string", "minLength": 1}, minimum=1),
+    "unresolved": _array(BIZ_FLOW_UNRESOLVED_SCHEMA),
+})
+BIZ_FLOW_RUN_MANIFEST_SCHEMA = _object({
+    "schema_version": {"const": BIZ_FLOW_SCHEMA_VERSION},
+    "run_id": {"type": "string", "minLength": 1},
+    "source_fingerprint": {"type": "string", "minLength": 1},
+    "mapping_hash": {"type": "string", "minLength": 1},
+    "project_root": {"type": "string", "minLength": 1},
+    "docs_root": {"type": "string", "minLength": 1},
+    "status": {"enum": ["pending", "running", "success", "failed"]},
+    "parallel": {"type": "boolean"}, "degraded": {"type": "boolean"},
+    "allow_degraded": {"type": "boolean"},
+    "modules": {"type": "object", "additionalProperties": _object({
+        "file": {"type": "string", "minLength": 1},
+        "entry_ids": _array({"type": "string", "minLength": 1}, minimum=1, unique=True),
+    })},
+    "tasks": _array(_object({
+        "run_id": {"type": "string"}, "task_id": {"type": "string"},
+        "parent_task_id": {"type": ["string", "null"]},
+        "role": {"enum": ["coordinator", "module", "entry"]},
+        "module_id": {"type": ["string", "null"]}, "entry_id": {"type": ["string", "null"]},
+        "batch_id": {"type": ["string", "null"]},
+        "status": {"enum": ["pending", "running", "success", "failed"]},
+        "started_at": {"type": ["string", "null"]}, "finished_at": {"type": ["string", "null"]},
+        "result_hash": {"type": ["string", "null"]}, "error": {"type": ["string", "null"]},
+    }), minimum=1),
+    "events": _array(_object({
+        "run_id": {"type": "string"}, "sequence": {"type": "integer", "minimum": 1},
+        "kind": {"enum": ["dispatch_batch", "join_batch", "started", "ready", "success", "failed", "write", "write_denied"]},
+        "task_id": {"type": "string"}, "timestamp": {"type": "string"},
+        "batch_id": {"type": ["string", "null"]},
+        "task_ids": _array({"type": "string"}),
+        "path": {"type": ["string", "null"]}, "result_hash": {"type": ["string", "null"]},
+    })),
+    "inventories": {"type": "object", "additionalProperties": _object({
+        "entry_id": {"type": "string"}, "source_fingerprint": {"type": "string"},
+        "participants": _array({"type": "string"}), "calls": _array({"type": "string"}),
+        "async_actions": _array({"type": "string"}), "external_calls": _array({"type": "string"}),
+        "outcomes": _array({"type": "string"}),
+        "source_branch_inventory": _array(BIZ_FLOW_BRANCH_SCHEMA),
+        "persistence_inventory": _array(BIZ_FLOW_PERSISTENCE_SCHEMA),
+        "unresolved": _array(BIZ_FLOW_UNRESOLVED_SCHEMA),
+    })},
+    "entry_analyses": {"type": "object", "additionalProperties": BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA},
+    "module_results": {"type": "object", "additionalProperties": _object({
+        "module_id": {"type": "string", "minLength": 1},
+        "entry_analyses": {"type": "object", "additionalProperties": BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA},
+        "markdown": {"type": "string", "minLength": 1},
+    })},
+    "document_hashes": {"type": "object", "additionalProperties": {"type": "string"}},
+    "report": _object({
+        "module_count": {"type": "integer", "minimum": 0},
+        "entry_count": {"type": "integer", "minimum": 0},
+        "module_tasks": {"type": "integer", "minimum": 0},
+        "entry_tasks": {"type": "integer", "minimum": 0},
+        "parallel": {"type": "boolean"},
+        "degraded": {"type": "boolean"},
+        "branch_coverage": {"type": "number", "minimum": 0, "maximum": 1},
+        "persistence_coverage": {"type": "number", "minimum": 0, "maximum": 1},
+        "critical_unresolved": {"type": "integer", "minimum": 0},
+        "stable": {"type": "boolean"},
+    }),
+    "errors": _array({"type": "string"}),
+})
 
 BIZ_FLOW_ERROR_SCHEMA = _object({
     "code": NONEMPTY_STRING,
@@ -1934,6 +2051,8 @@ CONTRACT_SCHEMAS = {
     "bru-api.value-resolution": BRU_API_VALUE_RESOLUTION_SCHEMA,
     "bru-api.version-lock": BRU_API_VERSION_LOCK_SCHEMA,
     "biz-flow.discovery": BIZ_FLOW_DISCOVERY_SCHEMA,
+    "biz-flow.run-manifest": BIZ_FLOW_RUN_MANIFEST_SCHEMA,
+    "biz-flow.entry-analysis": BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA,
     "biz-flow.module-map": BIZ_FLOW_MODULE_MAP_SCHEMA,
     "biz-flow.index": BIZ_FLOW_INDEX_SCHEMA,
     "biz-flow.report": BIZ_FLOW_REPORT_SCHEMA,

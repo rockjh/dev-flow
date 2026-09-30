@@ -13,8 +13,11 @@ class DocumentGateTests(unittest.TestCase):
     def test_baseline_requires_only_a_real_full_sha(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "docs" / "e2e").mkdir(parents=True)
-            (root / "docs" / "e2e" / "e2e.yaml").write_text("git_commit: latest\n", encoding="utf-8")
+            (root / "analysis").mkdir(parents=True)
+            (root / "analysis" / "e2e-test-generator-version.json").write_text(
+                json.dumps({"skill": "devflow/e2e-test-generator", "skill_version": "1.0.0", "artifact_root": "analysis", "document_baseline": {"git_commit": "latest"}}),
+                encoding="utf-8",
+            )
             commit, errors = validate_baseline(root)
             self.assertIsNone(commit)
             self.assertEqual("DOCUMENT_BASELINE_INVALID", errors[0].code)

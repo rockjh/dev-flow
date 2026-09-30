@@ -990,7 +990,7 @@ def _source_files(root: Path) -> list[Path]:
         return (
             (len(parts) >= 2 and parts[-2].casefold() == "biz-flow")
             or name.startswith("biz-flow-")
-            or name == "biz-flow.yaml"
+            or name == "biz-flow-doc-generator-version.json"
         )
 
     def readable_text(path: Path) -> bool:

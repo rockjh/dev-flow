@@ -8,8 +8,8 @@ from typing import Any
 
 import yaml
 
-from .. import __version__
 from ..core.schema import E2E_GATE_SCHEMA_VERSION
+from ..core.artifacts import SKILL_VERSION
 from .discovery import SHA_RE, _git, _resolve
 
 
@@ -127,7 +127,10 @@ def build_generation_lock(
     previous = previous if isinstance(previous, dict) else {}
     return {
         "version": 1,
-        "tool": {"name": "devflow", "version": __version__, "e2e_schema": E2E_GATE_SCHEMA_VERSION},
+        "skill": "devflow/e2e-test-generator",
+        "skill_version": SKILL_VERSION,
+        "artifact_root": "analysis",
+        "document_baseline": previous.get("document_baseline", {"git_commit": None}),
         "design": current_design,
         "protocol": current_protocol,
         "source": current_source,
@@ -149,28 +152,31 @@ def generation_lock_errors(project_root: Path, lock: Any) -> list[str]:
     """Reject missing, malformed, or stale generation inputs."""
 
     if not isinstance(lock, dict):
-        return ["version-lock.yaml must contain a mapping"]
+        return ["e2e-test-generator-version.json must contain a mapping"]
     required = {
-        "version", "tool", "design", "protocol", "source", "support",
+        "skill", "skill_version", "artifact_root", "version", "document_baseline", "design", "protocol", "source", "support",
         "scenario_generation", "changes", "scenarios",
     }
-    errors = [f"version-lock.yaml missing fields: {sorted(required - set(lock))}"] if not required.issubset(lock) else []
-    tool = lock.get("tool")
-    if not isinstance(tool, dict) or tool.get("name") != "devflow" or tool.get("e2e_schema") != E2E_GATE_SCHEMA_VERSION:
-        errors.append("version-lock.yaml tool or E2E schema version does not match the installed generator")
+    errors = [f"e2e-test-generator-version.json missing fields: {sorted(required - set(lock))}"] if not required.issubset(lock) else []
+    if (
+        lock.get("skill") != "devflow/e2e-test-generator"
+        or lock.get("skill_version") != SKILL_VERSION
+        or lock.get("artifact_root") != "analysis"
+    ):
+        errors.append("e2e-test-generator-version.json skill metadata is invalid")
     for kind in ("design", "protocol"):
         summary = lock.get(kind)
         documents = summary.get("documents", []) if isinstance(summary, dict) else []
         if not isinstance(documents, list) or not documents:
-            errors.append(f"version-lock.yaml {kind} documents are required")
+            errors.append(f"e2e-test-generator-version.json {kind} documents are required")
             continue
         for item in documents:
             if not isinstance(item, dict) or not item.get("path") or not item.get("sha256"):
-                errors.append(f"version-lock.yaml {kind} document entry is invalid")
+                errors.append(f"e2e-test-generator-version.json {kind} document entry is invalid")
                 continue
             if item.get("source_type") in {"runtime_url", "service_config"}:
                 if not item.get("url") or not item.get("content_sha256"):
-                    errors.append(f"version-lock.yaml {kind} runtime source metadata is incomplete")
+                    errors.append(f"e2e-test-generator-version.json {kind} runtime source metadata is incomplete")
                 continue
             path = Path(str(item["path"]))
             path = path if path.is_absolute() else project_root / path
@@ -192,7 +198,7 @@ def generation_lock_errors(project_root: Path, lock: Any) -> list[str]:
         ]
         digest = hashlib.sha256(json.dumps(normalized, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
         if isinstance(summary, dict) and summary.get("sha256") != digest:
-            errors.append(f"version-lock.yaml {kind} aggregate digest is invalid")
+            errors.append(f"e2e-test-generator-version.json {kind} aggregate digest is invalid")
     if lock.get("source") != source_snapshot(project_root):
         errors.append("participating repository source versions changed after generation")
     if lock.get("support") != support_snapshot(project_root):

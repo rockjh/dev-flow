@@ -6,6 +6,60 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+@dataclass(frozen=True, slots=True)
+class BranchEvidence:
+    branch_id: str
+    source_file: str
+    source_line: int
+    condition: str
+    outcomes: list[str]
+    effects: list[str]
+    reachability: str = "reachable"
+    business_relevant: bool | None = True
+
+
+@dataclass(frozen=True, slots=True)
+class PersistenceAction:
+    persistence_id: str
+    resource_type: str
+    resource_name: str
+    display_name: str
+    operation: str
+    condition: str | None
+    fields: list[str]
+    source_file: str
+    source_line: int
+
+
+@dataclass(slots=True)
+class TaskRecord:
+    run_id: str
+    task_id: str
+    parent_task_id: str | None
+    role: str
+    module_id: str | None = None
+    entry_id: str | None = None
+    batch_id: str | None = None
+    status: str = "pending"
+    started_at: str | None = None
+    finished_at: str | None = None
+    result_hash: str | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TaskEvent:
+    run_id: str
+    sequence: int
+    kind: str
+    task_id: str
+    timestamp: str
+    batch_id: str | None = None
+    task_ids: tuple[str, ...] = ()
+    path: str | None = None
+    result_hash: str | None = None
+
+
 @dataclass(slots=True)
 class GitInfo:
     branch: str
@@ -98,6 +152,8 @@ class EntryPoint:
     title_unresolved: bool = False
     parent_entry_id: str = ""
     submit_source: str = ""
+    agent_branches: list[dict] = field(default_factory=list)
+    agent_persistence: list[dict] = field(default_factory=list)
 
     def error_codes(self) -> list[str]:
         return list(dict.fromkeys(error.code for error in self.errors))

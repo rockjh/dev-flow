@@ -36,6 +36,20 @@ for _module in (DISCOVERY, CONTRACTS, STATIC_CHECKS, RUNNER):
 class StaticGuardTests(unittest.TestCase):
     """覆盖 Python、SQL、冒烟和跨场景隔离规则。"""
 
+    def test_generation_lock_rejects_wrong_skill_version(self) -> None:
+        lock = {
+            "version": 1,
+            "skill": "devflow/e2e-test-generator",
+            "skill_version": "0.0.0",
+            "artifact_root": "analysis",
+            "document_baseline": {"git_commit": None},
+            "design": {}, "protocol": {}, "source": [], "support": {},
+            "scenario_generation": {}, "changes": {}, "scenarios": {},
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            errors = SOURCE_VERSIONS.generation_lock_errors(Path(temporary), lock)
+        self.assertTrue(any("skill metadata" in error for error in errors))
+
     def test_discovery_rejects_declared_build_without_module(self) -> None:
         """构建描述即使已登记，也不能遗漏其对应模块。"""
 

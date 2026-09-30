@@ -14,7 +14,7 @@ devflow bru-api worker-start --module <module>
 | 鍗忚皟鑰?| 鍏ㄥ眬濂戠害銆侀攣銆佺害鏉熷悎骞躲€佹墽琛岄厤缃€侀泦鍚堟枃浠躲€佽法妯″潡娴佺▼鍜屾渶缁堟姤鍛?|
 | 妯″潡宸ヤ綔鍣?| 浠呴檺鍏?`contracts/modules/<directory>/` 鍜?`bruno/<directory>/`锛涙墽琛岃瘉鎹拰鏃ュ織淇濈暀鍦ㄨ繘绋嬫湰鍦?|
 
-宸ヤ綔鍣ㄥ彲浠ヨ鍙栧叡浜绾︺€侀厤缃€佹棦鏈夎瘉鎹拰鎵ц鏀寔婧愪唬鐮併€傛簮浠ｇ爜妫€鏌ヤ粎闄愯繍琛屾椂閰嶇疆銆佽璇?鏍囧ご璁剧疆銆佸す鍏枫€佹祴璇曟暟鎹噯澶囧拰妯℃嫙寮€鍏筹紱涓嶅緱鎻愪緵涓氬姟瑙勫垯鎴栭鏈熺粨鏋溿€備笉寰楀啓鍏ヤ笟鍔′唬鐮併€佸叾浠栨ā鍧椼€乣index.yaml`銆乣generation-state.yaml`銆乣qa-lock.yaml`銆乣version-lock.yaml`銆乣collection.bru`銆佸叡浜幆澧冩垨璺ㄦā鍧楁祦绋嬨€?
+宸ヤ綔鍣ㄥ彲浠ヨ鍙栧叡浜绾︺€侀厤缃€佹棦鏈夎瘉鎹拰鎵ц鏀寔婧愪唬鐮併€傛簮浠ｇ爜妫€鏌ヤ粎闄愯繍琛屾椂閰嶇疆銆佽璇?鏍囧ご璁剧疆銆佸す鍏枫€佹祴璇曟暟鎹噯澶囧拰妯℃嫙寮€鍏筹紱涓嶅緱鎻愪緵涓氬姟瑙勫垯鎴栭鏈熺粨鏋溿€備笉寰楀啓鍏ヤ笟鍔′唬鐮併€佸叾浠栨ā鍧椼€乣index.yaml`銆乣generation-state.yaml`銆乣qa-lock.yaml`銆乣bru-api-test-generator-version.json`銆乣collection.bru`銆佸叡浜幆澧冩垨璺ㄦā鍧楁祦绋嬨€?
 鍗忚皟鑰?records each assignment and gives the constraint validator the worker role, assigned module, and changed paths. `module-worker-boundary` and `business-code-immutable` fail any path outside the table above.
 
 ## 宸ヤ綔鍣ㄦ祦绋?

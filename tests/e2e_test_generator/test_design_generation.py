@@ -238,7 +238,7 @@ class DesignGenerationTests(unittest.TestCase):
                 ("e2e.logic", "analysis/logic.yaml"),
                 ("e2e.scenario-plan", "analysis/scenario-plan.yaml"),
                 ("e2e.value-resolution", "configuration/value-resolution.yaml"),
-                ("e2e.version-lock", "analysis/version-lock.yaml"),
+                ("e2e.version-lock", "analysis/e2e-test-generator-version.json"),
             ):
                 document = yaml.safe_load((root / relative).read_text(encoding="utf-8"))
                 self.assertEqual([], validate_schema(get_schema(scope)["document"], document), scope)

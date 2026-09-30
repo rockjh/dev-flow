@@ -30,6 +30,25 @@ class ReleaseContractTests(unittest.TestCase):
         shared = ROOT / "skills" / "_shared"
         self.assertFalse(shared.is_dir() and any(path.is_file() for path in shared.rglob("*")))
 
+    def test_canonical_skill_payload_contains_one_version_file_per_domain(self) -> None:
+        expected = {
+            "biz-flow-doc-generator": "biz-flow-doc-generator-version.json",
+            "bru-api-test-generator": "bru-api-test-generator-version.json",
+            "e2e-test-generator": "e2e-test-generator-version.json",
+        }
+        for skill, filename in expected.items():
+            canonical = ROOT / "skills" / skill
+            payload = ROOT / "npm" / "skills" / "devflow" / skill
+            self.assertTrue((canonical / "agents" / "openai.yaml").is_file())
+            self.assertTrue((payload / "agents" / "openai.yaml").is_file())
+            canonical_versions = [path for path in canonical.rglob(filename)]
+            if skill == "e2e-test-generator":
+                self.assertFalse(any(path.parts[-2] == "example" for path in canonical_versions))
+            else:
+                self.assertEqual(1, len(canonical_versions))
+                relative = canonical_versions[0].relative_to(canonical)
+                self.assertEqual(canonical_versions[0].read_bytes(), (payload / relative).read_bytes())
+
     @unittest.skipUnless(shutil.which("node"), "node is required to verify the npm runtime")
     def test_npm_runtime_resolves_the_pipx_executable_without_path_lookup(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

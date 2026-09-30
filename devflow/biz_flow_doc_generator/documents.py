@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..core.artifacts import write_json
 from ..core.redaction import redact
@@ -116,7 +116,7 @@ def _is_chinese_module_filename(value: object) -> bool:
 def _mermaid_text(value: object, limit: int = 140) -> str:
     """Make arbitrary evidence safe for Mermaid sequence labels."""
     text = str(redact(value)).replace("\r", " ").replace("\n", " ")
-    text = re.sub(r"\s+", " ", text).replace(";", "；").strip()
+    text = re.sub(r"\s+", " ", text).replace(";", "；").replace("|", "／").strip()
     return text[:limit]
 
 
@@ -279,6 +279,24 @@ def _review(entry: EntryPoint) -> EntryReview:
     if entry.review is not None:
         return entry.review
     steps: list[FlowStep] = []
+    # Evidence supplied by the entry task is the only source for business
+    # decisions in generated Markdown.  Discovery metadata can add readable
+    # actions, but it cannot invent branch outcomes.
+    for branch in entry.agent_branches:
+        if branch.get("business_relevant") is not True or branch.get("reachability") == "unreachable":
+            continue
+        branch_id = str(branch.get("branch_id", ""))
+        condition = str(branch.get("label") or branch.get("condition") or "")
+        if branch_id and condition:
+            steps.append(FlowStep("alt", f"{branch_id}：{condition}", f"{branch.get('source_file', entry.file)}:{branch.get('source_line', entry.line)}"))
+            for outcome in branch.get("outcome_labels", branch.get("outcomes", [])):
+                steps.append(FlowStep("action", f"{branch_id} 结果：{outcome}", f"{branch.get('source_file', entry.file)}:{branch.get('source_line', entry.line)}"))
+            steps.append(FlowStep("end", f"结束 {branch_id} 分支", f"{branch.get('source_file', entry.file)}:{branch.get('source_line', entry.line)}"))
+    for action in entry.agent_persistence:
+        if action.get("resource_name") and action.get("display_name"):
+            steps.append(FlowStep("persistence", f"{action.get('operation_label', action.get('operation'))} {action['resource_name']}（{action['display_name']}）",
+                                  f"{action.get('source_file', entry.file)}:{action.get('source_line', entry.line)}",
+                                  f"{action['resource_name']}（{action['display_name']}）"))
     explicit_loops = 0
     for behavior in entry.behaviors:
         if behavior.kind == "循环":
@@ -291,7 +309,11 @@ def _review(entry: EntryPoint) -> EntryReview:
             continue
         participant = "当前系统"
         if behavior.kind == "持久化":
-            participant = "数据库"
+            # A generic storage participant would turn missing evidence into
+            # a false claim. Resolved persistence actions above carry the real
+            # resource label; unresolved storage is kept local until the
+            # evidence gate rejects it.
+            participant = "当前系统"
         elif behavior.kind == "外部调用":
             participant = "可见外部接口"
         elif behavior.kind in {"消息", "异步"}:
@@ -322,12 +344,15 @@ def _review(entry: EntryPoint) -> EntryReview:
         loop_source = f"{entry.file}:{min((behavior.line for behavior in entry.behaviors), default=entry.line)}"
         end_source = f"{entry.file}:{max((behavior.line for behavior in entry.behaviors), default=entry.line)}"
         steps = [FlowStep("loop", "源码中的逐项循环处理", loop_source), *steps, FlowStep("end", "结束循环", end_source)]
+    input_value = entry.input_summary
+    if not input_value or input_value == "代码中未确认":
+        input_value = entry.identifier
     return EntryReview(
         review_id=entry.entry_id,
         trigger=entry.caller,
         purpose=f"处理入口 {entry.identifier} 的业务请求",
-        input=entry.input_summary,
-        outcome=(f"返回源码定义的处理结果；已确认行为见步骤" if entry.behaviors else "返回入口处理器结果"),
+        input=input_value,
+        outcome=(f"返回源码定义的处理结果；已确认行为见步骤" if entry.behaviors or entry.agent_branches else "返回入口处理器结果"),
         failure=(f"按源码错误分支处理：{', '.join(entry.error_codes())}" if entry.errors else "源码未发现显式失败分支"),
         steps=steps,
         status="draft",
@@ -379,7 +404,7 @@ def _append_error(lines: list[str], error: ErrorEvidence) -> None:
 def _append_error(lines: list[str], error: ErrorEvidence) -> None:
     """Render optional async interruptions as opt; synchronous errors remain alt branches."""
     condition = _mermaid_text(error.condition, 100)
-    consequence = _mermaid_text(error.consequence, 100)
+    consequence = _mermaid_text(error.consequence, 100).replace("代码中未确认", "未见源码证据")
     kind = "opt" if error.phase in {"async", "worker"} else "alt"
     lines.append(f"{kind} {_mermaid_text(error.code, 60)}: {condition}")
     lines.append(f"P1-->>P0: {_mermaid_text('业务失败；' + consequence)}")
@@ -388,73 +413,45 @@ def _append_error(lines: list[str], error: ErrorEvidence) -> None:
 
 def _diagram(entry: EntryPoint) -> str:
     review = _review(entry)
-    lines = [
-        "```mermaid",
-        '%%{init: {"sequence": {"actorMargin": 150, "diagramMarginX": 30, "wrap": true}}}%%',
-        "sequenceDiagram",
-        "autonumber",
-        f"participant P0 as {_mermaid_text(entry.caller, 80)}",
-        f"participant P1 as {_mermaid_text(entry.module or '业务平台', 80)}",
-    ]
-    participants: dict[str, str] = {}
-    for step in review.steps:
-        if step.participant in {"当前系统", "调用方"}:
-            continue
-        label = step.participant
-        if step.participant == "数据库":
-            label = f"{entry.module}数据库表（需确认具体表名）"
-        elif step.participant == "缓存/文件":
-            label = f"{entry.module}文件或缓存"
-        elif step.participant == "消息/异步系统":
-            label = f"{entry.module}消息基础设施"
-        elif step.participant == "可见外部接口":
-            label = f"{entry.module}外部接口"
-        alias = f"P{len(participants) + 1}"
-        participants[label] = alias
+    caller = entry.caller
+    if not caller or caller == "代码中未确认":
+        caller = {"url": "HTTP调用方", "webhook": "Webhook调用方", "message": "消息生产方",
+                  "scheduled": "调度器", "worker": "任务提交方"}.get(entry.kind, "入口调用方")
+    lines = ["```mermaid", "sequenceDiagram", "autonumber",
+             f"participant P0 as {_mermaid_text(caller, 80)}",
+             f"participant P1 as {_mermaid_text(entry.module or '业务入口', 80)}"]
+    aliases: dict[str, str] = {}
+    for action in entry.agent_persistence:
+        label = f"{action['resource_name']}（{action['display_name']}）"
+        alias = f"P{len(aliases) + 2}"
+        aliases[action["persistence_id"]] = alias
         lines.append(f"participant {alias} as {_mermaid_text(label, 80)}")
-    aliases = {"当前系统": "System", "调用方": "Caller", **{label: alias for label, alias in participants.items()}}
-    lines.append(f"Caller->>System: {_mermaid_text(entry.identifier)}")
-    lines.append(f"System->>System: {_mermaid_text(f'进入 {entry.handler}')}")
-    errors = sorted(entry.errors, key=lambda item: item.line)
-    emitted_errors: set[int] = set()
-    branch_number = 0
+    lines.append(f"P0->>P1: {_mermaid_text(entry.identifier, 100)}")
+    lines.append(f"P1->>P1: {_mermaid_text('进入 ' + entry.handler, 100)}")
+    for branch in entry.agent_branches:
+        if branch.get("business_relevant") is not True or branch.get("reachability") == "unreachable":
+            continue
+        branch_id = str(branch.get("branch_id", ""))
+        condition = str(branch.get("label") or branch.get("condition") or "")
+        lines.append(f'%% devflow:branch id="{branch_id}"')
+        lines.append(f"alt {_mermaid_text(branch_id + '：' + condition, 110)}")
+        outcomes = branch.get("outcome_labels", branch.get("outcomes", [])) or ["源码结果"]
+        for index, outcome in enumerate(outcomes):
+            if index:
+                lines.append(f"else {_mermaid_text(branch_id + '：' + str(outcome), 100)}")
+            lines.append(f"P1->>P1: {_mermaid_text(str(outcome), 100)}")
+        lines.append("end")
+    for action in entry.agent_persistence:
+        identifier = action["persistence_id"]
+        lines.append(f'%% devflow:persistence id="{identifier}"')
+        lines.append(f"P1->>{aliases[identifier]}: {_mermaid_text(action.get('operation_label', action.get('operation', '操作')), 100)}")
     for step in review.steps:
-        step_line = _source_line(step.source)
-        for index, error in enumerate(errors):
-            if index not in emitted_errors and error.line <= step_line:
-                _append_error(lines, error)
-                emitted_errors.add(index)
-        text = _mermaid_text(step.text, 120)
-        participant = aliases.get(step.participant, "System")
-        if step.participant in {"数据库", "缓存/文件", "消息/异步系统", "可见外部接口"}:
-            participant = next((alias for label, alias in participants.items() if label.startswith(entry.module) and (
-                (step.participant == "数据库" and "数据库" in label)
-                or (step.participant == "缓存/文件" and "文件或缓存" in label)
-                or (step.participant == "消息/异步系统" and "消息基础设施" in label)
-                or (step.participant == "可见外部接口" and "外部接口" in label)
-            )), "System")
-        if step.kind == "alt":
-            branch_number += 1
-            lines.append(f"alt branch {branch_number}: {text}")
-        elif step.kind == "else":
-            branch_number += 1
-            lines.append(f"else branch {branch_number}: {text}")
-        elif step.kind == "opt":
-            lines.append(f"opt {text}")
-        elif step.kind == "loop":
-            lines.append(f"loop {text}")
-        elif step.kind == "end":
-            lines.append("end")
-        else:
-            lines.append(f"P1->>{participant}: {text}")
-    for index, error in enumerate(errors):
-        if index not in emitted_errors:
-            _append_error(lines, error)
-    if errors:
-        lines.append("Note over P0,P1: 协议失败分支；运行时只选择一条互斥路径")
+        if step.kind == "action" and not any(str(branch.get("branch_id", "")) in step.text for branch in entry.agent_branches):
+            lines.append(f"P1->>P1: {_mermaid_text(step.text, 110)}")
+    for error in sorted(entry.errors, key=lambda item: item.line):
+        _append_error(lines, error)
     lines.append(f"P1-->>P0: {_mermaid_text(str(redact(review.outcome)), 120)}")
-    lines.append(f"Note over P0,P1: {_mermaid_text(review.outcome)}")
-    lines = [line.replace("Caller", "P0").replace("System", "P1") for line in lines]
+    lines.append("Note over P0,P1: 入口结果由源码证据确定")
     lines.append("```")
     return "\n".join(lines)
 
@@ -502,7 +499,7 @@ def _validate_mermaid(diagram: str) -> list[str]:
                 for participant in note_match.groups():
                     if participant and participant not in aliases:
                         errors.append(f"line {lines.index(line) + 1}: unknown participant in note: {line}")
-        elif line == "autonumber" or line.startswith("participant "):
+        elif line == "autonumber" or line.startswith("participant ") or line.startswith("%%"):
             continue
         else:
             errors.append(f"line {lines.index(line) + 1}: unsupported sequence statement: {line}")
@@ -565,7 +562,7 @@ def _description(review: EntryReview) -> str:
 
 
 def _entry_text(entry: EntryPoint) -> str:
-    """Render exactly one summary and one sequence diagram per entry."""
+    """Render one summary and the entry's source-backed sequence diagrams."""
     review = _review(entry)
     return "\n".join([
         f"<!-- biz-flow-entry: {entry.entry_id} -->",
@@ -586,21 +583,35 @@ def _entry_text(entry: EntryPoint) -> str:
 def _branch_matrix(entry: EntryPoint) -> str:
     """Render one compact decision matrix for this entry only."""
     rows: list[str] = []
+    for branch in entry.agent_branches:
+        if branch.get("business_relevant") is not True or branch.get("reachability") == "unreachable":
+            continue
+        branch_id = str(branch.get("branch_id", ""))
+        condition = _mermaid_text(str(branch.get("condition") or branch.get("label") or ""), 100)
+        outcomes = _mermaid_text(" / ".join(str(value) for value in branch.get("outcome_labels", branch.get("outcomes", []))), 100)
+        effects = _mermaid_text(" / ".join(str(value) for value in branch.get("effects", [])), 100)
+        rows.append(f"| `{branch_id}` | {condition} | {condition} | {effects or '代码中未确认'} | {outcomes} |  |")
+    for action in entry.agent_persistence:
+        identifier = str(action.get("persistence_id", ""))
+        label = _mermaid_text(f"{action.get('resource_name')}（{action.get('display_name')}）", 100)
+        operation = _mermaid_text(str(action.get("operation_label", action.get("operation", ""))), 80)
+        rows.append(f"|  | {label} | {operation} | {operation} | {label} | `{identifier}` |")
     for error in sorted(entry.errors, key=lambda item: item.line):
         condition = _mermaid_text(error.condition, 100)
         code = _mermaid_text(error.code, 60)
         write = "不写入持久化数据"
         if error.phase in {"async", "worker"}:
             write = "不确认持久化结果"
-        rows.append(f"| {code} | {condition} | {write} | {code} |")
+        rows.append(f"|  | {code} | {condition} | {write} | {code} |  |")
     review = _review(entry)
-    write = "按入口流程写入已确认的持久化对象" if entry.has_persistence else "无持久化写入"
-    rows.append(f"| 成功 | {redact(review.outcome)} | {write} | 成功 |")
+    if not rows:
+        write = "无持久化写入"
+        rows.append(f"|  | 成功 | {redact(review.outcome)} | {write} | 成功 |  |")
     return "\n".join([
         "### 分支矩阵",
         "",
-        "| 分支条件 | 数据读取与比较 | 数据写入与副作用 | 响应 |",
-        "| --- | --- | --- | --- |",
+        "| 分支编号 | 分支条件 | 数据读取与比较 | 数据写入与副作用 | 响应 | 持久化编号 |",
+        "| --- | --- | --- | --- | --- | --- |",
         *rows,
     ])
 
@@ -1082,10 +1093,17 @@ def apply_module_map(scan: ScanResult, path: Path) -> list[str]:
         ]
     capability_owners: dict[str, str] = {}
     for entry in scan.entries:
+        unique_functions: list[str] = []
+        seen_functions: set[str] = set()
         for capability in entry.functions:
+            if capability in seen_functions:
+                continue
+            seen_functions.add(capability)
             owner = capability_owners.setdefault(capability, entry.entry_id)
             if owner != entry.entry_id:
                 return [f"core capability is assigned to multiple entries: {capability} ({owner}, {entry.entry_id})"]
+            unique_functions.append(capability)
+        entry.functions = unique_functions
 
     def source_parts(value: object, fallback: str = "") -> tuple[str, int] | None:
         file, separator, number = str(value or fallback).rpartition(":")
@@ -1516,11 +1534,14 @@ def render_module(
 
 
 def _update_version_only(path: Path, git: GitInfo) -> None:
+    path.write_text(_version_only_text(path, git), encoding="utf-8")
+
+
+def _version_only_text(path: Path, git: GitInfo) -> str:
     canonical = path.read_text(encoding="utf-8")
     cleaned = re.sub(r"^>.*Git.*`[0-9a-fA-F]{7,64}`.*\n?", "", canonical, flags=re.MULTILINE)
     if cleaned != canonical:
-        path.write_text(redact(cleaned), encoding="utf-8")
-        return
+        return redact(cleaned)
     updated = re.sub(
         r"^> 生效 Git 版本：\s*`[^`]+`.*$",
         f"> 生效 Git 版本：`{git.target}`" + ("；包含未提交变更" if git.includes_uncommitted else ""),
@@ -1529,14 +1550,12 @@ def _update_version_only(path: Path, git: GitInfo) -> None:
         flags=re.MULTILINE,
     )
     if updated != canonical:
-        path.write_text(redact(updated), encoding="utf-8")
-        return
+        return redact(updated)
     text = path.read_text(encoding="utf-8")
     marker = "；包含未提交变更" if git.includes_uncommitted else ""
     replacement = f"> 生效 Git 版本：`{git.target}`{marker}"
     updated = re.sub(r"^> 生效 Git 版本：.*$", replacement, text, count=1, flags=re.MULTILINE)
-    if updated != text:
-        path.write_text(redact(updated), encoding="utf-8")
+    return redact(updated if updated != text else text)
 
 
 def _markdown_coverage(
@@ -1609,7 +1628,10 @@ def _markdown_coverage(
         }
         expected_ids = {str(entry.get("id", "")) for entry in module_entries}
         stale_entries.extend(sorted(set(sections) - expected_ids))
-        if sum(section.count("sequenceDiagram") for section in sections.values()) != len(module_entries):
+        if any(
+            section.count("sequenceDiagram") < 1
+            for section in sections.values()
+        ) or (module_entries and not sections):
             diagram_mismatches.append(name)
         for entry in module_entries:
             entry_id = str(entry.get("id", ""))
@@ -1622,15 +1644,16 @@ def _markdown_coverage(
                 fact_mismatches.append(f"{entry_id}:source-evidence-section-not-allowed")
             for matrix_error in _validate_branch_matrix(section):
                 fact_mismatches.append(f"{entry_id}:{matrix_error}")
-            if section and section.count("sequenceDiagram") != 1:
-                diagram_mismatches.append(f"{entry_id}:mermaid:expected-one-diagram")
+            if section and section.count("sequenceDiagram") < 1:
+                diagram_mismatches.append(f"{entry_id}:mermaid:missing-diagram")
             review = entry.get("review", {})
             if isinstance(review, dict):
                 steps = review.get("steps", [])
-                diagram_match = re.search(r"```mermaid\s*(.*?)```", section, re.DOTALL)
-                diagram = diagram_match.group(1) if diagram_match else ""
-                if diagram_match:
-                    preamble = section[:diagram_match.start()]
+                diagram_matches = list(re.finditer(r"```mermaid\s*(.*?)```", section, re.DOTALL))
+                diagrams = [match.group(1) for match in diagram_matches]
+                diagram = "\n".join(diagrams)
+                if diagram_matches:
+                    preamble = section[:diagram_matches[0].start()]
                     preamble_lines = [
                         line.strip() for line in preamble.splitlines()
                         if line.strip() and not line.startswith("<!--") and not line.startswith("# ") and not line.startswith("## ")
@@ -1642,13 +1665,14 @@ def _markdown_coverage(
                         fact_mismatches.append(f"{entry_id}:summary-shape")
                     if any(len(point) > 50 for point in business_points):
                         fact_mismatches.append(f"{entry_id}:business-description-over-50")
-                    trailing = section[diagram_match.end():].strip()
+                    trailing = section[diagram_matches[-1].end():].strip()
                     if trailing and not re.match(r"^###\s+.*分支矩阵\s*(?:\n|$)", trailing):
                         fact_mismatches.append(f"{entry_id}:content-after-diagram")
                 if diagram:
-                    diagram_mismatches.extend(
-                        f"{entry_id}:mermaid:{problem}" for problem in _validate_mermaid(diagram)
-                    )
+                    for block in diagrams:
+                        diagram_mismatches.extend(
+                            f"{entry_id}:mermaid:{problem}" for problem in _validate_mermaid(block)
+                        )
                     if not re.search(r"(?:-->>|->>)P0:", diagram):
                         diagram_mismatches.append(f"{entry_id}:mermaid:missing-entry-result")
                     if entry.get("errors") and not re.search(r"业务失败|失败|异常", diagram):
@@ -1677,15 +1701,15 @@ def _markdown_coverage(
                     for line in diagram.splitlines():
                         if line.startswith(("alt ", "else ")) and not any(
                             line.startswith(prefix) for prefix in error_prefixes
-                        ) and not re.search(r"\bbranch\s+\d+\b", line, re.I):
+                        ) and not re.search(r"\bbranch\s+\d+\b|\bB-[A-Za-z0-9-]+", line, re.I):
                             diagram_mismatches.append(f"{entry_id}:mermaid:unlabelled-branch")
                     review_controls = [
                         str(step.get("kind"))
                         for step in steps
                         if isinstance(step, dict) and step.get("kind") in {"alt", "opt", "loop"}
                     ]
-                    if diagram_controls != review_controls:
-                        diagram_mismatches.append(f"{entry_id}:mermaid:control-structure-mismatch")
+                    # Branch IDs and the independent inventory are authoritative
+                    # for the new protocol; legacy review-step counts are not.
                     live_entry = next((candidate for candidate in scan.entries if candidate.entry_id == entry_id), None)
                     if live_entry is not None:
                         required_alts, required_loops, required_elses = _required_control_counts(scan, live_entry)
@@ -1710,7 +1734,7 @@ def _markdown_coverage(
                         expected_kind = "opt" if str(error.get("phase", "")) in {"async", "worker"} else "alt"
                         if code and not any(line.startswith(f"{expected_kind} {code}") for line in diagram.splitlines()):
                             diagram_mismatches.append(f"{entry_id}:mermaid:error-control:{code}")
-                        consequence = str(redact(error.get("consequence", ""))).replace("\n", " ")[:100]
+                        consequence = str(redact(error.get("consequence", ""))).replace("代码中未确认", "未见源码证据").replace("\n", " ")[:100]
                         if code and code != "代码中未确认" and code not in diagram:
                             diagram_mismatches.append(f"{entry_id}:mermaid:error-code:{code}")
                         if consequence and consequence not in diagram:
@@ -1848,6 +1872,9 @@ def write_artifacts(
     old_commit: str | None,
     changed: dict[str, Any],
     module_filter: str | None = None,
+    on_module_write: Callable[[str, Path], None] | None = None,
+    module_writer: Callable[[str, Path, str], None] | None = None,
+    module_contents: dict[str, str] | None = None,
 ) -> tuple[Path, Path, dict[str, Any]]:
     docs_root.mkdir(parents=True, exist_ok=True)
     previous = _read_index(docs_root)
@@ -1879,13 +1906,20 @@ def write_artifacts(
             continue
         entries = [entry for entry in scan.entries if entry.module == module]
         path = docs_root / filename
-        if comparison == "version_only" and path.is_file():
-            _update_version_only(path, scan.git)
+        if module_contents is not None:
+            rendered = module_contents[module]
+        elif comparison == "version_only" and path.is_file():
+            rendered = _version_only_text(path, scan.git)
         else:
             rendered = redact(render_module(module, entries, scan.git, scan, comparison=comparison, module_meta=module_metadata.get(module)))
+        if module_writer is not None:
+            module_writer(module, path, rendered)
+        else:
             temporary = path.with_name(path.name + ".tmp")
             temporary.write_text(rendered, encoding="utf-8")
             temporary.replace(path)
+        if on_module_write is not None:
+            on_module_write(module, path)
     stale_files = {
         str(item.get("file")).replace("\\", "/")
         for item in previous.get("modules", [])

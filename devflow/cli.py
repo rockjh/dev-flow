@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import __version__
-from .core.artifacts import require_lock, write_lock
+from .core.artifacts import require_version_file
 from .core.doctor import diagnose
 from .core.envelope import failure, render, success
 from .core.errors import DevflowError, ExitCode, classify_failure
@@ -60,24 +60,22 @@ def _project_relative_path(arguments: list[str], name: str, project: Path, defau
     return (candidate if candidate.is_absolute() else project / candidate).resolve()
 
 
-def _prepare_lock(domain: str, command: str, arguments: list[str]) -> tuple[Path | None, str]:
+def _prepare_lock(domain: str, command: str, arguments: list[str]) -> None:
     if domain == "bru-api":
         root = _option_path(arguments, "--qa-root", "qa")
-        schema_version = BRU_API_SCHEMA_VERSION
     elif domain == "biz-flow":
         root = _option_path(arguments, "--project", ".")
-        schema_version = BIZ_FLOW_SCHEMA_VERSION
     else:
         root = _option_path(arguments, "--project", ".")
-        schema_version = E2E_GATE_SCHEMA_VERSION
     if command != "init":
-        require_lock(
-            root,
-            tool_version=__version__,
-            domain=domain,
-            schema_version=schema_version,
-        )
-    return root, schema_version
+        if domain == "bru-api":
+            # ``--qa-root`` is intentionally relocatable for generated projects;
+            # validate that exact contracts file while retaining the canonical
+            # path mapping in core.artifacts for the default project layout.
+            path = root / "contracts" / "bru-api-test-generator-version.json"
+            require_version_file(root.parent, domain, path=path)
+        else:
+            require_version_file(root, domain)
 
 
 def _summary(stdout: str, stderr: str, *, full: bool) -> dict[str, object]:
@@ -110,7 +108,12 @@ def _artifact_path(domain: str, command: str, arguments: list[str], stdout: str)
         docs_root = _project_relative_path(arguments, "--docs-root", project, "docs/biz-flow")
         filename = "biz-flow-discovery.json" if command == "discover" else "biz-flow-report.json"
         path = docs_root / filename
-        return str(path) if path.is_file() else ""
+        if path.is_file():
+            return str(path)
+        for line in reversed(stdout.splitlines()):
+            if "run_manifest=" in line:
+                return line.rsplit("run_manifest=", 1)[1].split()[0]
+        return ""
     for line in reversed(stdout.splitlines()):
         if " ledger=" in line:
             return line.rsplit(" ledger=", 1)[1].strip()
@@ -125,7 +128,7 @@ def _run_domain(domain: str, arguments: list[str], *, full: bool) -> tuple[dict[
         raise DevflowError("INVALID_ARGUMENT", f"missing {domain} command", ExitCode.ARGUMENT)
     command, remainder = arguments[0], arguments[1:]
     try:
-        root, schema_version = _prepare_lock(domain, command, remainder)
+        _prepare_lock(domain, command, remainder)
     except DevflowError as exc:
         return failure(f"{domain}.{command}", exc), int(exc.exit_code)
     stdout = io.StringIO()
@@ -149,8 +152,6 @@ def _run_domain(domain: str, arguments: list[str], *, full: bool) -> tuple[dict[
         error = classify_failure(f"{domain}.{command}", message, code)
         error.details_path = artifact
         return failure(f"{domain}.{command}", error), int(error.exit_code)
-    if command == "init" and root is not None:
-        write_lock(root, tool_version=__version__, domain=domain, schema_version=schema_version)
     data = _summary(output, diagnostics, full=full)
     if domain == "e2e" and command == "source-status" and output.strip():
         try:

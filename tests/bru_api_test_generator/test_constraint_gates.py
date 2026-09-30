@@ -287,7 +287,7 @@ class ConstraintGateTests(unittest.TestCase):
                 "bru-api.design-rules": qa_root / "constraints" / "design-rules.yaml",
                 "bru-api.logic": module / "logic.yaml",
                 "bru-api.value-resolution": module / "value-resolution.yaml",
-                "bru-api.version-lock": qa_root / "contracts" / "version-lock.yaml",
+                "bru-api.version-lock": qa_root / "contracts" / "bru-api-test-generator-version.json",
             }
             for scope, path in artifacts.items():
                 with self.subTest(scope=scope):

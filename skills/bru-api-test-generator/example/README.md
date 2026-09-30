@@ -7,6 +7,7 @@
 保留内容如下：
 
 - `qa/contracts/`：OpenAPI、接口契约、用例和锁。
+- `qa/contracts/bru-api-test-generator-version.json`：唯一的 Skill 版本文件；`qa-lock.yaml` 只保存 QA 状态和指纹。
 - `qa/bruno/任务管理/`：中文模块名和中文 Bruno 请求文件。
 - `qa/execution/`：执行配置和环境变量占位符。
 - `qa/reports/`：权威报告路径占位符。

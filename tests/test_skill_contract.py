@@ -34,10 +34,25 @@ class SkillContractTests(unittest.TestCase):
                 agent_file,
             )
             prompt = interface["default_prompt"]
+            self.assertNotIn("skill_version", interface, agent_file)
+            self.assertNotIn("version_file", interface, agent_file)
             self.assertIn("installed devflow CLI", prompt, agent_file)
             self.assertIn(expected_name, prompt, agent_file)
             self.assertIn("redacted authoritative", prompt, agent_file)
             self.assertIn("stop when", prompt, agent_file)
+
+    def test_version_file_contract_is_explicit_per_domain(self) -> None:
+        expected = {
+            "biz-flow-doc-generator": "docs/biz-flow/biz-flow-doc-generator-version.json",
+            "bru-api-test-generator": "qa/contracts/bru-api-test-generator-version.json",
+            "e2e-test-generator": "analysis/e2e-test-generator-version.json",
+        }
+        for name, path in expected.items():
+            text = (SKILLS / name / "SKILL.md").read_text(encoding="utf-8")
+            prompt = yaml.safe_load((SKILLS / name / "agents" / "openai.yaml").read_text(encoding="utf-8"))["interface"]["default_prompt"]
+            self.assertIn(path, text)
+            self.assertIn("skill_version", text)
+            self.assertIn(path, prompt)
 
     def test_biz_flow_prompt_and_skill_cover_revised_workflow(self) -> None:
         skill = SKILLS / "biz-flow-doc-generator"

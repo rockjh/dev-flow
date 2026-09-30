@@ -594,7 +594,7 @@ def _contract_inputs(project_root: Path, selected: str | None) -> list[Path]:
     paths = _discovery_inputs(project_root)
     paths.extend(
         project_root / "analysis" / name
-        for name in ("design-rules.yaml", "protocol-rules.yaml", "logic.yaml", "scenario-plan.yaml", "version-lock.yaml", "exclusions.yaml")
+        for name in ("design-rules.yaml", "protocol-rules.yaml", "logic.yaml", "scenario-plan.yaml", "e2e-test-generator-version.json", "exclusions.yaml")
     )
     paths.append(project_root / "configuration" / "value-resolution.yaml")
     root = project_root / "scenarios"

@@ -39,6 +39,8 @@ def classify_failure(command: str, message: str, return_code: int) -> DevflowErr
     document_code = re.search(r"\b(DOCUMENT_[A-Z_]+)\b", message)
     if document_code:
         return DevflowError(document_code.group(1), message, ExitCode.GATE_FAILED)
+    if "delegation_unavailable" in text:
+        return DevflowError("DELEGATION_UNAVAILABLE", message, ExitCode.GATE_FAILED)
     if return_code == int(ExitCode.ARGUMENT) and ("usage:" in text or "error:" in text):
         return DevflowError("INVALID_ARGUMENT", message, ExitCode.ARGUMENT)
     if any(token in text for token in ("credential", "credentials", "secret is missing", "token is missing")):

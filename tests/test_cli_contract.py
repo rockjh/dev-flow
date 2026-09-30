@@ -123,6 +123,11 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("design_rule_ids", scenario_item["properties"])
         self.assertIn("protocol_refs", scenario_item["properties"])
 
+        code, lock = self.invoke("schema", "e2e.version-lock")
+        self.assertEqual(0, code)
+        required = set(lock["data"]["document"].get("required", []))
+        self.assertTrue({"design", "protocol", "source", "support", "scenario_generation", "changes", "scenarios"}.issubset(required))
+
     def test_e2e_generation_commands_have_scoped_options_and_help(self) -> None:
         code, generate = self.invoke("schema", "e2e.generate")
         self.assertEqual(0, code)
@@ -163,13 +168,13 @@ class CliContractTests(unittest.TestCase):
             root = Path(temporary)
             code, result = self.invoke("e2e", "init", "--project", str(root))
             self.assertEqual(0, code, result)
-            self.assertTrue((root / ".devflow.lock.json").is_file())
+            self.assertTrue((root / "analysis" / "e2e-test-generator-version.json").is_file())
             self.assertFalse((root / "scripts").exists())
             self.assertFalse((root / "shared" / "e2e_runtime.py").exists())
             self.assertTrue((root / "scenarios" / "scenario.template.yaml").is_file())
             self.assertTrue((root / "run-e2e.bat").is_file())
 
-    def bru_api_init_writes_flat_assets_without_tool_sources(self) -> None:
+    def test_bru_api_init_writes_flat_assets_without_tool_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary)
             root = project / "qa"
@@ -183,8 +188,7 @@ class CliContractTests(unittest.TestCase):
                 {"bruno", "contracts", "constraints", "execution", "reports", "fixtures"},
                 {path.name for path in root.iterdir() if path.is_dir()},
             )
-            self.assertTrue((root / ".devflow.lock.json").is_file())
-            self.assertTrue((root / "contracts" / "version-lock.yaml").is_file())
+            self.assertTrue((root / "contracts" / "bru-api-test-generator-version.json").is_file())
             self.assertFalse((root / "scripts").exists())
             for name in (
                 "generate-mock-data.bat", "generate-mock-data.sh",
@@ -192,7 +196,7 @@ class CliContractTests(unittest.TestCase):
             ):
                 self.assertTrue((root / "execution" / name).is_file())
 
-    def bru_api_version_lock_can_complete_through_the_public_cli(self) -> None:
+    def test_bru_api_version_lock_can_complete_through_the_public_cli(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary)
             qa_root = project / "quality-assets"
@@ -202,7 +206,7 @@ class CliContractTests(unittest.TestCase):
                 "bru-api", "init", "--qa-root", str(qa_root), "--design-file", str(design),
             )
             self.assertEqual(0, code, result)
-            self.assertIn("status: draft", (qa_root / "contracts" / "version-lock.yaml").read_text(encoding="utf-8"))
+            self.assertIn('"status": "draft"', (qa_root / "contracts" / "bru-api-test-generator-version.json").read_text(encoding="utf-8"))
 
             report = qa_root / "completion.json"
             report.parent.mkdir(parents=True, exist_ok=True)
@@ -227,7 +231,7 @@ class CliContractTests(unittest.TestCase):
                 "--completion-report", str(report),
             )
             self.assertEqual(0, code, result)
-            self.assertIn("status: current", (qa_root / "contracts" / "version-lock.yaml").read_text(encoding="utf-8"))
+            self.assertIn('"status": "current"', (qa_root / "contracts" / "bru-api-test-generator-version.json").read_text(encoding="utf-8"))
 
     def test_missing_project_lock_is_a_gate_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

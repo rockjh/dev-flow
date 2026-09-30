@@ -17,8 +17,7 @@ def test_incremental_agent_plan_validates_only_affected_modules() -> None:
     assert {task["task_id"] for task in plan["tasks"]} == {
         "module:orders", f"entry:{entries[0].entry_id}"
     }
-    assert set(plan["entry_analyses"]) == {entries[0].entry_id}
-    assert plan["entry_analyses"][entries[0].entry_id]["evidence"] == ["app.py:1"]
+    assert plan["entry_analyses"] == {}
     completed = complete_agent_plan(plan, {"orders"})
     assert completed["status"] == "completed"
     assert all(task["status"] == "completed" for task in completed["tasks"])

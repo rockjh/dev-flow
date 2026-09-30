@@ -1,31 +1,22 @@
-# 涓氬姟涓?QA 鐗堟湰绠＄悊
+# 版本文件管理
 
-鍦?`qa/contracts` 涓嬬淮鎶や袱涓浉浜掔嫭绔嬬殑閿併€?
+本 Skill 的唯一权威版本文件是 `analysis/e2e-test-generator-version.json`。文件固定包含：
 
-`version-lock.yaml` 璁板綍鐢熸垚鐨?QA 鍜屾瀯寤虹洰褰曚箣澶栧綋鍓嶄笟鍔℃枃浠剁殑鎽樿锛屼互鍙婄嫭绔嬬殑 OpenAPI 鍜岄€夊畾璁捐鏂囨。鎽樿銆傛鏌ュ櫒鍙鍙栧綋鍓嶅伐浣滃尯锛屼笉妫€鏌ョ増鏈帶鍒跺巻鍙层€傛憳瑕佸彉鍖栦細琚繚瀹堝湴褰掔被涓哄奖鍝?API锛屽洜涓烘枃浠剁郴缁熷揩鐓ф棤娉曡瘉鏄庡叿浣撴敼鍙樹簡鍝」琛屼负銆?
+    {
+      "skill": "devflow/e2e-test-generator",
+      "skill_version": "1.0.0",
+      "artifact_root": "analysis",
+      "version": 1,
+      "document_baseline": {"git_commit": "<40 位提交 SHA>"},
+      "design": {},
+      "protocol": {},
+      "source": [],
+      "support": {},
+      "scenario_generation": {},
+      "changes": {},
+      "scenarios": {}
+    }
 
-`qa-lock.yaml` 璁板綍褰撳墠 OpenAPI銆佹ā鍧椼€佺敤渚嬪拰鐢熸垚鐘舵€佹寚绾广€傜敓鎴愪笌瀹炰綋鍖栦細鍒锋柊瀹冿紱妫€鏌ュ拰鎵ц浼氭嫆缁濊繃鏈熸寚绾广€?
+该文件只记录本 Skill 的设计、协议、源码、支持配置、场景数据和清理指纹。`skill_version` 是 Skill 发布版本；`version` 和各业务字段是输入锁格式及生成摘要。`docs/e2e/e2e.yaml`、`analysis/version-lock.yaml`、`biz-flow.json`、`biz-flow.yaml` 和根目录 `.devflow.lock.json` 都不是运行时兼容路径，升级时由操作员删除旧文件后重新 init。
 
-閫氳繃鍏变韩 CLI 宸ヤ綔娴佸垵濮嬪寲骞堕棬绂佷笟鍔￠攣锛?
-
-```bash
-devflow bru-api init --qa-root qa
-devflow bru-api generate --qa-root qa --openapi qa/contracts/openapi.json --source-root APP
-devflow bru-api preflight --qa-root qa
-devflow bru-api run --qa-root qa
-```
-
-鍏变韩杩愯鏃朵細鍦ㄧ敓鎴愩€侀妫€
-鍜屾墽琛屾湡闂存鏌ユ簮浠ｇ爜/鐗堟湰閿併€傚垵濮嬪寲浼氬垱寤鸿崏绋垮熀绾裤€傚彧瑕佹簮鎽樿鏈彉鍖栵紝绗竴娆＄紪鎺掔殑棰勬/杩愯鍙互浣跨敤璇ヨ崏绋匡紱鏅€氱嫭绔嬬殑 `before-execute` 妫€鏌ヤ粛瑕佹眰鐘舵€佷负 `current`銆傚畬鎴愰渶瑕佹垚鍔熺殑 v2 `full-matrix-strict` 鍏ㄥ眬鎶ュ憡锛屽惎鐢ㄥ叏閮ㄤ弗鏍兼鏌ャ€佹棤閿欒銆乣status: verified` 涓?`completion_ok: true`銆傚奖鍝?API 鐨勬憳瑕佸彉鍖栧繀椤诲厛璋冩暣骞堕噸鏂拌繍琛屽彈褰卞搷妯″潡娴嬭瘯锛屾墠鑳芥帹杩涢攣銆?
-
-杩愯鍣ㄤ細鑷姩鎺ㄨ繘鎴愬姛鐨勫叏灞€鎵ц銆傛棤闇€椤圭洰鏈湴鑴氭湰锛屼篃鍙互鏄惧紡鎵ц鐩稿悓鐨勭増鏈搷浣滐細
-
-```bash
-devflow bru-api scripts version-check --qa-root qa --phase before-generate
-devflow bru-api scripts version-check --qa-root qa --phase before-execute
-devflow bru-api scripts version-complete --qa-root qa --completion-report qa/results/<strict-report>.json --tests-adapted
-```
-
-瀵逛簬杩滅▼ `baseUrl`锛屽綋閮ㄧ讲鎻愪緵鐗堟湰绔偣鏃讹紝鍦ㄦ椿鍔?Bruno 鐜涓厤缃?`versionPath`銆俙versionJsonPath`銆乣versionHeader` 鎴?`expectedVersion` 鍙€夋嫨闈炴爣鍑嗗€笺€傜鐐瑰繀椤讳笌 `baseUrl` 鍏变韩婧愶紱鐗堟湰闂ㄧ澶辫触鎴栦笉鍖归厤鏃讹紝蹇呴』瑙ｅ喅鍚庢墠鑳芥墽琛屻€?
-
-`impact-rules.yaml` 浠嶅彲鐢ㄤ簬鍒嗙被鍏朵粬宸ュ叿鎻愪緵鐨勫綋鍓嶅伐浣滃尯鍛藉悕璺緞銆傛湭鐭ヤ笟鍔¤矾寰勬寜淇濆畧鏂瑰紡澶勭悊銆?
+e2e 的 init、generate、check、source-status 和 run 只读取自己的 JSON。文档基线只有在文档门禁和下游检查成功后才推进；缺少、损坏、技能元数据不匹配或任一指纹过期都会停止。

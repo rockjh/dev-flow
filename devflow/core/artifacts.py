@@ -12,19 +12,27 @@ from .errors import DevflowError, ExitCode
 from .redaction import redact
 
 
-LOCK_NAME = ".devflow.lock.json"
+SKILL_VERSION = "1.0.0"
+VERSION_FILES = {
+    "biz-flow": "docs/biz-flow/biz-flow-doc-generator-version.json",
+    "bru-api": "qa/contracts/bru-api-test-generator-version.json",
+    "e2e": "analysis/e2e-test-generator-version.json",
+}
+SKILL_NAMES = {
+    "biz-flow": "devflow/biz-flow-doc-generator",
+    "bru-api": "devflow/bru-api-test-generator",
+    "e2e": "devflow/e2e-test-generator",
+}
+ARTIFACT_ROOTS = {"biz-flow": "docs/biz-flow", "bru-api": "qa/contracts", "e2e": "analysis"}
 
 
-def lock_name(domain: str) -> str:
-    """Return the project lock filename for a domain."""
-    return "biz-flow.json" if domain == "biz-flow" else LOCK_NAME
+def version_file(project_root: Path, domain: str) -> Path:
+    relative = VERSION_FILES[domain]
+    return project_root / relative
 
 
-def lock_root(project_root: Path, domain: str) -> Path:
-    """返回项目锁所属领域目录。"""
-    if domain == "biz-flow":
-        return project_root / "docs" / "biz-flow"
-    return project_root
+def version_metadata(domain: str) -> dict[str, str]:
+    return {"skill": SKILL_NAMES[domain], "skill_version": SKILL_VERSION, "artifact_root": ARTIFACT_ROOTS[domain]}
 
 
 def state_root() -> Path:
@@ -50,60 +58,26 @@ def write_json(path: Path, value: Any) -> Path:
     return path
 
 
-def write_lock(project_root: Path, *, tool_version: str, domain: str, schema_version: str) -> Path:
-    asset_root = {"bru-api": "qa", "e2e": "test/e2e", "biz-flow": "docs/biz-flow"}[domain]
-    return write_json(lock_root(project_root, domain) / lock_name(domain), {
-        "tool": "devflow",
-        "tool_version": tool_version,
-        "domain": domain,
-        "schema_version": schema_version,
-        "skill": {"bru-api": "devflow/bru-api-test-generator", "e2e": "devflow/e2e-test-generator", "biz-flow": "devflow/biz-flow-doc-generator"}[domain],
-        "asset_root": asset_root,
-    })
-
-
-def require_lock(
-    project_root: Path,
-    *,
-    tool_version: str,
-    domain: str,
-    schema_version: str,
-) -> dict[str, Any]:
-    path = lock_root(project_root, domain) / lock_name(domain)
-    if not path.is_file():
+def _validate_version_metadata(value: Any, domain: str, path: Path) -> dict[str, Any]:
+    if not isinstance(value, dict) or any(value.get(key) != expected for key, expected in version_metadata(domain).items()):
         raise DevflowError(
             "GATE_FAILED",
-            f"devflow lock does not exist: {path}",
+            f"skill version file has mismatched skill, skill_version, or artifact_root: {path}",
             ExitCode.GATE_FAILED,
-            "Run the domain init command with the installed devflow version.",
+            "Reinitialize the project with the installed skill version.",
         )
+    return value
+
+
+def write_version_file(project_root: Path, domain: str, business: dict[str, Any], *, path: Path | None = None) -> Path:
+    target = path or version_file(project_root, domain)
+    return write_json(target, {**business, **version_metadata(domain)})
+
+
+def require_version_file(project_root: Path, domain: str, *, path: Path | None = None) -> dict[str, Any]:
+    path = path or version_file(project_root, domain)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise DevflowError("GATE_FAILED", f"cannot read devflow lock {path}: {exc}", ExitCode.GATE_FAILED) from exc
-    if value.get("tool") != "devflow" or value.get("domain") != domain:
-        raise DevflowError("GATE_FAILED", f"devflow lock has the wrong domain: {path}", ExitCode.GATE_FAILED)
-    if value.get("tool_version") != tool_version:
-        raise DevflowError(
-            "GATE_FAILED",
-            f"project requires devflow {value.get('tool_version')}, installed version is {tool_version}",
-            ExitCode.GATE_FAILED,
-            "Use the locked devflow version or explicitly reinitialize the project.",
-        )
-    if value.get("schema_version") != schema_version:
-        raise DevflowError(
-            "GATE_FAILED",
-            f"project requires {domain} schema {value.get('schema_version')}, installed schema is {schema_version}",
-            ExitCode.GATE_FAILED,
-            "Use the locked domain schema or explicitly reinitialize the project.",
-        )
-    expected_asset_root = {"bru-api": "qa", "e2e": "test/e2e", "biz-flow": "docs/biz-flow"}[domain]
-    expected_skill = {"bru-api": "devflow/bru-api-test-generator", "e2e": "devflow/e2e-test-generator", "biz-flow": "devflow/biz-flow-doc-generator"}[domain]
-    if value.get("asset_root") != expected_asset_root or value.get("skill") != expected_skill:
-        raise DevflowError(
-            "GATE_FAILED",
-            f"devflow lock has the wrong skill or asset root: {path}",
-            ExitCode.GATE_FAILED,
-            "Reinitialize the project with the installed devflow version.",
-        )
-    return value
+        raise DevflowError("GATE_FAILED", f"cannot read skill version file {path}: {exc}", ExitCode.GATE_FAILED) from exc
+    return _validate_version_metadata(value, domain, path)

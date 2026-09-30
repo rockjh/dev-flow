@@ -24,6 +24,7 @@ from ..core.schema import (
     get_schema,
     validate_schema,
 )
+from ..core.artifacts import write_version_file
 from .discovery import (
     SHA_RE,
     SKIP_DIRS,
@@ -1017,7 +1018,7 @@ def _workspace_participant_errors(project_root: Path, design: Mapping[str, Any])
     workspace_path = project_root / "analysis" / "workspace.yaml"
     try:
         workspace = yaml.safe_load(workspace_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, yaml.YAMLError):
+    except (OSError, UnicodeError, json.JSONDecodeError, yaml.YAMLError):
         return ["analysis/workspace.yaml is required to map design participants to service topology"]
     if not isinstance(workspace, dict):
         return ["analysis/workspace.yaml is invalid"]
@@ -1289,11 +1290,14 @@ def _generate_artifacts(
         value_resolution = {"version": 1, "source": "support-only", "values": [], "business_expectations": []}
 
     discovery_dir = project_root / "analysis"
-    lock_path = discovery_dir / "version-lock.yaml"
-    try:
-        previous = yaml.safe_load(lock_path.read_text(encoding="utf-8")) if lock_path.is_file() else None
-    except (OSError, UnicodeError, yaml.YAMLError):
-        previous = None
+    lock_path = discovery_dir / "e2e-test-generator-version.json"
+    previous = None
+    previous_error: Exception | None = None
+    if lock_path.is_file():
+        try:
+            previous = json.loads(lock_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            previous_error = exc
     logic = _logic(design)
     plan = _scenario_plan(design, exclusions)
     result = {
@@ -1303,6 +1307,8 @@ def _generate_artifacts(
         "coverage": {"design_rules": len(design.get("rules", [])), "protocol_operations": len(protocols.get("operations", [])), "planned_scenarios": len(plan["scenarios"]), "manual_confirmation": manual, "errors": sorted(set(errors))},
         "artifacts": [],
     }
+    if previous_error is not None:
+        return result, [f"cannot parse {lock_path}: {previous_error}"]
     if errors:
         return result, sorted(set(errors))
 
@@ -1316,16 +1322,16 @@ def _generate_artifacts(
         discovery_dir / "logic.yaml": _render_yaml("保存由 design rule 生成的业务逻辑；不得引用 source 或 observed", logic),
         discovery_dir / "scenario-plan.yaml": _render_yaml("保存设计规则到待生成场景和正式协议调用的双向覆盖计划", plan),
         value_path: _render_yaml("保存执行准备阶段的配置、Fixture 和 support-only 来源", value_resolution),
-        lock_path: _render_yaml("锁定设计、正式协议、源码支持版本和场景数据/清理摘要", lock),
     }
     if exclusions:
         documents[discovery_dir / "exclusions.yaml"] = _render_yaml("保存经用户确认的排除入口、原因、影响范围和人工补测要求", {"exclusions": exclusions})
     _write_artifacts(documents)
+    write_version_file(project_root, "e2e", lock, path=lock_path)
     if scenario_blockers:
         result["materialization_blockers"] = scenario_blockers
     for legacy in (project_root / "source-rules.yaml", discovery_dir / "source-rules.yaml"):
         legacy.unlink(missing_ok=True)
-    result["artifacts"] = [str(path) for path in documents] + [str(path) for path in scenario_files]
+    result["artifacts"] = [str(path) for path in documents] + [str(lock_path)] + [str(path) for path in scenario_files]
     return result, []
 
 
@@ -1373,7 +1379,7 @@ def _generation_artifact_errors(project_root: Path, definition: Mapping[str, Any
         protocol_path,
         discovery_root / "logic.yaml",
         discovery_root / "scenario-plan.yaml",
-        discovery_root / "version-lock.yaml",
+        discovery_root / "e2e-test-generator-version.json",
         project_root / "configuration" / "value-resolution.yaml",
     )
     for path in required_artifacts:
@@ -1382,7 +1388,7 @@ def _generation_artifact_errors(project_root: Path, definition: Mapping[str, Any
 
     def load(path: Path) -> Any:
         try:
-            return yaml.safe_load(path.read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8")) if path.suffix == ".json" else yaml.safe_load(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, yaml.YAMLError) as exc:
             errors.append(_error(path, "generation-artifact-parse", f"生成依据产物无法解析: {exc}"))
             return None
@@ -1395,7 +1401,7 @@ def _generation_artifact_errors(project_root: Path, definition: Mapping[str, Any
         "e2e.logic": discovery_root / "logic.yaml",
         "e2e.scenario-plan": discovery_root / "scenario-plan.yaml",
         "e2e.value-resolution": project_root / "configuration" / "value-resolution.yaml",
-        "e2e.version-lock": discovery_root / "version-lock.yaml",
+        "e2e.version-lock": discovery_root / "e2e-test-generator-version.json",
     }
     for scope, artifact_path in schema_artifacts.items():
         if not artifact_path.is_file():
@@ -1503,7 +1509,7 @@ def _generation_artifact_errors(project_root: Path, definition: Mapping[str, Any
             errors.append(_error(value_path, "value-resolution-source", "value-resolution.yaml 必须是 support-only 且包含 values 列表"))
         if isinstance(values, dict) and values.get("business_expectations"):
             errors.append(_error(value_path, "value-resolution-business", "value-resolution.yaml 不得定义业务预期"))
-    lock_path = discovery_root / "version-lock.yaml"
+    lock_path = discovery_root / "e2e-test-generator-version.json"
     if lock_path.is_file():
         lock = load(lock_path)
         errors.extend(

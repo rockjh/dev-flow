@@ -1955,7 +1955,7 @@ def main() -> int:
                 sys.executable,
                 "-m", "devflow.bru_api_test_generator.check_version_compatibility",
                 str(qa_root.parent),
-                str(args.contracts_root),
+                str(qa_root / "contracts"),
                 "--phase", "before-execute",
             ]
         if args.allow_draft_version:
@@ -2219,7 +2219,8 @@ def main() -> int:
             try:
                 offline_document = load_document(openapi_path)
                 provenance = offline_document.get("provenance") if isinstance(offline_document, dict) else None
-                version_lock = load_data(args.contracts_root / "version-lock.yaml")
+                version_root = args.contracts_root.parent if args.module else args.contracts_root
+                version_lock = load_data(version_root / "bru-api-test-generator-version.json")
                 locked_business = version_lock.get("business", {}) if isinstance(version_lock, dict) and isinstance(version_lock.get("business"), dict) else {}
                 locked_sha = locked_business.get("commit")
                 contract_provenance_unverified = not (

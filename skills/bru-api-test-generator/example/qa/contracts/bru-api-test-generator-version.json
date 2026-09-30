@@ -1,0 +1,15 @@
+{
+  "skill": "devflow/bru-api-test-generator",
+  "skill_version": "1.0.0",
+  "artifact_root": "qa/contracts",
+  "version": 1,
+  "status": "draft",
+  "business": {
+    "repo": "E:\\code\\dev-flow\\skills\\bru-api-test-generator\\example",
+    "commit": "filesystem:80f7c7e883aed2bd",
+    "ref": "filesystem",
+    "source_digest": "80f7c7e883aed2bd99f1fc776e49c0d070dd41fc3f65ab00e304f32ce6121dc8",
+    "initialized_at": "2026-09-29T14:59:05.052625+00:00",
+    "baseline_status": "draft"
+  }
+}
