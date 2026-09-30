@@ -1,0 +1,53 @@
+{
+  "openapi": "3.0.3",
+  "info": {"title": "Task Management API", "version": "1.0.0"},
+  "servers": [{"url": "https://tasks.example.invalid"}],
+  "tags": [{"name": "任务管理", "description": "Tenant-scoped task lifecycle"}],
+  "security": [{"bearerAuth": []}],
+  "paths": {
+    "/tasks": {
+      "post": {
+        "tags": ["任务管理"], "operationId": "createTask", "summary": "Create a task",
+        "parameters": [{"$ref": "#/components/parameters/TenantId"}, {"$ref": "#/components/parameters/IdempotencyKey"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateTask"}}}},
+        "responses": {"201": {"description": "Task accepted", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Task"}}}}, "400": {"description": "Invalid request"}, "401": {"description": "Unauthenticated"}, "403": {"description": "Forbidden"}, "409": {"description": "Idempotency conflict"}, "415": {"description": "Unsupported media type"}}
+      },
+      "get": {
+        "tags": ["任务管理"], "operationId": "listTasks", "summary": "List tasks",
+        "parameters": [{"$ref": "#/components/parameters/TenantId"}, {"$ref": "#/components/parameters/Page"}, {"$ref": "#/components/parameters/PageSize"}, {"$ref": "#/components/parameters/Status"}, {"$ref": "#/components/parameters/Sort"}],
+        "responses": {"200": {"description": "Task page", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TaskPage"}}}}, "400": {"description": "Invalid query"}, "401": {"description": "Unauthenticated"}, "403": {"description": "Forbidden"}}
+      }
+    },
+    "/tasks/{taskId}": {
+      "get": {
+        "tags": ["任务管理"], "operationId": "getTask", "summary": "Get a task",
+        "parameters": [{"$ref": "#/components/parameters/TenantId"}, {"$ref": "#/components/parameters/TaskId"}],
+        "responses": {"200": {"description": "Task", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Task"}}}}, "401": {"description": "Unauthenticated"}, "403": {"description": "Forbidden"}, "404": {"description": "Not found"}}
+      }
+    },
+    "/tasks/{taskId}/cancel": {
+      "post": {
+        "tags": ["任务管理"], "operationId": "cancelTask", "summary": "Request cancellation",
+        "parameters": [{"$ref": "#/components/parameters/TenantId"}, {"$ref": "#/components/parameters/TaskId"}],
+        "responses": {"202": {"description": "Cancellation requested", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Task"}}}}, "401": {"description": "Unauthenticated"}, "403": {"description": "Forbidden"}, "404": {"description": "Not found"}, "409": {"description": "Not cancellable"}}
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}},
+    "parameters": {
+      "TenantId": {"name": "X-Tenant-Id", "in": "header", "required": true, "schema": {"type": "string", "minLength": 1}},
+      "IdempotencyKey": {"name": "Idempotency-Key", "in": "header", "required": true, "schema": {"type": "string", "minLength": 8, "maxLength": 80}},
+      "TaskId": {"name": "taskId", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}},
+      "Page": {"name": "page", "in": "query", "schema": {"type": "integer", "minimum": 1, "default": 1}},
+      "PageSize": {"name": "pageSize", "in": "query", "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}},
+      "Status": {"name": "status", "in": "query", "schema": {"type": "string", "enum": ["queued", "running", "cancelling", "completed", "failed"]}},
+      "Sort": {"name": "sort", "in": "query", "schema": {"type": "string", "enum": ["createdAt.asc", "createdAt.desc"]}}
+    },
+    "schemas": {
+      "CreateTask": {"type": "object", "required": ["taskType", "payload"], "properties": {"taskType": {"type": "string", "enum": ["reindex", "export"]}, "payload": {"type": "object", "minProperties": 1}}},
+      "Task": {"type": "object", "required": ["taskId", "taskType", "status"], "properties": {"taskId": {"type": "string", "format": "uuid"}, "taskType": {"type": "string"}, "status": {"type": "string", "enum": ["queued", "running", "cancelling", "completed", "failed"]}}},
+      "TaskPage": {"type": "object", "required": ["items", "page", "pageSize", "total"], "properties": {"items": {"type": "array", "items": {"$ref": "#/components/schemas/Task"}}, "page": {"type": "integer"}, "pageSize": {"type": "integer"}, "total": {"type": "integer"}}}
+    }
+  }
+}

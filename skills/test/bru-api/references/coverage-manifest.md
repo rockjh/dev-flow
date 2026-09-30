@@ -49,16 +49,15 @@ are review metadata only and never choose ownership:
 
     modules:
       - id: system-user
-        name: 用户管理
-        directory: 用户管理
-        business_scope: 用户账号的创建、查询、修改、删除和状态维护
-        swagger_tags:
-          - 用户管理
+        name: 閻劍鍩涚粻锛勬倞
+        directory: 閻劍鍩涚粻锛勬倞
+        business_scope: 閻劍鍩涚拹锕€褰块惃鍕灡瀵ゆ亽鈧焦鐓＄拠顫偓浣锋叏閺€骞库偓浣稿灩闂勩倕鎷伴悩鑸碘偓浣烘樊閹?        swagger_tags:
+          - 閻劍鍩涚粻锛勬倞
       - id: system-role
-        name: 角色管理
-        directory: 角色管理
+        name: 鐟欐帟澹婄粻锛勬倞
+        directory: 鐟欐帟澹婄粻锛勬倞
         swagger_tags:
-          - 角色管理
+          - 鐟欐帟澹婄粻锛勬倞
 
 If an operation declares more than one Tag, add an explicit `primary_tags`
 mapping keyed by endpoint ID, `operationId`, or `METHOD /path`. An operation
@@ -135,9 +134,7 @@ Cases link back to an endpoint and optionally to design logic. Assertions must i
     module: system-user
     cases:
       - id: USER_CREATE_OK
-        title: 创建用户成功
-        description: 验证合法用户资料能够创建成功并返回新用户信息。
-        endpoint_id: USER_CREATE
+        title: 閸掓稑缂撻悽銊﹀煕閹存劕濮?        description: 妤犲矁鐦夐崥鍫熺《閻劍鍩涚挧鍕灐閼宠棄顧勯崚娑樼紦閹存劕濮涢獮鎯扮箲閸ョ偞鏌婇悽銊﹀煕娣団剝浼呴妴?        endpoint_id: USER_CREATE
         scenarios:
           success: {applicable: true, status: confirmed}
           authentication: {applicable: true, status: inferred}
@@ -145,7 +142,7 @@ Cases link back to an endpoint and optionally to design logic. Assertions must i
           authorization: {applicable: false, status: confirmed, reason: "endpoint has no role or tenant guard"}
         logic_ids:
           - USER_CREATE_NORMAL_LOGIC
-        bru: 01-创建用户成功.bru
+        bru: 01-閸掓稑缂撻悽銊﹀煕閹存劕濮?bru
         expected:
           http_status: 200
           business_code: 0
@@ -156,18 +153,16 @@ Cases link back to an endpoint and optionally to design logic. Assertions must i
             exists: true
 
       - id: USER_CREATE_DUPLICATE
-        title: 用户名重复时创建失败
-        description: 验证重复用户名被业务规则拒绝并返回明确提示。
-        endpoint_id: USER_CREATE
+        title: 閻劍鍩涢崥宥夊櫢婢跺秵妞傞崚娑樼紦婢惰精瑙?        description: 妤犲矁鐦夐柌宥咁槻閻劍鍩涢崥宥堫潶娑撴艾濮熺憴鍕灟閹锋帞绮烽獮鎯扮箲閸ョ偞妲戠涵顔藉絹缁€鎭掆偓?        endpoint_id: USER_CREATE
         logic_ids:
           - USER_CREATE_DUPLICATE_LOGIC
-        bru: 02-用户名重复时创建失败.bru
+        bru: 02-閻劍鍩涢崥宥夊櫢婢跺秵妞傞崚娑樼紦婢惰精瑙?bru
         expected:
           http_status: 200
           business_code: 601
         assertions:
           - path: $.msg
-            contains: "已存在"
+            contains: "瀹告彃鐡ㄩ崷?
 
 Do not create two case records with the same
 `endpoint_id + scenario + request + assertions` fingerprint. A different case
@@ -196,18 +191,14 @@ Example flow-required case block:
 
 ````markdown
 <!-- CASE_START: USER_CREATE_OK -->
-### 创建用户成功
-
-简短描述：验证合法用户资料能够创建成功并返回新用户信息。
-
+### 閸掓稑缂撻悽銊﹀煕閹存劕濮?
+缁犫偓閻厽寮挎潻甯窗妤犲矁鐦夐崥鍫熺《閻劍鍩涚挧鍕灐閼宠棄顧勯崚娑樼紦閹存劕濮涢獮鎯扮箲閸ョ偞鏌婇悽銊﹀煕娣団剝浼呴妴?
 ```mermaid
 sequenceDiagram
-    participant C as 自动化用例
-    participant A as API
+    participant C as 閼奉亜濮╅崠鏍暏娓?    participant A as API
     C->>A: POST /system/user
-    A-->>C: 返回 HTTP 200
-    C->>C: 校验状态码、业务结果和响应字段
-```
+    A-->>C: 鏉╂柨娲?HTTP 200
+    C->>C: 閺嶏繝鐛欓悩鑸碘偓浣虹垳閵嗕椒绗熼崝锛勭波閺嬫粌鎷伴崫宥呯安鐎涙顔?```
 <!-- CASE_END: USER_CREATE_OK -->
 ````
 
@@ -256,7 +247,7 @@ confirmation report and are never converted into business expectations.
         status: confirmed
         source: design
         design_rule_id: USER_CREATE_NORMAL_LOGIC
-        source_symbol: docs/design/users.md:12
+        source_symbol: docs/biz-flow/users.md:12
         condition: username is unique and required data is valid
         expected_http_status: 200
         case_ids:
@@ -265,7 +256,7 @@ confirmation report and are never converted into business expectations.
         status: confirmed
         source: design
         design_rule_id: USER_CREATE_DUPLICATE_LOGIC
-        source_symbol: docs/design/users.md:28
+        source_symbol: docs/biz-flow/users.md:28
         condition: username already exists
         expected_http_status: 200
         expected_business_code: 601
@@ -331,7 +322,7 @@ Generate this file; do not hand-edit it:
       swagger_sha256: ...
     modules:
       - id: system-user
-        name: 用户管理
+        name: 閻劍鍩涚粻锛勬倞
         swagger_tag: sys-user-controller
         endpoints_file: modules/system-user/endpoints.yaml
         parameters_file: modules/system-user/parameters.yaml

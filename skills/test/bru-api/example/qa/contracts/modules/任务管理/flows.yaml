@@ -1,0 +1,4 @@
+version: 1
+module: tasks
+swagger_tag: 任务管理
+flows: []

@@ -1,0 +1,437 @@
+version: 1
+module: tasks
+swagger_tag: 浠诲姟绠＄悊
+logic:
+- id: TASK_CREATE_ACCEPTED
+  status: confirmed
+  source: design
+  endpoint_id: CREATETASK_POST_TASKS
+  openapi_operation: POST /tasks
+  source_symbol: docs/biz-flow/任务管理.md:9
+  condition: authenticated tenant member sends a valid task and a new idempotency
+    key
+  expected_http_status: 201
+  expected_business_code: TASK_ACCEPTED
+  expected_state: queued
+  transitions: []
+  side_effects:
+  - one task record is created for the caller tenant
+  idempotency: []
+  retries: []
+  concurrency: []
+  external_failures: []
+  async: false
+  acceptance_status: null
+  final_status: null
+  design_rule_id: TASK_CREATE_ACCEPTED
+  evidence_level: explicit
+  evidence_quote: "Rule ID: TASK_CREATE_ACCEPTED  \nScenario: success  \nCondition:\
+    \ authenticated tenant member sends a valid task and a new idempotency key  \n\
+    Request: {body: {taskType: export, payload: {format: csv}}}  \nHTTP status: 201\
+    \  \nBusiness code: TASK_ACCEPTED  \nState: queued  \nSide effect: one task record\
+    \ is created for the caller tenant  \nAssert: $.status = queued"
+  derivation: ''
+  business_assertions:
+  - kind: response
+    assertion:
+      path: $.status
+      equals: queued
+    executable: true
+  - kind: response
+    assertion:
+      path: $.code
+      equals: TASK_ACCEPTED
+    executable: true
+  evidence:
+  - source_kind: design
+    file: docs/biz-flow/任务管理.md
+    symbol: TASK_CREATE_ACCEPTED
+    line: 9
+    endpoint_scope:
+    - POST /tasks
+    confidence: high
+    quote: "Rule ID: TASK_CREATE_ACCEPTED  \nScenario: success  \nCondition: authenticated\
+      \ tenant member sends a valid task and a new idempotency key  \nRequest: {body:\
+      \ {taskType: export, payload: {format: csv}}}  \nHTTP status: 201  \nBusiness\
+      \ code: TASK_ACCEPTED  \nState: queued  \nSide effect: one task record is created\
+      \ for the caller tenant  \nAssert: $.status = queued"
+    evidence_level: explicit
+  case_ids:
+  - CREATETASK_POST_TASKS_TASK_CREATE_ACCEPTED
+- id: TASK_CREATE_CONFLICT
+  status: confirmed
+  source: design
+  endpoint_id: CREATETASK_POST_TASKS
+  openapi_operation: POST /tasks
+  source_symbol: docs/biz-flow/任务管理.md:19
+  condition: the same idempotency key is reused with a different body
+  expected_http_status: 409
+  expected_business_code: IDEMPOTENCY_CONFLICT
+  expected_state: null
+  transitions: []
+  side_effects: []
+  idempotency: []
+  retries: []
+  concurrency: []
+  external_failures: []
+  async: false
+  acceptance_status: null
+  final_status: null
+  design_rule_id: TASK_CREATE_CONFLICT
+  evidence_level: explicit
+  evidence_quote: "Rule ID: TASK_CREATE_CONFLICT  \nScenario: business_error  \nCondition:\
+    \ the same idempotency key is reused with a different body  \nHTTP status: 409\
+    \  \nBusiness code: IDEMPOTENCY_CONFLICT  \nAssert: the error envelope identifies\
+    \ the idempotency conflict\nRequest: {headers: {Idempotency-Key: reused}, body:\
+    \ {taskType: reindex, payload: {scope: all}}}  \nAssert: $.code = IDEMPOTENCY_CONFLICT"
+  derivation: ''
+  business_assertions:
+  - kind: response
+    assertion:
+      path: $.code
+      equals: IDEMPOTENCY_CONFLICT
+    executable: true
+  evidence:
+  - source_kind: design
+    file: docs/biz-flow/任务管理.md
+    symbol: TASK_CREATE_CONFLICT
+    line: 19
+    endpoint_scope:
+    - POST /tasks
+    confidence: high
+    quote: "Rule ID: TASK_CREATE_CONFLICT  \nScenario: business_error  \nCondition:\
+      \ the same idempotency key is reused with a different body  \nHTTP status: 409\
+      \  \nBusiness code: IDEMPOTENCY_CONFLICT  \nAssert: the error envelope identifies\
+      \ the idempotency conflict\nRequest: {headers: {Idempotency-Key: reused}, body:\
+      \ {taskType: reindex, payload: {scope: all}}}  \nAssert: $.code = IDEMPOTENCY_CONFLICT"
+    evidence_level: explicit
+  case_ids:
+  - CREATETASK_POST_TASKS_TASK_CREATE_CONFLICT
+- id: TASK_LIST_PAGE
+  status: confirmed
+  source: design
+  endpoint_id: LISTTASKS_GET_TASKS
+  openapi_operation: GET /tasks
+  source_symbol: docs/biz-flow/任务管理.md:30
+  condition: authenticated tenant member requests a valid page and optional filters
+  expected_http_status: 200
+  expected_business_code: 0
+  expected_state: null
+  transitions: []
+  side_effects: []
+  idempotency: []
+  retries: []
+  concurrency: []
+  external_failures: []
+  async: false
+  acceptance_status: null
+  final_status: null
+  design_rule_id: TASK_LIST_PAGE
+  evidence_level: explicit
+  evidence_quote: "Rule ID: TASK_LIST_PAGE  \nScenario: query  \nCondition: authenticated\
+    \ tenant member requests a valid page and optional filters  \nHTTP status: 200\
+    \  \nBusiness code: 0  \nRequest: {query: {page: 1, pageSize: 20, sort: createdAt.desc}}\
+    \  \nAssert: $.page = 1"
+  derivation: ''
+  business_assertions:
+  - kind: response
+    assertion:
+      path: $.code
+      equals: 0
+    executable: true
+  - kind: response
+    assertion:
+      path: $.page
+      equals: 1
+    executable: true
+  evidence:
+  - source_kind: design
+    file: docs/biz-flow/任务管理.md
+    symbol: TASK_LIST_PAGE
+    line: 30
+    endpoint_scope:
+    - GET /tasks
+    confidence: high
+    quote: "Rule ID: TASK_LIST_PAGE  \nScenario: query  \nCondition: authenticated\
+      \ tenant member requests a valid page and optional filters  \nHTTP status: 200\
+      \  \nBusiness code: 0  \nRequest: {query: {page: 1, pageSize: 20, sort: createdAt.desc}}\
+      \  \nAssert: $.page = 1"
+    evidence_level: explicit
+  case_ids:
+  - LISTTASKS_GET_TASKS_TASK_LIST_PAGE
+- id: TASK_LIST_EMPTY
+  status: confirmed
+  source: design
+  endpoint_id: LISTTASKS_GET_TASKS
+  openapi_operation: GET /tasks
+  source_symbol: docs/biz-flow/任务管理.md:38
+  condition: valid filters match no task
+  expected_http_status: 200
+  expected_business_code: 0
+  expected_state: null
+  transitions: []
+  side_effects: []
+  idempotency: []
+  retries: []
+  concurrency: []
+  external_failures: []
+  async: false
+  acceptance_status: null
+  final_status: null
+  design_rule_id: TASK_LIST_EMPTY
+  evidence_level: explicit
+  evidence_quote: "Rule ID: TASK_LIST_EMPTY  \nScenario: query  \nCondition: valid\
+    \ filters match no task  \nHTTP status: 200  \nBusiness code: 0  \nRequest: {query:\
+    \ {page: 1, pageSize: 20, status: completed}}  \nAssert: $.total = 0"
+  derivation: ''
+  business_assertions:
+  - kind: response
+    assertion:
+      path: $.status
+      equals: completed
+    executable: true
+  - kind: response
+    assertion:
+      path: $.code
+      equals: 0
+    executable: true
+  - kind: response
+    assertion:
+      path: $.total
+      equals: 0
+    executable: true
+  evidence:
+  - source_kind: design
+    file: docs/biz-flow/任务管理.md
+    symbol: TASK_LIST_EMPTY
+    line: 38
+    endpoint_scope:
+    - GET /tasks
+    confidence: high
+    quote: "Rule ID: TASK_LIST_EMPTY  \nScenario: query  \nCondition: valid filters\
+      \ match no task  \nHTTP status: 200  \nBusiness code: 0  \nRequest: {query:\
+      \ {page: 1, pageSize: 20, status: completed}}  \nAssert: $.total = 0"
+    evidence_level: explicit
+  case_ids:
+  - LISTTASKS_GET_TASKS_TASK_LIST_EMPTY
+- id: TASK_GET_OWNED
+  status: confirmed
+  source: design
+  endpoint_id: GETTASK_GET_TASKS_TASKID
+  openapi_operation: GET /tasks/{taskId}
+  source_symbol: docs/biz-flow/任务管理.md:48
+  condition: task exists in the caller tenant
+  expected_http_status: 200
+  expected_business_code: 0
+  expected_state: null
+  transitions: []
+  side_effects: []
+  idempotency: []
+  retries: []
+  concurrency: []
+  external_failures: []
+  async: false
+  acceptance_status: null
+  final_status: null
+  design_rule_id: TASK_GET_OWNED
+  evidence_level: explicit
+  evidence_quote: "Rule ID: TASK_GET_OWNED  \nScenario: success  \nCondition: task\
+    \ exists in the caller tenant  \nHTTP status: 200  \nBusiness code: 0  \nAssert:\
+    \ $.taskId = 00000000-0000-4000-8000-000000000001\nRequest: {path_parameters:\
+    \ {taskId: \"00000000-0000-4000-8000-000000000001\"}}  \nAssert: $.status = queued"
+  derivation: ''
+  business_assertions:
+  - kind: response
+    assertion:
+      path: $.status
+      equals: queued
+    executable: true
+  - kind: response
+    assertion:
+      path: $.code
+      equals: 0
+    executable: true
+  - kind: response
+    assertion:
+      path: $.taskId
+      equals: 00000000-0000-4000-8000-000000000001
+    executable: true
+  evidence:
+  - source_kind: design
+    file: docs/biz-flow/任务管理.md
+    symbol: TASK_GET_OWNED
+    line: 48
+    endpoint_scope:
+    - GET /tasks/{taskId}
+    confidence: high
+    quote: "Rule ID: TASK_GET_OWNED  \nScenario: success  \nCondition: task exists\
+      \ in the caller tenant  \nHTTP status: 200  \nBusiness code: 0  \nAssert: $.taskId\
+      \ = 00000000-0000-4000-8000-000000000001\nRequest: {path_parameters: {taskId:\
+      \ \"00000000-0000-4000-8000-000000000001\"}}  \nAssert: $.status = queued"
+    evidence_level: explicit
+  case_ids:
+  - GETTASK_GET_TASKS_TASKID_TASK_GET_OWNED
+- id: TASK_GET_MISSING
+  status: confirmed
+  source: design
+  endpoint_id: GETTASK_GET_TASKS_TASKID
+  openapi_operation: GET /tasks/{taskId}
+  source_symbol: docs/biz-flow/任务管理.md:57
+  condition: task ID does not exist in the caller tenant
+  expected_http_status: 404
+  expected_business_code: TASK_NOT_FOUND
+  expected_state: null
+  transitions: []
+  side_effects: []
+  idempotency: []
+  retries: []
+  concurrency: []
+  external_failures: []
+  async: false
+  acceptance_status: null
+  final_status: null
+  design_rule_id: TASK_GET_MISSING
+  evidence_level: explicit
+  evidence_quote: "Rule ID: TASK_GET_MISSING  \nScenario: business_error  \nCondition:\
+    \ task ID does not exist in the caller tenant  \nHTTP status: 404  \nBusiness\
+    \ code: TASK_NOT_FOUND  \nAssert: the error envelope contains TASK_NOT_FOUND\n\
+    Request: {path_parameters: {taskId: \"00000000-0000-4000-8000-000000000099\"}}\
+    \  \nAssert: $.code = TASK_NOT_FOUND"
+  derivation: ''
+  business_assertions:
+  - kind: response
+    assertion:
+      path: $.code
+      equals: TASK_NOT_FOUND
+    executable: true
+  evidence:
+  - source_kind: design
+    file: docs/biz-flow/任务管理.md
+    symbol: TASK_GET_MISSING
+    line: 57
+    endpoint_scope:
+    - GET /tasks/{taskId}
+    confidence: high
+    quote: "Rule ID: TASK_GET_MISSING  \nScenario: business_error  \nCondition: task\
+      \ ID does not exist in the caller tenant  \nHTTP status: 404  \nBusiness code:\
+      \ TASK_NOT_FOUND  \nAssert: the error envelope contains TASK_NOT_FOUND\nRequest:\
+      \ {path_parameters: {taskId: \"00000000-0000-4000-8000-000000000099\"}}  \n\
+      Assert: $.code = TASK_NOT_FOUND"
+    evidence_level: explicit
+  case_ids:
+  - GETTASK_GET_TASKS_TASKID_TASK_GET_MISSING
+- id: TASK_CANCEL_QUEUED
+  status: confirmed
+  source: design
+  endpoint_id: CANCELTASK_POST_TASKS_TASKID_CANCEL
+  openapi_operation: POST /tasks/{taskId}/cancel
+  source_symbol: docs/biz-flow/任务管理.md:68
+  condition: an owned task is still queued
+  expected_http_status: 202
+  expected_business_code: TASK_CANCEL_REQUESTED
+  expected_state: null
+  transitions:
+  - queued -> cancelling
+  side_effects: []
+  idempotency: []
+  retries: []
+  concurrency: []
+  external_failures: []
+  async: false
+  acceptance_status: null
+  final_status: null
+  design_rule_id: TASK_CANCEL_QUEUED
+  evidence_level: explicit
+  evidence_quote: "Rule ID: TASK_CANCEL_QUEUED  \nScenario: success  \nCondition:\
+    \ an owned task is still queued  \nHTTP status: 202  \nBusiness code: TASK_CANCEL_REQUESTED\
+    \  \nState transition: queued -> cancelling  \nAssert: $.status = cancelling\n\
+    Request: {path_parameters: {taskId: \"00000000-0000-4000-8000-000000000001\"}}\
+    \  \nAssert: $.status = cancelling"
+  derivation: ''
+  business_assertions:
+  - kind: response
+    assertion:
+      path: $.status
+      equals: transition
+    executable: true
+  - kind: response
+    assertion:
+      path: $.status
+      equals: cancelling
+    executable: true
+  - kind: response
+    assertion:
+      path: $.code
+      equals: TASK_CANCEL_REQUESTED
+    executable: true
+  evidence:
+  - source_kind: design
+    file: docs/biz-flow/任务管理.md
+    symbol: TASK_CANCEL_QUEUED
+    line: 68
+    endpoint_scope:
+    - POST /tasks/{taskId}/cancel
+    confidence: high
+    quote: "Rule ID: TASK_CANCEL_QUEUED  \nScenario: success  \nCondition: an owned\
+      \ task is still queued  \nHTTP status: 202  \nBusiness code: TASK_CANCEL_REQUESTED\
+      \  \nState transition: queued -> cancelling  \nAssert: $.status = cancelling\n\
+      Request: {path_parameters: {taskId: \"00000000-0000-4000-8000-000000000001\"\
+      }}  \nAssert: $.status = cancelling"
+    evidence_level: explicit
+  case_ids:
+  - CANCELTASK_POST_TASKS_TASKID_CANCEL_TASK_CANCEL_QUEUED
+- id: TASK_CANCEL_RUNNING
+  status: confirmed
+  source: design
+  endpoint_id: CANCELTASK_POST_TASKS_TASKID_CANCEL
+  openapi_operation: POST /tasks/{taskId}/cancel
+  source_symbol: docs/biz-flow/任务管理.md:78
+  condition: an owned task is already running
+  expected_http_status: 409
+  expected_business_code: TASK_NOT_CANCELLABLE
+  expected_state: null
+  transitions: []
+  side_effects: []
+  idempotency: []
+  retries: []
+  concurrency: []
+  external_failures: []
+  async: false
+  acceptance_status: null
+  final_status: null
+  design_rule_id: TASK_CANCEL_RUNNING
+  evidence_level: explicit
+  evidence_quote: "Rule ID: TASK_CANCEL_RUNNING  \nScenario: business_error  \nCondition:\
+    \ an owned task is already running  \nHTTP status: 409  \nBusiness code: TASK_NOT_CANCELLABLE\
+    \  \nAssert: the error envelope contains TASK_NOT_CANCELLABLE\nRequest: {path_parameters:\
+    \ {taskId: \"00000000-0000-4000-8000-000000000002\"}}  \nAssert: $.code = TASK_NOT_CANCELLABLE\n\
+    \n## Test Flow\n\n## Security decisions\n\n- Missing or invalid `Authorization`\
+    \ returns `401`.\n- An authenticated member cannot read or cancel another tenant's\
+    \ task and gets\n  `403` when the target contract exposes that distinction.\n\
+    - `X-Tenant-Id` is a required application header, not authentication evidence."
+  derivation: ''
+  business_assertions:
+  - kind: response
+    assertion:
+      path: $.code
+      equals: TASK_NOT_CANCELLABLE
+    executable: true
+  evidence:
+  - source_kind: design
+    file: docs/biz-flow/任务管理.md
+    symbol: TASK_CANCEL_RUNNING
+    line: 78
+    endpoint_scope:
+    - POST /tasks/{taskId}/cancel
+    confidence: high
+    quote: "Rule ID: TASK_CANCEL_RUNNING  \nScenario: business_error  \nCondition:\
+      \ an owned task is already running  \nHTTP status: 409  \nBusiness code: TASK_NOT_CANCELLABLE\
+      \  \nAssert: the error envelope contains TASK_NOT_CANCELLABLE\nRequest: {path_parameters:\
+      \ {taskId: \"00000000-0000-4000-8000-000000000002\"}}  \nAssert: $.code = TASK_NOT_CANCELLABLE\n\
+      \n## Test Flow\n\n## Security decisions\n\n- Missing or invalid `Authorization`\
+      \ returns `401`.\n- An authenticated member cannot read or cancel another tenant's\
+      \ task and gets\n  `403` when the target contract exposes that distinction.\n\
+      - `X-Tenant-Id` is a required application header, not authentication evidence."
+    evidence_level: explicit
+  case_ids:
+  - CANCELTASK_POST_TASKS_TASKID_CANCEL_TASK_CANCEL_RUNNING

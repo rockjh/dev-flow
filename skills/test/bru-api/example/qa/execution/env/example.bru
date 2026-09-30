@@ -1,0 +1,12 @@
+vars {
+  base_url: https://tasks.example.invalid
+  auth_token: ${TASK_API_TOKEN}
+  tenant_id: ${TASK_TEST_TENANT}
+  task_id: 00000000-0000-4000-8000-000000000001
+  idempotency_key: ${TASK_IDEMPOTENCY_KEY}
+}
+
+headers {
+  Authorization: Bearer {{auth_token}}
+  X-Tenant-Id: {{tenant_id}}
+}

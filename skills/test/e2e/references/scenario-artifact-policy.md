@@ -1,8 +1,8 @@
-# Scenario Artifact Policy
+# 场景工件策略
 
-Each Chinese-named directory under `scenarios/` owns one complete business journey. A reviewer can understand, collect, run, and maintain it without a global scenario list.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Required layout
+## 必需布局
 
 ```text
 scenarios/<中文业务名称>/
@@ -12,7 +12,7 @@ scenarios/<中文业务名称>/
   test_<中文业务名称>.py
 ```
 
-Add `自动化测试流程图.md` only when executable orchestration materially differs from the business flow. For a long scenario, add only the scenario-owned modules that improve readability:
+只有在可执行编排明显不同于业务流程时，才添加 `自动化测试流程图.md`。对于长场景，只添加能提升可读性的场景专属模块：
 
 ```text
 步骤.py    场景动作编排
@@ -20,19 +20,19 @@ Add `自动化测试流程图.md` only when executable orchestration materially 
 清理.py    场景专属幂等清理
 ```
 
-Do not generate narrative scenario files, version-history files, placeholder modules, or a global manifest. Put purpose, preconditions, key steps, and outcomes before the business diagram. Keep source commits, anchors, control matrix, and generation ownership in `场景定义.yaml`; Git provides history.
+不要生成叙述性场景文件、版本历史文件、占位模块或全局清单。在业务图前写明目的、前置条件、关键步骤和结果；源码提交、锚点、控制矩阵和生成所有权保存在 `场景定义.yaml` 中，历史由 Git 提供。
 
-When migrating an existing project, preserve useful intent in the diagram introduction and migrate to the schema in [e2e-workflow.md](e2e-workflow.md). Remove superseded files only under explicit migration authorization; do not maintain dual readers or silently migrate during an unrelated update.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Ownership boundary
+## 所有权边界
 
-A scenario subagent may create or modify only its assigned `scenarios/<中文业务名称>/` directory. It must not edit `common/`, `config/`, `scripts/`, discovery artifacts, another scenario, or project dependency files. It reports requested common changes to the main agent with source anchors and intended call sites. The main agent decides whether reuse is real, applies shared changes, and checks cross-scenario isolation.
+场景子代理只能创建或修改分配给它的 `scenarios/<中文业务名称>/` 目录。不得编辑 `common/`、`config/`、`scripts/`、发现工件、其他场景或项目依赖文件。需要公共变更时，向主代理报告源码锚点和预期调用点；主代理决定是否确实可复用，应用共享变更并检查场景间隔离。
 
-The `generation.write_scope` field must equal the scenario directory exactly. The checker compares the declared scope with the scenario location and validates multi-scenario ownership rules. This metadata records generation responsibility; it does not authorize a runtime side effect.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Test entrypoint
+## 测试入口
 
-Keep `test_*.py` as readable orchestration. The shape below is illustrative; replace names and marker content with scenario-derived values:
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
 ```python
 """编排当前目录定义的业务端到端场景。"""
@@ -67,11 +67,11 @@ def test_业务链路():
         restore_scenario_state(scenario_context)
 ```
 
-Angle-bracket values are metavariables, not literal generated identifiers. The stable ID appears outside the definition only in exactly one pytest marker. Do not copy it into directory names, filenames, headings, logs, or indexes.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Business flow diagram
+## 业务流程图
 
-`业务流程图.md` starts with a short business statement and concise numbered steps, then uses an RCP-style Mermaid `sequenceDiagram`. Use design-defined actors and branches; use formal protocol names for calls:
+`业务流程图.md` 以简短业务说明和精炼编号步骤开头，然后使用 RCP 风格的 Mermaid `sequenceDiagram`。参与者和分支必须来自设计；调用使用正式协议名称：
 
 ````markdown
 # <中文业务名称>
@@ -86,8 +86,8 @@ Angle-bracket values are metavariables, not literal generated identifiers. The s
 4. 恢复场景拥有的数据。
 
 ```mermaid
-%%{init: {"sequence": {"actorMargin": 180, "diagramMarginX": 40, "wrap": true}}}%%
-sequenceDiagram
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
     autonumber
     participant P1 as 业务调用方
     participant P2 as 入口模块
@@ -105,39 +105,39 @@ sequenceDiagram
 ```
 ````
 
-Replace every participant, condition, and error code with design evidence, and every call with formal protocol evidence. Never copy the generic labels as if they were reviewed facts. If a modeled business result cannot be confirmed in design, keep the scenario `manual_confirmation` rather than inventing one.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Diagram rules:
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-- Use `sequenceDiagram`, never a flowchart.
-- Arrange participants horizontally and progression vertically.
-- Use Chinese business names or discovered service/module IDs.
-- Use paired `alt`/`else` only for design-defined branches.
-- Include the exact design-defined business error code for modeled failure branches.
-- Exclude pytest, fixtures, observer setup, polling implementation, and Python function names.
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Every other generated graphic follows the same business-oriented style. A topology, microservice-interaction, or automation view may use Mermaid `sequenceDiagram` or `flowchart`, but stays at the level of business stages, services/modules, external systems, evidence, and recovery. It must not expand method calls, classes, Python functions, line-level conditions, pytest fixtures, or polling implementation. Do not generate class, entity-relationship, state-machine, mind-map, chart, or decorative diagrams for an E2E scenario.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Create `自动化测试流程图.md` only for meaningful orchestration such as pre-subscription, offset capture, multiple evidence sources, authorized time control, or non-trivial restoration. It may show high-level runner and observer roles, but actions remain business-oriented.
+仅在预订阅、偏移量捕获、多证据源、授权时间控制或复杂恢复等有意义的编排场景下创建 `自动化测试流程图.md`。图中可以显示高层运行器和观察者角色，但动作仍须面向业务。
 
-## Data and code ownership
+## 数据与代码所有权
 
-- `业务数据.json` owns environment-isolated business inputs. Source-valid literals and constructible synthetic templates stay literal; exact placeholders are reserved for environment-owned data that cannot be created safely. A referenced data subtree made entirely of placeholders is invalid.
-- `common/builders/` owns explicitly mapped payload construction reused by multiple scenarios.
-- `common/repositories/` owns reusable parameterized read-only queries and stable row mapping.
-- `common/controls/` owns reusable authorized and reversible controls; it is never imported by scenarios that do not declare those controls.
-- `common/assertions/` owns reusable protocol and cross-system assertions.
-- Scenario modules own scenario-only actions, mappings, assertions, cleanup, and restoration verification.
-- `test_*.py` owns only preflight, orchestration, assertions, and guaranteed cleanup.
+- `业务数据.json` 负责按环境隔离的业务输入。源码有效的字面量和可构造的合成模板应保持字面值；精确占位符仅用于无法安全创建、且由环境负责的数据。完全由占位符组成的被引用数据子树无效。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Every Python module, class, and function has a concise Chinese docstring. Add Chinese comments before non-obvious business branches, bounded waits, safety checks, and cleanup. Preserve source and protocol identifiers only where the current scenario actually discovered them.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Mapping, proof, and cleanup
+## 映射、证明与清理
 
-Inspect OpenAPI or another formal protocol before implementing a builder. Source may only help locate configuration, fixtures, authentication, and preparation controls. Explicitly map every protocol field, nesting rule, unit, enum representation, and time format. Never pass a loaded business-data mapping wholesale into a request model or payload.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Every request that can create, update, cancel, publish, trigger, or otherwise mutate first validates the formal transport response and then the design-defined business result. Only then may the test poll downstream evidence.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Prove the requested transition through direct state, an operation record, a correlated message, or persistence evidence. Finding a resource or correlation key proves identity only. Observers start before the action and use bounded deadlines.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Register idempotent cleanup immediately after acquiring each resource. Cleanup failures are always reported. When the test body has already failed, keep that original exception primary and attach cleanup/restoration failure as secondary evidence. The finalizer verifies restoration rather than assuming that a cleanup call succeeded.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。

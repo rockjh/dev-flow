@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "devflow"
 version = "8.0.0"
-description = "Unified development lifecycle toolkit"
+description = "统一开发生命周期工具包"
 requires-python = ">=3.11"
 dependencies = ["PyYAML>=6", "pytest>=8"]
 

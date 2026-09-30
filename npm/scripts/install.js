@@ -55,7 +55,7 @@ if (require.main === module) {
     install();
   } catch (error) {
     console.error(error.message);
-    console.error("Run `npx dev-flow install` after fixing Python, pipx, or the configured repository.");
+    console.error("修复 Python、pipx 或配置的仓库后，请运行 `npx dev-flow install`。");
     process.exit(1);
   }
 }

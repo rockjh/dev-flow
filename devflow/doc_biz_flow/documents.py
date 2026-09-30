@@ -297,7 +297,12 @@ def _review(entry: EntryPoint) -> EntryReview:
         elif behavior.kind in {"消息", "异步"}:
             participant = "消息/异步系统"
         source = f"{behavior.file}:{behavior.line}"
-        if behavior.kind == "校验" and re.search(r"\bif\b|\bunless\b|\bwhen\b", behavior.statement, re.I):
+        # The source condition is authoritative even when a localized
+        # behavior label was not recovered by discovery.
+        if (
+            (behavior.kind == "校验" or re.search(r"^\s*if\b", behavior.statement, re.I))
+            and re.search(r"\bif\b|\bunless\b|\bwhen\b", behavior.statement, re.I)
+        ):
             steps.append(FlowStep("alt", f"满足前置条件：{behavior.statement}", source, "当前系统"))
             steps.append(FlowStep("action", _business_step(behavior), source, participant))
             steps.append(FlowStep("end", "结束前置条件分支", source, "当前系统"))
@@ -397,7 +402,7 @@ def _diagram(entry: EntryPoint) -> str:
             continue
         label = step.participant
         if step.participant == "数据库":
-            label = f"{entry.module}业务数据库"
+            label = f"{entry.module}数据库表（需确认具体表名）"
         elif step.participant == "缓存/文件":
             label = f"{entry.module}文件或缓存"
         elif step.participant == "消息/异步系统":
@@ -466,6 +471,13 @@ def _validate_mermaid(diagram: str) -> list[str]:
     if "autonumber" not in lines[1:]:
         return ["missing autonumber"]
     aliases = {match.group(1) for line in lines if (match := re.match(r"participant\s+(\w+)\s+as\s+", line))}
+    generic_database_labels = [
+        line for line in lines
+        if line.startswith("participant ")
+        and ("账号库" in line or "会话库" in line or "需确认具体表名" in line)
+    ]
+    if generic_database_labels:
+        return ["database participants must use a confirmed table name and Chinese name"]
     blocks: list[str] = []
     errors: list[str] = []
     for line in lines[1:]:
@@ -521,56 +533,22 @@ def _validate_mermaid(diagram: str) -> list[str]:
     return errors
 
 
-def _legacy_entry_text(entry: EntryPoint) -> str:
-    review = _review(entry)
-    error_lines = [
-        f"- `{error.code}`：{redact(error.condition)} （阶段：{error.phase}；捕获：{error.capture_boundary}；传播：{error.propagation}；后果：{error.consequence}；恢复：{error.recovery}；证据：`{error.file}:{error.line}`）"
-        for error in entry.errors
-    ] or ["- 无"]
-    step_lines = [
-        f"{index}. {step.text}（参与方：{step.participant}；证据：`{step.source}`）"
-        for index, step in enumerate(review.steps, 1)
-    ]
-    evidence_lines = [
-        f"- 行为 **{behavior.kind}**：`{redact(behavior.statement)}`（证据：`{behavior.file}:{behavior.line}`）"
-        for behavior in entry.behaviors
-    ] or ["- 代码中未确认可展开的行为证据。"]
-    return "\n".join([
-        f"<!-- biz-flow-entry: {entry.entry_id} -->",
+def _validate_branch_matrix(section: str) -> list[str]:
+    """Require one entry-local matrix with the stable business columns."""
+    headings = re.findall(r"^###\s+.*分支矩阵\s*$", section, flags=re.MULTILINE)
+    if len(headings) != 1:
+        return ["each entry must contain exactly one branch matrix"]
+    matrix_start = section.find(headings[0])
+    matrix = section[matrix_start:]
+    header = next(
+        (line.strip() for line in matrix.splitlines() if line.strip().startswith("|") and "---" not in line),
         "",
-        f"## {_entry_title(entry)}",
-        "",
-        "### 入口说明",
-        "",
-        f"- 入口类型：`{entry.kind}`；入口处理器：`{entry.handler}`；证据：`{entry.file}:{entry.line}`。",
-        f"- 主归属业务模块：`{_display(entry.module)}`；划分依据：{entry.module_rationale.rstrip('。')}。",
-        f"- 调用方：{entry.caller}。核心输入：{entry.input_summary}。",
-        f"- 业务目的：{review.purpose}",
-        f"- 影响行为的输入：{review.input}",
-        f"- 结果含义：{review.outcome}",
-        f"- 失败、部分成功和结果未知：{review.failure}",
-        f"- 事实评审：`{review.status}`；确认人：{review.confirmed_by or '未确认'}。",
-        "",
-        "### 业务步骤",
-        "",
-        *step_lines,
-        "",
-        "### 业务流程",
-        "",
-        f"主动抛出的带错误码业务异常：`{_codes(entry)}`。",
-        "",
-        *error_lines,
-        "",
-        _diagram(entry),
-        "",
-        "### 源码证据与边界",
-        "",
-        f"- 调用链中可静态确认的函数：{', '.join(f'`{name}`' for name in entry.functions) or '代码中未确认'}。",
-        "- 行为证据：",
-        *evidence_lines,
-        "- 未确认项：未提供远端实现或无法静态关联的调用，不在本地文档中推断其内部顺序、事务或终态。",
-        "",
-    ])
+    )
+    required = ("分支条件", "数据读取与比较", "数据写入与副作用", "响应")
+    errors = [f"branch matrix missing column: {column}" for column in required if column not in header]
+    if "源代码依据" in header or "源代码证据" in matrix:
+        errors.append("branch matrix must not contain source-code evidence prose")
+    return errors
 
 
 def _description(review: EntryReview) -> str:
@@ -600,6 +578,30 @@ def _entry_text(entry: EntryPoint) -> str:
         "",
         _diagram(entry),
         "",
+        _branch_matrix(entry),
+        "",
+    ])
+
+
+def _branch_matrix(entry: EntryPoint) -> str:
+    """Render one compact decision matrix for this entry only."""
+    rows: list[str] = []
+    for error in sorted(entry.errors, key=lambda item: item.line):
+        condition = _mermaid_text(error.condition, 100)
+        code = _mermaid_text(error.code, 60)
+        write = "不写入持久化数据"
+        if error.phase in {"async", "worker"}:
+            write = "不确认持久化结果"
+        rows.append(f"| {code} | {condition} | {write} | {code} |")
+    review = _review(entry)
+    write = "按入口流程写入已确认的持久化对象" if entry.has_persistence else "无持久化写入"
+    rows.append(f"| 成功 | {redact(review.outcome)} | {write} | 成功 |")
+    return "\n".join([
+        "### 分支矩阵",
+        "",
+        "| 分支条件 | 数据读取与比较 | 数据写入与副作用 | 响应 |",
+        "| --- | --- | --- | --- |",
+        *rows,
     ])
 
 
@@ -1616,6 +1618,10 @@ def _markdown_coverage(
             section = sections.get(entry_id, "")
             if not section or identifier not in section:
                 missing_entries.append(entry_id)
+            if "源代码证据" in section:
+                fact_mismatches.append(f"{entry_id}:source-evidence-section-not-allowed")
+            for matrix_error in _validate_branch_matrix(section):
+                fact_mismatches.append(f"{entry_id}:{matrix_error}")
             if section and section.count("sequenceDiagram") != 1:
                 diagram_mismatches.append(f"{entry_id}:mermaid:expected-one-diagram")
             review = entry.get("review", {})
@@ -1636,7 +1642,8 @@ def _markdown_coverage(
                         fact_mismatches.append(f"{entry_id}:summary-shape")
                     if any(len(point) > 50 for point in business_points):
                         fact_mismatches.append(f"{entry_id}:business-description-over-50")
-                    if section[diagram_match.end():].strip():
+                    trailing = section[diagram_match.end():].strip()
+                    if trailing and not re.match(r"^###\s+.*分支矩阵\s*(?:\n|$)", trailing):
                         fact_mismatches.append(f"{entry_id}:content-after-diagram")
                 if diagram:
                     diagram_mismatches.extend(
@@ -1708,19 +1715,25 @@ def _markdown_coverage(
                             diagram_mismatches.append(f"{entry_id}:mermaid:error-code:{code}")
                         if consequence and consequence not in diagram:
                             diagram_mismatches.append(f"{entry_id}:mermaid:error-consequence:{code}")
-                        condition = str(redact(error.get("condition", ""))).replace("\n", " ")[:120]
+                        condition = _mermaid_text(error.get("condition", ""), 100)
                         if condition and condition not in diagram:
                             diagram_mismatches.append(f"{entry_id}:mermaid:error-condition:{code}")
                 else:
                     diagram_mismatches.append(f"{entry_id}:missing-mermaid")
                 shape = re.sub(r"```mermaid\s*.*?```", "", section, flags=re.S)
                 shape_lines = [line.strip() for line in shape.splitlines() if line.strip()]
-                if any(line.startswith("###") for line in shape_lines):
+                extra_sections = [
+                    line for line in shape_lines
+                    if line.startswith("###") and "分支矩阵" not in line
+                ]
+                if extra_sections:
                     fact_mismatches.append(f"{entry_id}:extra-markdown-section")
                 for step in steps:
                     if not isinstance(step, dict):
                         continue
-                    expected_text = str(redact(step.get("text", ""))).replace("\n", " ")[:120]
+                    if step.get("kind") == "end":
+                        continue
+                    expected_text = _mermaid_text(step.get("text", ""), 120)
                     if expected_text and expected_text not in diagram:
                         diagram_mismatches.append(f"{entry_id}:step:{expected_text}")
             for code in entry.get("error_codes", []):

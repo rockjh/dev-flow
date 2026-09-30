@@ -1,9 +1,9 @@
-# Incremental Generation
+# 婢х偤鍣洪悽鐔稿灇
 
 Run:
 
 ```bash
-devflow bru-api generate --openapi qa/contracts/openapi.json --design-root docs/design --incremental
+devflow bru-api generate --openapi qa/contracts/openapi.json --incremental
 ```
 
 `qa/contracts/generation-state.yaml` records the OpenAPI and design-document SHAs, stable endpoint
@@ -25,7 +25,7 @@ The generator follows these rules:
 
 The stable endpoint ID and stable English case ID are identities; business
 titles and filenames are presentation. A title change must reconcile
-`cases.yaml`, `<NN>-<中文标题>.bru`, `meta.name` mapping, and `CASES.md` without
+`cases.yaml`, `<NN>-<娑擃厽鏋冮弽鍥暯>.bru`, `meta.name` mapping, and `CASES.md` without
 changing the stable ID.
 
 Do not clear `manual_review` automatically. A human must compare the changed

@@ -1,0 +1,20 @@
+meta {
+  name: get-task-owned
+  type: http
+}
+
+get {
+  url: {{base_url}}/tasks/{{task_id}}
+}
+
+headers {
+  Authorization: Bearer {{auth_token}}
+  X-Tenant-Id: {{tenant_id}}
+}
+
+tests {
+  test("返回所属任务", function() {
+    expect(res.status).to.equal(200);
+    expect(res.body.taskId).to.equal("00000000-0000-4000-8000-000000000001");
+  });
+}

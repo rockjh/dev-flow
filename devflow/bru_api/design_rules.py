@@ -1,4 +1,4 @@
-"""Design-document discovery, parsing, and OpenAPI coverage mapping.
+﻿"""Design-document discovery, parsing, and OpenAPI coverage mapping.
 
 Design documents remain the only business authority.  The parser keeps explicit
 markers when present, and otherwise extracts conservative semantic candidates
@@ -174,12 +174,7 @@ def discover(
         candidates = list(dict.fromkeys([*hinted_roots, *(path.parent for path in hinted_files)]))
         return DesignDiscovery(tuple(dict.fromkeys(files)), tuple(candidates), tuple(hints))
 
-    roots = [
-        project_root / "docs" / "design",
-        project_root / "docs" / "详细设计",
-        project_root / "design",
-        project_root / "doc" / "design",
-    ]
+    roots = [project_root / "docs" / "biz-flow"]
     existing = [root for root in roots if root.is_dir() and _markdown_files(root)]
     files = [file for root in existing for file in _markdown_files(root)]
     return DesignDiscovery(tuple(dict.fromkeys(files)), tuple(existing), tuple())

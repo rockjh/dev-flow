@@ -15,6 +15,18 @@ from .redaction import redact
 LOCK_NAME = ".devflow.lock.json"
 
 
+def lock_name(domain: str) -> str:
+    """Return the project lock filename for a domain."""
+    return "biz-flow.json" if domain == "biz-flow" else LOCK_NAME
+
+
+def lock_root(project_root: Path, domain: str) -> Path:
+    """返回项目锁所属领域目录。"""
+    if domain == "biz-flow":
+        return project_root / "docs" / "biz-flow"
+    return project_root
+
+
 def state_root() -> Path:
     return Path.home() / ".local" / "state" / "devflow" / "artifacts"
 
@@ -40,7 +52,7 @@ def write_json(path: Path, value: Any) -> Path:
 
 def write_lock(project_root: Path, *, tool_version: str, domain: str, schema_version: str) -> Path:
     asset_root = {"bru-api": "qa", "e2e": "test/e2e", "biz-flow": "docs/biz-flow"}[domain]
-    return write_json(project_root / LOCK_NAME, {
+    return write_json(lock_root(project_root, domain) / lock_name(domain), {
         "tool": "devflow",
         "tool_version": tool_version,
         "domain": domain,
@@ -57,7 +69,7 @@ def require_lock(
     domain: str,
     schema_version: str,
 ) -> dict[str, Any]:
-    path = project_root / LOCK_NAME
+    path = lock_root(project_root, domain) / lock_name(domain)
     if not path.is_file():
         raise DevflowError(
             "GATE_FAILED",

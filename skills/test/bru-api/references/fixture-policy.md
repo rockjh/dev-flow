@@ -14,22 +14,22 @@ Keep generated E2E configuration separate from application-source configuration:
 - `discovery/workspace.yaml` records where application values originate and how they are overridden.
 - `config/config.yaml` selects one E2E environment and holds only shared technical defaults and default-off safety switches.
 - `config/environments/<environment>.yaml` maps discovered services/components to environment-specific addresses, authentication references, headers, TLS, and connection references.
-- `业务数据.json` contains environment-isolated scenario inputs only.
+- `涓氬姟鏁版嵁.json` contains environment-isolated scenario inputs only.
 
 Generated E2E keys such as `active_environment` are part of this skill's schema. Application ports, context paths, source configuration keys, profile names, endpoints, topics, table names, and authentication fields must be discovered; never copy a concrete example from this skill.
 
 `config/config.yaml` has this minimum shape:
 
 ```yaml
-# 用途：选择 E2E 环境并定义公共技术默认值；禁止保存地址、凭据或业务数据。
+# 鐢ㄩ€旓細閫夋嫨 E2E 鐜骞跺畾涔夊叕鍏辨妧鏈粯璁ゅ€硷紱绂佹淇濆瓨鍦板潃銆佸嚟鎹垨涓氬姟鏁版嵁銆?
 active_environment: <selected-test-environment>
 
-# 公共默认值：环境文件只能覆盖对应叶子，不能开启默认关闭的危险能力。
+# 鍏叡榛樿鍊硷細鐜鏂囦欢鍙兘瑕嗙洊瀵瑰簲鍙跺瓙锛屼笉鑳藉紑鍚粯璁ゅ叧闂殑鍗遍櫓鑳藉姏銆?
 defaults:
   polling:
-    # 轮询间隔，单位为秒。
+    # 杞闂撮殧锛屽崟浣嶄负绉掋€?
     interval_seconds: 1
-    # 单次有限等待上限，单位为秒。
+    # 鍗曟鏈夐檺绛夊緟涓婇檺锛屽崟浣嶄负绉掋€?
     timeout_seconds: 60
   safety:
     database_control_enabled: false
@@ -44,7 +44,7 @@ Runtime authorization variables are process-only. Database control uses `E2E_ENA
 Each environment file contains only discovered entries. Conceptually:
 
 ```yaml
-# 用途：将已发现的服务和组件映射到当前测试环境；敏感值只允许使用精确占位符。
+# 鐢ㄩ€旓細灏嗗凡鍙戠幇鐨勬湇鍔″拰缁勪欢鏄犲皠鍒板綋鍓嶆祴璇曠幆澧冿紱鏁忔劅鍊煎彧鍏佽浣跨敤绮剧‘鍗犱綅绗︺€?
 services:
   <discovered-service-id>:
     base_url: ${<ENVIRONMENT_SPECIFIC_BASE_URL_REFERENCE>}
@@ -75,7 +75,7 @@ Use one deterministic chain:
 2. Require exactly one matching environment file; never fall back to another environment.
 3. Recursively deep-merge E2E defaults with that environment mapping. Mapping values merge by key; a non-mapping replaces only its corresponding leaf.
 4. Ensure every referenced service/component exists in `discovery/workspace.yaml` and the scenario contract.
-5. Load the scenario's `业务数据.json`, select its exact active-environment root, and resolve `data_ref` only inside that object.
+5. Load the scenario's `涓氬姟鏁版嵁.json`, select its exact active-environment root, and resolve `data_ref` only inside that object.
 6. During runtime preflight, recursively resolve only strings that exactly match `${ENV_NAME}`. Never interpolate partial strings.
 
 Business data is not configuration. Inspect the formal request models, validators, enums, length/range rules, and design-defined downstream correlation use before choosing each input:
@@ -103,7 +103,7 @@ Generate formal-protocol clients and design-traced assertions; use source/config
 
 `python -m pytest --collect-only` must succeed with no endpoint, credential, broker, database, cache, scheduler, or environment test value available.
 
-## Runtime preflight
+## 杩愯鏃堕妫€
 
 Resolve and validate runtime values immediately before the first runtime action. Preflight is scenario-aware and:
 
@@ -122,7 +122,7 @@ Never call `pytest.skip`, `xfail`, `importorskip`, `unittest.SkipTest`, their al
 
 Every scenario test records exactly one runtime status event for each contract step. `environment_missing` is only for inaccessible required runtime configuration, `authorization_missing` for absent per-run permission, `control_gap` for a fully explored control gap, `product_gap` for missing design-defined product behavior, and `runtime_failure` for a call or observation that ran but did not meet the contract. Business mismatches, absent downstream effects, wrong transitions, and successful transports with wrong state are never environment blockers.
 
-## Isolation and cleanup
+## 闅旂涓庢竻鐞?
 
 - Never fall back to a developer URL or implicit shared environment.
 - Derive namespaces, consumer groups, client IDs, cache/file prefixes, and other permitted identifiers from unique run and scenario IDs.
@@ -137,7 +137,7 @@ Every scenario test records exactly one runtime status event for each contract s
 
 The main agent compares isolation resources across all scenarios before runtime. A collision blocks execution until identifiers are unique; declaring the same lock name does not bypass the gate.
 
-## Request construction and signing
+## 璇锋眰鏋勯€犱笌绛惧悕
 
 Transport helpers expose per-request headers and preserve raw request bytes when source contracts require them. Merge ordinary headers according to the discovered application/client precedence; do not assume a universal order.
 

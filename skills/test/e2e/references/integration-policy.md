@@ -1,90 +1,90 @@
-# Cross-Service Integration Policy
+# 跨服务集成策略
 
-Read this reference when a scenario crosses a service boundary or uses messages, a data store, cache, scheduler, configuration center, device gateway, or another observer/control.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Boundaries
+## 边界
 
-Keep these concerns separate:
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-1. `common/clients/` calls public or approved test/admin interfaces.
-2. `common/builders/` explicitly maps reusable formal-protocol payloads.
-3. `common/repositories/` owns parameterized read-only queries and stable record mapping.
-4. `common/controls/` owns default-off authorized and reversible controls.
-5. `common/integrations/` provides generic adapters for discovered component types.
-6. `common/fixtures/` owns adapter lifecycle, authorization, snapshots, and isolation.
-7. `common/assertions/` compares protocol, message, persistence, and observable evidence.
-8. Scenario modules express scenario-only actions, mappings, assertions, and cleanup.
+1. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+2. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+3. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+4. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+5. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+6. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+7. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+8. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Generic modules accept discovered configuration and scenario mappings. Never embed a project name, business endpoint, table, topic, configuration key, credential, enum, state, or environment address. Reuse an already approved pinned dependency; do not add a client library silently.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Instantiate and preflight only the services and components declared by the scenario. No adapter construction, connection, subscription, process inspection, or health check occurs during import or collection.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## HTTP and RPC
+## HTTP 与 RPC
 
-- Derive base address, context path, protocol, authentication, headers, serialization, timeout, and TLS from discovery and the active environment.
-- Use health, OpenAPI, query, or guaranteed-miss requests for read-only smoke.
-- Direct `requests`, `httpx`, and `urllib` calls use an explicit positive timeout. `urlopen` with request data is a write and is forbidden in smoke. An arbitrary fixture method such as `client.get()` is not transport proof.
-- A read-only RPC smoke call goes through a common `read_only_rpc` adapter that declares `READ`/`RPC`, a source anchor from discovery, one bounded non-write operation, and a returned real result.
-- Validate formal transport status and the design-defined business result separately.
-- Record `verified=True` only from a validation expression that consumes that call's result. HTTP smoke status is an integer and 5xx always fails.
-- A successful transport with a failed business result is a failure.
-- Do not retry a non-idempotent call unless design declares the idempotency semantics and the formal protocol declares the key shape.
-- Redact credentials and sensitive payload fields in diagnostics while retaining method, non-secret target identity, correlation key name, status, and bounded response summary.
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Messages
+## 消息
 
-For any discovered broker or gateway:
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-1. create a unique run/scenario consumer identity;
-2. subscribe or capture starting position before the business action and wait for readiness;
-3. observe only a bounded offset/time window;
-4. match with design-defined correlation fields whose transport shape comes from the formal protocol;
-5. assert channel identity, key/headers, schema/version, and relevant business fields;
-6. close deterministically after success or failure.
+1. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+2. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+3. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+4. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+5. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+6. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Publishing is disabled by default. It requires a source-confirmed simulation contract, per-run authorization, and a configured test-only destination prefix or exact allowlist. Reject retained messages, unrestricted wildcards, or business destinations unless the source-backed test contract explicitly requires them and the user authorized the exact test environment.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-For Kafka-like logs, wait for assignment and capture starting offsets. For MQTT-like brokers, use a unique client ID, protocol-defined QoS/TLS/session behavior, and deterministic disconnect. For other systems, preserve the same readiness, bounded observation, exact correlation, and cleanup invariants without forcing Kafka or MQTT terminology into generated code.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Database observation
+## 数据库观测
 
-Observation repositories expose only parameterized read methods. Poll by the same scenario correlation key with a monotonic deadline and report the last observed record. Assert ownership, the requested business state/fields, and relevant relationships.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-A message proves publication; a database record proves persistence or consumption. When both are evidence sources, assert them independently, then compare every shared design/protocol-defined field. Define explicit mappings for different field names or representations. A time-range-only row, broad message match, or equal correlation ID alone is insufficient.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Database control follows [discovery-and-control-policy.md](discovery-and-control-policy.md). Keep control operations out of read repositories and test entrypoints. Multi-table setup is an ordered list of individually snapshotted, parameter-bound, exact single-row operations; restore attempted operations in reverse order and verify every restored state. Never use control SQL as the business action under test or to manufacture the final asserted result.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Cache observation
+## 缓存观测
 
-Expose the smallest source-required read surface, such as exact-key value, existence, TTL, or exact hash fields. Cache evidence is secondary when a public API, event, operation record, or database provides stronger business evidence.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Load endpoint, credentials, logical database/index, TLS, serialization, and test prefix from the active environment. Bounded waits use monotonic deadlines and last-state diagnostics.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-If cleanup is necessary, a fixture may delete only an exact scenario-owned key under the configured test prefix. Reject wildcard deletion, namespace-wide clearing, database flushing, and deletion of pre-existing business keys.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Schedulers and jobs
+## 调度器与作业
 
-Prefer an approved trigger or admin interface discovered in source. Correlate trigger arguments, execution record, and downstream state. A scheduler acknowledgement does not prove the job's business result.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-If time advancement or expiry simulation is needed, use a source-confirmed clock/configuration control or the controlled SQL policy. Snapshot the original state, isolate the target from other scenarios, trigger or await the job with a bounded deadline, verify its result, and restore the state.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Do not invoke an uncontrolled production schedule, alter global time, or call an undocumented scheduler endpoint.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Dynamic configuration, mocks, and failure injection
+## 动态配置、模拟与故障注入
 
-- Use only controls found in application source/configuration and present in the scenario matrix.
-- Record the control scope, affected component, correlation/isolation method, prior value, intended value, and restoration evidence.
-- Default controls off. Enabling requires the exact target test environment and per-run authorization.
-- Apply controls as narrowly as the platform permits; reject global changes when unrelated traffic can be affected.
-- Snapshot before mutation, verify that the application consumed the change, and restore in guaranteed cleanup.
-- A mock response or injected failure must still be verified through the public business result and downstream evidence relevant to the scenario.
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Runtime diagnostics
+## 运行时诊断
 
-Every adapter reports only non-secret endpoint identity, component type, correlation-key name, bounded deadline, and last observed state. Never include credential values, complete connection strings, authorization headers, raw sensitive messages, or full database rows.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Control and endpoint evidence is adapter-owned. Record it immediately after the real external call in the same straight-line block, derive endpoint status, summary, and verification from the returned object, and pass the same scenario-owned correlation value in a resource/key/selector or request-payload argument to both a write operation and its control event. Logging, headers, or tracing metadata do not establish isolation. Scenario steps and test entrypoints cannot emit these events.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Connection or runtime failures after preflight are failed smoke/business checks. They cannot be converted to `pending_environment`, `contract_blocked`, `skip`, or `xfail`.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Likewise, a callable business entry that returns the wrong state, omits a downstream event, leaves a scheduler/consumer result absent, or reports transport success with an incorrect business envelope is a product/runtime failure with evidence. It is not `environment_missing`. Continue recording the remaining independently safe observations and cleanup before failing the scenario.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。

@@ -26,6 +26,10 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertIn("scripts/", npm["files"])
         self.assertIn("dist/", npm["files"])
 
+    def test_npm_payload_excludes_shared_support_directories(self) -> None:
+        shared = ROOT / "skills" / "_shared"
+        self.assertFalse(shared.is_dir() and any(path.is_file() for path in shared.rglob("*")))
+
     @unittest.skipUnless(shutil.which("node"), "node is required to verify the npm runtime")
     def test_npm_runtime_resolves_the_pipx_executable_without_path_lookup(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -390,11 +390,11 @@ def _review_authorization_errors(
     config_path = qa_root / "execution" / "config.yaml"
     if config_path.is_file():
         try:
-            from .execution_config import environment_file, load_bruno_environment, load_execution_config
+            from .execution_config import environment_file, load_bruno_environment_document, load_execution_config
 
             config = load_execution_config(config_path)
             environment_path = environment_file(config_path, config)
-            for name, value in load_bruno_environment(environment_path).items():
+            for name, value in load_bruno_environment_document(environment_path)["vars"].items():
                 if str(value).strip():
                     available.setdefault(_normalized_field(name), []).append((set(), f"local environment variable {name}"))
         except (OSError, ValueError, TypeError):
@@ -787,10 +787,10 @@ def _environment_variables(qa_root: Path) -> dict[str, str]:
     if not config_path.is_file():
         return {}
     try:
-        from .execution_config import environment_file, load_bruno_environment, load_execution_config
+        from .execution_config import environment_file, load_bruno_environment_document, load_execution_config
 
         config = load_execution_config(config_path)
-        return load_bruno_environment(environment_file(config_path, config))
+        return load_bruno_environment_document(environment_file(config_path, config))["vars"]
     except (OSError, ValueError, TypeError):
         return {}
 

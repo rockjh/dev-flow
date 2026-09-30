@@ -56,6 +56,12 @@ CHINESE_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 BUSINESS_FILE_RE = re.compile(r"^\d{2,}-.+\.bru$", re.IGNORECASE)
 
 
+def chinese_display(value: object, fallback: str) -> str:
+    """返回包含中文的面向用户文本；机器标识不作为展示文案。"""
+    text = str(value or "").strip()
+    return text if CHINESE_RE.search(text) else fallback
+
+
 def safe_display_stem(value: str) -> str:
     return re.sub(r"[\\/\x00-\x1f<>:\"|?*]", "", str(value)).strip(" .")
 
@@ -436,12 +442,15 @@ def render_case(
     request = case.get("request") if isinstance(case.get("request"), dict) else {}
     method = str(endpoint.get("method", "GET")).lower()
     base_env = "baseUrl"
-    title = str(case.get("title") or case.get("display_name") or case.get("name") or endpoint.get("summary") or case.get("id"))
-    description = str(
+    title = chinese_display(
+        case.get("title") or case.get("display_name") or case.get("name") or endpoint.get("summary"),
+        f"业务用例：{case.get('id') or '未命名'}",
+    )
+    description = chinese_display(str(
         case.get("description")
         or case.get("summary")
         or f"验证“{title}”场景的请求、响应和业务断言。"
-    )
+    ), f"验证“{title}”场景的请求、响应和业务断言。")
     body = request.get("body")
     if "content_type" not in request:
         inferred_content_type = endpoint_content_type(endpoint)
@@ -987,8 +996,8 @@ def materialize(
                         f"case {case_id} has invalid business Bruno filename {configured!r}; "
                         "expected its stable sequence and sanitized Chinese case.title"
                     )
-                if "environments" in {part.lower() for part in relative.parts[:-1]}:
-                    raise SystemExit(f"case {case_id} cannot use an environments path: {configured}")
+                if "env" in {part.lower() for part in relative.parts[:-1]}:
+                    raise SystemExit(f"case {case_id} cannot use an env path: {configured}")
             elif case_id in existing_by_id:
                 relative = existing_by_id[case_id].relative_to(module_bru)
                 if relative.parent != Path(".") or not valid_business_file(relative, case_id, str(case.get("title", ""))):
@@ -1010,12 +1019,10 @@ def materialize(
             targets[target] = case_id
             planned.append((case, endpoint, target))
             desired_mapping = relative.as_posix()
-            if case.get("bru") != desired_mapping or "bru_file" in case or "file_name" in case:
-                if "bru_file" in case or "file_name" in case:
-                    print(f"WARNING: case {case_id} uses legacy bru_file/file_name; migrated to bru", file=sys.stderr)
+            if "bru_file" in case or "file_name" in case:
+                raise SystemExit(f"case {case_id} uses unsupported legacy bru_file/file_name; use bru")
+            if case.get("bru") != desired_mapping:
                 case["bru"] = desired_mapping
-                case.pop("bru_file", None)
-                case.pop("file_name", None)
                 mappings_changed = True
 
         if mappings_changed:

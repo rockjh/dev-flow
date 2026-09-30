@@ -1,7 +1,6 @@
-# API Case Matrix
+# API 鐢ㄤ緥鐭╅樀
 
-Generate protocol decisions from OpenAPI and business decisions from reviewed design rules. Source and probe evidence can only establish execution support or report implementation drift. Every endpoint has all eight categories. Applicable decisions link dedicated cases; confirmed false decisions contain a concrete reason.
-
+鏍规嵁 OpenAPI 鐢熸垚鍗忚鍐崇瓥锛屾牴鎹凡瀹℃牳鐨勮璁¤鍒欑敓鎴愪笟鍔″喅绛栥€傛簮浠ｇ爜鍜屾帰閽堣瘉鎹彧鑳界敤浜庣‘璁ゆ墽琛屾敮鎸佹垨鎶ュ憡瀹炵幇鍋忓樊銆傛瘡涓鐐归兘蹇呴』瑕嗙洊鍏釜绫诲埆銆傞€傜敤鍐崇瓥闇€鍏宠仈涓撶敤鐢ㄤ緥锛涘凡纭涓嶉€傜敤鐨勫喅绛栧繀椤荤粰鍑哄叿浣撳師鍥犮€?
 | Category | Evidence | Required coverage |
 | --- | --- | --- |
 | `success` | reviewed design rule for every reachable operation | at least one distinct success case |
@@ -13,18 +12,14 @@ Generate protocol decisions from OpenAPI and business decisions from reviewed de
 | `business_error` | design rules and documented business error semantics | one case per documented business result |
 | `safety` | design rules for idempotency, concurrency, repeat submission | declared design behavior |
 
-## Coverage Profiles
+## 瑕嗙洊閰嶇疆
 
-`contract-draft` generates only cases whose request shape and expected transport behavior are directly provable from OpenAPI plus the project constraint library. Any `manual_confirmation` is a generation blocker; resolve the design ambiguity instead of executing unrelated business cases from a partial model.
+`contract-draft` 浠呯敓鎴愬彲鐢?OpenAPI 鍜岄」鐩害鏉熷簱鐩存帴璇佹槑璇锋眰褰㈢姸鍙婇鏈熶紶杈撹涓虹殑鐢ㄤ緥銆傚嚭鐜?`manual_confirmation` 鍗抽樆鏂敓鎴愶紱搴斿厛瑙ｅ喅璁捐姝т箟锛屼笉寰楀熀浜庝笉瀹屾暣妯″瀷鎵ц鏃犲叧涓氬姟鐢ㄤ緥銆?
+`full-matrix` 鐢熸垚 OpenAPI 鍗忚绾︽潫鎴栧凡瀹℃牳璁捐瑙勫垯鏀寔鐨勫叏閮ㄩ€傜敤鍦烘櫙銆傚畨鍏ㄩ厤缃敤浜庡噯澶囪姹傦紝鎺㈤拡璇佹嵁鐢ㄤ簬鎶ュ憡鍋忓樊銆傜湡瀹炲満鏅嫢缂哄皯瓒冲璁捐璇佹嵁鏉ュ畾涔夌簿纭笟鍔＄敤渚嬶紝浠嶅睘浜庨樆鏂€х己鍙ｃ€?
+`verified` 涓嶆槸鐢熸垚閰嶇疆銆傚彧鏈夐粯璁ょ殑鍏ㄦā鍧楄寖鍥撮€氳繃涓ユ牸瀵硅处鍜屾墽琛屽悗鎵嶅彲浣跨敤銆?
+## 璁よ瘉涓庡繀闇€璇锋眰澶?
 
-`full-matrix` generates every applicable scenario supported by OpenAPI protocol constraints or reviewed design rules. Security configuration prepares requests; probe evidence reports drift. A true scenario without enough design evidence for a precise business case remains a blocking gap.
-
-`verified` is not a generation profile. It is available only after the default all-module scope passes strict reconciliation and execution.
-
-## Authentication And Required Headers
-
-Do not infer authentication or authorization from an `/admin` path. Distinguish these profiles:
-
+涓嶈鏍规嵁 `/admin` 璺緞鎺ㄦ柇璁よ瘉鎴栨巿鏉冦€傝鍖哄垎浠ヤ笅閰嶇疆锛?
 ```yaml
 required-tenant-context:
   type: required-header
@@ -41,12 +36,9 @@ auth-token:
     invalid_token_status: 401
 ```
 
-Run one representative missing-token probe and one invalid-token probe only to report implementation drift. Preserve the actual HTTP status and response envelope in evidence; do not copy observed values into expectations unless the reviewed design declares them.
-
-A required application Header is not automatically authentication evidence. Use OpenAPI and execution configuration to prepare the request, and use reviewed design rules for authentication behavior; record confirmed non-applicability separately.
-
-Authorization behavior requires a reviewed design rule. OpenAPI security extensions and `security-profile.yaml` can prepare credentials, while source annotations and probes can report drift. Otherwise use a confirmed false decision such as:
-
+浠呰繍琛屼竴娆′唬琛ㄦ€х殑缂哄皯浠ょ墝鎺㈤拡鍜屼竴娆℃棤鏁堜护鐗屾帰閽堬紝鐢ㄤ簬鎶ュ憡瀹炵幇鍋忓樊銆傚湪璇佹嵁涓繚鐣欏疄闄?HTTP 鐘舵€佸拰鍝嶅簲淇″皝锛涢櫎闈炲凡瀹℃牳璁捐鏄庣‘澹版槑锛屽惁鍒欎笉寰楀皢瑙傛祴鍊煎鍒朵负棰勬湡鍊笺€?
+蹇呴渶鐨勫簲鐢ㄨ姹傚ご涓嶈嚜鍔ㄦ瀯鎴愯璇佽瘉鎹€備娇鐢?OpenAPI 鍜屾墽琛岄厤缃噯澶囪姹傦紝骞朵緷鎹凡瀹℃牳璁捐瑙勫垯纭畾璁よ瘉琛屼负锛涘皢宸茬‘璁ょ殑涓嶉€傜敤鎯呭喌鍗曠嫭璁板綍銆?
+鎺堟潈琛屼负蹇呴』鏈夊凡瀹℃牳鐨勮璁¤鍒欍€侽penAPI 瀹夊叏鎵╁睍鍜?`security-profile.yaml` 鍙敤浜庡噯澶囧嚟鎹紝婧愪唬鐮佹敞瑙ｅ拰鎺㈤拡鍙敤浜庢姤鍛婂亸宸€傚惁鍒欏簲浣跨敤濡備笅宸茬‘璁ょ殑涓嶉€傜敤鍐崇瓥锛?
 ```yaml
 authorization:
   applicable: false
@@ -54,9 +46,9 @@ authorization:
   reason: reviewed design declares no authorization branch for this operation
 ```
 
-## Validation
+## 楠岃瘉
 
-Generate distinct cases for applicable constraints:
+涓洪€傜敤鐨勭害鏉熷垎鍒敓鎴愮敤渚嬶細
 
 - missing required query, path, Header, and body fields;
 - illegal enum values and pattern mismatches;
@@ -64,24 +56,18 @@ Generate distinct cases for applicable constraints:
 - invalid declared formats;
 - wrong Content-Type when the endpoint declares a rejection response.
 
-For object-valued query parameters, verify framework binding and emit flattened fields or documented serialization. Never send the object as an unexplained scalar.
+瀵逛簬瀵硅薄绫诲瀷鏌ヨ鍙傛暟锛岄獙璇佹鏋剁粦瀹氾紝骞舵寜鏂囨。搴忓垪鍖栨垨灞曞紑瀛楁銆備笉寰楀皢瀵硅薄浣滀负鏈В閲婄殑鏍囬噺鍙戦€併€?
+## 鏌ヨ涓庢枃浠剁敤渚?
 
-## Query And File Cases
+鏌ヨ绔偣搴旇鐩?page/pageSize 杈圭晫銆佽繃婊ゅ€笺€佹帓搴忓€笺€佺粍鍚堟潯浠躲€佺┖缁撴灉鍜屾棤鏁堝垎椤佃緭鍏ャ€備娇鐢?OpenAPI 涓殑鐪熷疄鍙傛暟鍚嶏紝涓嶅緱铏氭瀯閫氱敤鍒嗛〉 API銆?
+瀵逛簬 multipart 鎴栦簩杩涘埗杈撳叆锛屽缁堣鐩栫己灏戝繀闇€鏂囦欢鐨勬儏鍐点€備粎褰?OpenAPI 鎴栧凡瀹℃牳璁捐澹版槑鐩稿簲绾︽潫鏃讹紝鎵嶈鐩栫┖鏂囦欢銆佹棤鏁堟墿灞曞悕銆佹棤鏁?MIME 鍜岃秴澶ф枃浠躲€傚す鍏峰簲鏀惧湪鎵ц鐜鎴栧す鍏风洰褰曚腑锛屼笉寰楀啓鍏ラ厤缃€?
+## 涓氬姟閿欒涓庡畨鍏?
 
-For query endpoints cover page/pageSize boundaries, filter values, sort values, combinations, empty results, and invalid pagination inputs. Use real parameter names from OpenAPI; do not fabricate a generic pagination API.
+涓氬姟閿欒鍙兘渚濇嵁宸插鏍哥殑璁捐瑙勫垯鐢熸垚銆傛簮浠ｇ爜寮傚父澶勭悊鍣ㄥ拰杩愯鏃惰娴嬪彲鐢ㄤ簬鎶ュ憡瀹炵幇鍋忓樊锛屼絾缁濅笉鑳芥嵁姝ゅ垱寤轰笟鍔￠鏈熴€?
+浠呭湪璁捐澹版槑骞傜瓑鎬с€佸苟鍙戞垨閲嶅鎻愪氦琛屼负鏃剁敓鎴愬畨鍏ㄧ敤渚嬨€侶TTP 鏂规硶鏈韩涓嶆槸璇佹嵁銆?
+## 璁捐瑙勫垯鏍囪
 
-For multipart or binary inputs always cover a missing required file. Cover empty files, invalid extension, invalid MIME, and oversized files only when OpenAPI or the reviewed design declares the corresponding constraint. Fixtures belong in the execution environment or fixture directory, not in config.
-
-## Business Errors And Safety
-
-Generate business errors only from reviewed design rules. Source exception handlers and runtime observations may report implementation drift, but they must never create business expectations.
-
-Generate safety cases only where idempotency, concurrency, or duplicate-submission behavior is declared. HTTP method alone is not evidence.
-
-## Design Rule Markers
-
-Each `METHOD /path` section in a reviewed Markdown design document may contain one or more explicit rules. Use one `Rule ID` per rule; repeat the marker block for multiple outcomes on the same endpoint:
-
+宸插鏍哥殑 Markdown 璁捐鏂囨。涓紝姣忎釜 `METHOD /path` 灏忚妭鍙寘鍚竴涓垨澶氫釜鏄庣‘瑙勫垯銆傛瘡鏉¤鍒欎娇鐢ㄤ竴涓?`Rule ID`锛涘悓涓€绔偣瀛樺湪澶氫釜缁撴灉鏃堕噸澶嶆爣璁板潡锛?
 ```markdown
 ## POST /jobs
 Rule ID: JOBS_ACCEPTED
@@ -97,33 +83,15 @@ Business code: 0
 Assert: $.status = completed
 ```
 
-For an ordered multi-request rule, declare the complete executable flow once.
-Each step references a reviewed rule ID; captures map names to response JSON
-paths, and every `uses` name must occur in that rule's request:
+瀵逛簬鏈夊簭鐨勫璇锋眰瑙勫垯锛屽彧澹版槑涓€娆″畬鏁村彲鎵ц娴佺▼銆傛瘡涓楠ゅ紩鐢ㄥ凡瀹℃牳鐨勮鍒?ID锛沜aptures 灏嗗悕绉版槧灏勫埌鍝嶅簲 JSON 璺緞锛屽苟涓旀瘡涓?`uses` 鍚嶇О閮藉繀椤诲嚭鐜板湪璇ヨ鍒欑殑璇锋眰涓細
 
 ```markdown
 Test Flow: {id: JOB_FLOW, steps: [{rule_id: JOB_ACCEPTED, operation: submit, capture: {job_id: "$.jobId"}}, {rule_id: JOB_COMPLETED, operation: poll, uses: [job_id]}]}
 ```
 
-Use distinct rule IDs for repeated submissions or retries. A retry step uses
-`operation: retry`. An external-failure rule is blocked unless the project
-supplies an authorized fault-injection operation and a verified
-restoration/cleanup operation. A step named `fault-inject`, `inject-failure`,
-`mock-failure`, or `dependency-failure` is only a design label; it is not
-execution evidence. All referenced operations still require OpenAPI endpoints
-and design rules.
+閲嶅鎻愪氦鎴栭噸璇曞簲浣跨敤涓嶅悓鐨勮鍒?ID銆傞噸璇曟楠や娇鐢?`operation: retry`銆傞櫎闈為」鐩彁渚涚粡鎺堟潈鐨勬晠闅滄敞鍏ユ搷浣滃強宸查獙璇佺殑鎭㈠/娓呯悊鎿嶄綔锛屽惁鍒欏閮ㄦ晠闅滆鍒欎細琚樆鏂€傚悕涓?`fault-inject`銆乣inject-failure`銆乣mock-failure` 鎴?`dependency-failure` 鐨勬楠や粎鏄璁℃爣绛撅紝涓嶆槸鎵ц璇佹嵁銆傛墍鏈夊紩鐢ㄧ殑鎿嶄綔浠嶉渶鍏峰 OpenAPI 绔偣鍜岃璁¤鍒欍€?
+鏀寔鐨勬爣璁板寘鎷?`Rule ID`銆乣Scenario`銆乣Condition`銆乣Request`銆乣Async`銆乣HTTP status`銆乣Business code`銆乣State`銆乣State transition`銆乣Acceptance status`銆乣Final status`銆乣Side effect`銆乣Idempotency`銆乣Retry`銆乣Concurrency`銆乣External failure` 鍜?`Assert`銆傛爣璁板€间娇鐢?YAML 鏍囬噺鎴栧鍣ㄧ被鍨嬨€傛爣璁板彧鏄姞閫熸牸寮忥紝骞堕潪璁捐瑕佹眰锛氭鏂囥€佽〃鏍笺€佷唬鐮?curl 鍧椼€佹湁搴忔楠ゅ拰楠屾敹娓呭崟浼氬厛琚鍏ヨ璁＄悊瑙ｇ煩闃点€傛瘡鏉℃彁鍙栦簨瀹為兘鏍囪涓?`explicit`銆乣derived` 鎴?`unknown`锛屽苟闄勬潵婧愭憳褰曞拰鎺ㄥ銆傛瘡涓潪鎴愬姛鍒嗘敮鍙婂寘鍚鏉¤鍒欑殑绔偣閮介渶瑕佸彲鎵ц璇锋眰鏄犲皠锛涜嫢姝ｆ枃鏈缓绔嬫槧灏勶紝搴斿皢鍊欓€夐」淇濈暀鍦ㄥ緟纭鐘舵€侊紝涓嶅緱浠庢簮浠ｇ爜鎴栬繍琛屾椂鍊熺敤鍊笺€?
+寮傛瑙勫垯蹇呴』鍚屾椂澹版槑鎺ユ敹鐘舵€佸拰鏈€缁堢姸鎬侊紝骞舵彁渚涙湁鐣岃疆璇?瀵硅处鏈哄埗鍙婃槑纭殑缁堟绛栫暐銆傞『搴忔彁浜ゅ姞鍗曟鏌ヨ涓嶆瀯鎴愯疆璇㈣瘉鎹紝浠嶄細琚樆鏂€備粎鎻忚堪鍗曡姹傚厓鏁版嵁鐨勫紓姝ュ拰瀹夊叏瑙勫垯浼氳闃绘柇銆傞『搴忔祦绋嬫棤娉曡瘉鏄庡苟鍙戯紝璺ㄦā鍧楁垨璺ㄦ湇鍔℃祦绋嬪睘浜?E2E 棰嗗煙銆傜敓鎴愬櫒浼氭嫆缁?OpenAPI 涓笉瀛樺湪鐨勮璁?HTTP 鐘舵€侊紝骞跺皢姝т箟瑙勫垯璁板綍鍒?`manual_confirmations`锛屼笉鐢熸垚涓氬姟娴嬭瘯銆?
+## 瀹屾垚
 
-Supported markers are `Rule ID`, `Scenario`, `Condition`, `Request`, `Async`, `HTTP status`, `Business code`, `State`, `State transition`, `Acceptance status`, `Final status`, `Side effect`, `Idempotency`, `Retry`, `Concurrency`, `External failure`, and `Assert`. Marker values use YAML scalar/container types. Markers are an acceleration format, not a design requirement: prose, tables, code/curl blocks, ordered steps, and acceptance checklists are read into the design-understanding matrix first. Each extracted fact is tagged `explicit`, `derived`, or `unknown`, with a source quote and derivation. Every non-success branch and every endpoint with multiple rules needs an executable request mapping; if prose does not establish one, keep the candidate in pending confirmation instead of borrowing values from source or runtime.
-
-An asynchronous rule must declare both acceptance and final status and a
-bounded polling/reconciliation mechanism with an explicit termination policy.
-A sequential submit-plus-single-query flow is not polling evidence and remains
-blocked. Async and safety rules are blocked while they describe only
-single-request metadata. A sequential flow never proves concurrency, and
-cross-module or cross-service flows belong to the E2E domain. The generator
-rejects design HTTP statuses absent from OpenAPI and records ambiguous rules in
-`manual_confirmations` without materializing business tests.
-
-## Completion
-
-Every case keeps its request, expected HTTP/business result, design or OpenAPI evidence, and precise assertions. `review-*` values and unresolved confirmations block generation. Every success case requires at least one exact business-result or state-change assertion; when a business code is declared, it must be a success value and be accompanied by a concrete result assertion. Every design-backed logic entry links real case IDs, and every declared flow has ordered execution evidence.
+姣忎釜鐢ㄤ緥閮戒繚鐣欒姹傘€侀鏈?HTTP/涓氬姟缁撴灉銆佽璁℃垨 OpenAPI 璇佹嵁鍙婄簿纭柇瑷€銆俙review-*` 鍊煎拰鏈В鍐崇殑纭椤逛細闃绘柇鐢熸垚銆傛瘡涓垚鍔熺敤渚嬭嚦灏戦渶瑕佷竴涓簿纭殑涓氬姟缁撴灉鎴栫姸鎬佸彉鏇存柇瑷€锛涘０鏄庝笟鍔＄爜鏃讹紝璇ョ爜蹇呴』鏄垚鍔熷€硷紝骞堕厤鏈夊叿浣撶粨鏋滄柇瑷€銆傛瘡鏉℃湁璁捐渚濇嵁鐨勯€昏緫璁板綍閮藉繀椤诲叧鑱旂湡瀹炵敤渚?ID锛屾瘡涓０鏄庣殑娴佺▼閮藉繀椤绘湁鏈夊簭鎵ц璇佹嵁銆?

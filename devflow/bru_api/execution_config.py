@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import math
 import re
-import shutil
 import stat
 import sys
 from pathlib import Path
@@ -131,29 +130,6 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 exec devflow bru-api mock-data-clean --qa-root "$SCRIPT_DIR/.." "$@"
 """
-
-LEGACY_RUN_BAT_TEMPLATE = r"""@echo off
-setlocal
-rem Usage: run.bat runs all modules; run.bat --module "users" runs one module.
-devflow bru-api run --qa-root "%~dp0.." %*
-exit /b %errorlevel%
-"""
-
-LEGACY_RUN_SH_TEMPLATE = """#!/usr/bin/env sh
-set -eu
-# Usage: ./run.sh runs all modules; ./run.sh --module "users" runs one module.
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec devflow bru-api run --qa-root "$SCRIPT_DIR/.." "$@"
-"""
-
-LEGACY_SHARED_RUN_BAT_TEMPLATE = LEGACY_RUN_BAT_TEMPLATE.replace(
-    'devflow bru-api',
-    "devflow bru-api",
-)
-LEGACY_SHARED_RUN_SH_TEMPLATE = LEGACY_RUN_SH_TEMPLATE.replace(
-    'devflow bru-api',
-    "devflow bru-api",
-)
 
 EXECUTION_README_TEMPLATE = """# Bruno 执行入口
 
@@ -340,7 +316,7 @@ def load_execution_config(path: Path) -> dict[str, Any]:
 
 
 def environment_file(config_path: Path, config: dict[str, Any]) -> Path:
-    return config_path.parent / "environments" / f"{config['active_environment']}.bru"
+    return config_path.parent / "env" / f"{config['active_environment']}.bru"
 
 
 def _unquote(value: str) -> str:
@@ -388,12 +364,6 @@ def load_bruno_environment_document(path: Path) -> dict[str, dict[str, str]]:
     if section:
         raise ValueError(f"unterminated {section} block in {path}")
     return result
-
-
-def load_bruno_environment(path: Path) -> dict[str, str]:
-    """Compatibility helper returning only Bruno variables."""
-
-    return load_bruno_environment_document(path)["vars"]
 
 
 def resolved_environment_headers(document: dict[str, dict[str, str]]) -> dict[str, str]:
@@ -453,105 +423,6 @@ def render_execution_config(config: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def migrate_legacy_execution_config(
-    config_path: Path,
-    environments_root: Path,
-    tooling: str,
-) -> list[Path]:
-    """Move legacy runtime fields into the environment and normalize config.yaml."""
-
-    if not config_path.is_file():
-        return []
-    try:
-        import yaml  # type: ignore[import-not-found]
-
-        legacy = yaml.safe_load(config_path.read_text(encoding="utf-8", errors="strict"))
-    except ModuleNotFoundError as exc:
-        raise ValueError("legacy config migration requires PyYAML") from exc
-    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:  # type: ignore[attr-defined]
-        raise ValueError(f"cannot migrate legacy execution config {config_path}: {exc}") from exc
-    if not isinstance(legacy, dict):
-        return []
-    active = str(legacy.get("active_environment") or "local")
-    auth = legacy.get("auth", {}) if isinstance(legacy.get("auth"), dict) else {}
-    mode = str(auth.get("mode") or "none")
-    legacy_sign = legacy.get("sign")
-    if isinstance(legacy_sign, dict):
-        provider = str(legacy_sign.get("provider") or "disabled")
-        sign = {"provider": provider}
-        if legacy_sign.get("version"):
-            sign["version"] = str(legacy_sign["version"])
-    elif legacy_sign in {"sha256", "sha256-v1"} or mode == "sha256-sign":
-        sign = {"provider": "sha256", "version": "v1"}
-    else:
-        sign = {"provider": "disabled"}
-    env_path = environments_root / f"{active}.bru"
-    document = load_bruno_environment_document(env_path) if env_path.is_file() else {"vars": {}, "headers": {}}
-    headers = document["headers"]
-    auth_headers = {
-        "bearer": ("Authorization", f"Bearer {{{{{auth.get('token_env', 'ACCESS_TOKEN')}}}}}"),
-        "api-key": ("X-API-Key", f"{{{{{auth.get('key_env', 'API_KEY')}}}}}"),
-        "cookie": ("Cookie", f"{{{{{auth.get('cookie_env', 'SESSION_COOKIE')}}}}}"),
-    }
-    if mode in auth_headers:
-        name, value = auth_headers[mode]
-        headers.setdefault(name, value)
-    custom = legacy.get("custom_headers", {}) if isinstance(legacy.get("custom_headers"), dict) else {}
-    for name, settings in custom.items():
-        if not isinstance(name, str) or not isinstance(settings, dict):
-            continue
-        if isinstance(settings.get("env"), str):
-            headers.setdefault(name, f"{{{{{settings['env']}}}}}")
-        elif isinstance(settings.get("value"), str):
-            headers.setdefault(name, settings["value"])
-    changed: list[Path] = []
-    if {"auth", "custom_headers"} & set(legacy):
-        env_path.parent.mkdir(parents=True, exist_ok=True)
-        env_path.write_text(
-            render_runtime_environment(document) + render_headers_block(document),
-            encoding="utf-8",
-        )
-        changed.append(env_path)
-    normalized = {
-        "active_environment": active,
-        "tooling": legacy.get("tooling", tooling),
-        "coverage_profile": legacy.get("coverage_profile", "full-matrix"),
-        "cli_timeout": legacy.get("cli_timeout", DEFAULT_CLI_TIMEOUT),
-        "sign": sign,
-    }
-    rendered = render_execution_config(normalized)
-    if config_path.read_text(encoding="utf-8", errors="strict") != rendered:
-        config_path.write_text(rendered, encoding="utf-8")
-        changed.append(config_path)
-    return changed
-
-
-def migrate_legacy_base_url(config_path: Path, environments_root: Path) -> list[Path]:
-    """Rename the old BASE_URL variable to the business-readable baseUrl key."""
-
-    if not config_path.is_file():
-        return []
-    try:
-        import yaml  # type: ignore[import-not-found]
-
-        config = yaml.safe_load(config_path.read_text(encoding="utf-8", errors="strict"))
-    except (ModuleNotFoundError, OSError, UnicodeDecodeError, yaml.YAMLError) as exc:  # type: ignore[attr-defined]
-        raise ValueError(f"cannot migrate base URL variable: {exc}") from exc
-    if not isinstance(config, dict):
-        return []
-    active = str(config.get("active_environment") or "local")
-    env_path = environments_root / f"{active}.bru"
-    if not env_path.is_file():
-        return []
-    document = load_bruno_environment_document(env_path)
-    variables = document["vars"]
-    if "BASE_URL" not in variables or "baseUrl" in variables:
-        return []
-    variables["baseUrl"] = variables.pop("BASE_URL")
-    env_path.write_text(render_runtime_environment(document) + render_headers_block(document), encoding="utf-8")
-    return [env_path]
-
-
 def render_headers_block(document: dict[str, dict[str, str]]) -> str:
     headers = document.get("headers", {})
     if not headers:
@@ -573,8 +444,7 @@ def initialize_execution_layout(qa_root: Path, local_scripts: bool | None = None
     contracts_root = qa_root / CONTRACTS
     bruno_root = qa_root / BRUNO
     execution_root = qa_root / EXECUTION
-    old_environments = bruno_root / "environments"
-    new_environments = execution_root / "environments"
+    new_environments = execution_root / "env"
     config_path = execution_root / "config.yaml"
     qa_config_path = qa_root / "qa.yaml"
     tooling_source = qa_config_path if qa_config_path.is_file() else config_path
@@ -583,21 +453,8 @@ def initialize_execution_layout(qa_root: Path, local_scripts: bool | None = None
         local_scripts,
     )
     tooling = "shared-cli"
-    if old_environments.exists():
-        if new_environments.exists():
-            raise ValueError(
-                f"cannot migrate Bruno environments because both directories exist: {old_environments}, {new_environments}"
-            )
-        execution_root.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(old_environments), str(new_environments))
-        changed.append(new_environments)
-    else:
-        new_environments.mkdir(parents=True, exist_ok=True)
+    new_environments.mkdir(parents=True, exist_ok=True)
     (qa_root / REPORTS).mkdir(parents=True, exist_ok=True)
-
-    if config_path.is_file():
-        changed.extend(migrate_legacy_execution_config(config_path, new_environments, tooling))
-    changed.extend(migrate_legacy_base_url(config_path, new_environments))
 
     if qa_config_path.is_file():
         qa_config_path.unlink()
@@ -634,27 +491,18 @@ def initialize_execution_layout(qa_root: Path, local_scripts: bool | None = None
     if plans_path.is_file():
         plans_path.unlink()
         changed.append(plans_path)
-    changed.extend(migrate_legacy_base_url(config_path, new_environments))
     for path, desired, known in (
         (execution_root / "run.bat", run_bat_template.replace("\n", "\r\n"), {
             RUN_BAT_TEMPLATE.replace("\n", "\r\n"),
             SHARED_RUN_BAT_TEMPLATE.replace("\n", "\r\n"),
-            LEGACY_RUN_BAT_TEMPLATE.replace("\n", "\r\n"),
-            LEGACY_SHARED_RUN_BAT_TEMPLATE.replace("\n", "\r\n"),
             RUN_BAT_TEMPLATE.replace('rem Usage: run.bat runs all modules; run.bat --module "users" runs one module.\n', "").replace("\n", "\r\n"),
             SHARED_RUN_BAT_TEMPLATE.replace('rem Usage: run.bat runs all modules; run.bat --module "users" runs one module.\n', "").replace("\n", "\r\n"),
-            LEGACY_RUN_BAT_TEMPLATE.replace('rem Usage: run.bat runs all modules; run.bat --module "users" runs one module.\n', "").replace("\n", "\r\n"),
-            LEGACY_SHARED_RUN_BAT_TEMPLATE.replace('rem Usage: run.bat runs all modules; run.bat --module "users" runs one module.\n', "").replace("\n", "\r\n"),
         }),
         (execution_root / "run.sh", run_sh_template, {
             RUN_SH_TEMPLATE,
             SHARED_RUN_SH_TEMPLATE,
-            LEGACY_RUN_SH_TEMPLATE,
-            LEGACY_SHARED_RUN_SH_TEMPLATE,
             RUN_SH_TEMPLATE.replace('# Usage: ./run.sh runs all modules; ./run.sh --module "users" runs one module.\n', ""),
             SHARED_RUN_SH_TEMPLATE.replace('# Usage: ./run.sh runs all modules; ./run.sh --module "users" runs one module.\n', ""),
-            LEGACY_RUN_SH_TEMPLATE.replace('# Usage: ./run.sh runs all modules; ./run.sh --module "users" runs one module.\n', ""),
-            LEGACY_SHARED_RUN_SH_TEMPLATE.replace('# Usage: ./run.sh runs all modules; ./run.sh --module "users" runs one module.\n', ""),
         }),
     ):
         current = path.read_text(encoding="utf-8", errors="strict")

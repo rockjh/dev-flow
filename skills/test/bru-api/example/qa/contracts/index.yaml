@@ -1,0 +1,29 @@
+version: 1
+source:
+  file: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\openapi.json
+  spec_version: 3.0.3
+  api_version: 1.0.0
+  sha256: 22560d4b15fc44d83be3f5c3ca880f9a2ca227f4d2e70f1930e80eca39ea009a
+module_map: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\module-map.yaml
+execution_config_file: E:\code\dev-flow\skills\test\bru-api\example\qa\execution\config.yaml
+generation_status: draft
+coverage_profile: full-matrix
+inventory_endpoints: 4
+generated_cases: 33
+failed_modules: 0
+modules:
+- id: tasks
+  name: 任务管理
+  directory: 任务管理
+  swagger_tag: 任务管理
+  endpoints_file: modules\任务管理\endpoints.yaml
+  logic_file: modules\任务管理\logic.yaml
+  cases_file: modules\任务管理\cases.yaml
+  flows_file: modules\任务管理\flows.yaml
+  exclusions_file: modules\任务管理\exclusions.yaml
+  parameters_file: modules\任务管理\parameters.yaml
+  definitions_file: modules\任务管理\definitions.yaml
+  responses_file: modules\任务管理\responses.yaml
+  documentation_file: modules\任务管理\CASES.md
+  endpoint_count: 4
+  case_count: 33

@@ -1,110 +1,49 @@
-# devflow Repository Rules
+# devflow 仓库规则
 
-These rules apply to the whole repository. A deeper `AGENTS.md` may add
-constraints but may not relax them.
+这些规则适用于整个仓库。更深层目录中的 `AGENTS.md` 可以增加约束，但不得放宽本文件的要求。
 
-## Architecture
+## 架构
 
-- The repository, Python package, public CLI, and npm installer are `devflow`;
-  the npm package is `dev-flow`.
-- The only console entry point is `devflow = devflow.cli:console_main`.
-  `python -m devflow` calls that same entry point.
-- Shared contracts live in `devflow/core/`; domain modules live in
-  `devflow/bru_api/`, `devflow/test_e2e/`, and `devflow/doc_biz_flow/`.
-  The installable Skills live under `skills/<category>/<skill-name>/`; they are
-  installed under `~/.agents/skills/devflow/<category>/<skill-name>/`.
-- Commands use static registration. Do not add dynamic plugin discovery,
-  runtime scanning, compatibility facades, placeholder modules, or a second
-  extension mechanism.
-- Do not restore legacy package/command names, the old Skill directories, old
-  npm wrappers, a second `pyproject.toml`, or copied toolkit source in generated
-  projects.
+- 仓库、Python 包、公共 CLI 和 npm 安装器均使用 `devflow`；npm 包名称为 `dev-flow`。
+- 唯一的控制台入口是 `devflow = devflow.cli:console_main`。`python -m devflow` 会调用同一个入口。
+- 共享契约位于 `devflow/core/`；领域模块位于 `devflow/bru_api/`、`devflow/test_e2e/` 和 `devflow/doc_biz_flow/`。可安装的 Skill 位于 `skills/<category>/<skill-name>/`，并安装到 `~/.agents/skills/devflow/<category>/<skill-name>/`。
+- 命令使用静态注册。不得加入动态插件发现、运行时扫描、兼容性门面、占位模块或第二套扩展机制。
+- 不得恢复旧版包名或命令名、旧版 Skill 目录、旧版 npm 包装器、第二个 `pyproject.toml`，也不得在生成项目中复制工具包源代码。
 
-## Contracts
+## 契约
 
-`devflow/core/envelope.py`, `errors.py`, `schema.py`, `redaction.py`, and
-`artifacts.py` are authoritative for envelopes, exit codes, scoped schemas,
-redaction, artifacts, and locks. All domains route results through this core.
-Pipelines default to JSON, TTYs to Markdown, progress goes to stderr, and
-large results return a summary plus an authoritative path unless `--full` is
-requested. Domain schema versions are independent of the tool version.
+`devflow/core/envelope.py`、`errors.py`、`schema.py`、`redaction.py` 和 `artifacts.py` 是信封、退出代码、作用域模式、脱敏、工件和锁的权威实现。所有领域都必须通过这些核心模块路由结果。流水线默认输出 JSON，TTY 默认输出 Markdown，进度信息写入 stderr；除非请求 `--full`，大型结果都应返回摘要及权威路径。领域模式版本独立于工具版本。
 
-The active domains are `bru-api`, `e2e`, and `biz-flow`. Preserve their
-existing business, safety, ownership, and report semantics while changing only
-the package, CLI, Skill, state, install, and release structure.
+当前启用的领域是 `bru-api`、`e2e` 和 `biz-flow`。修改包、CLI、Skill、状态、安装和发布结构时，必须保留它们现有的业务、安全、所有权和报告语义。
 
-## Generated assets and release
+## 生成资产与发布
 
-Generated projects contain business assets and thin launchers that call an
-installed `devflow`. They must not contain toolkit source. The project lock is
-`.devflow.lock.json`; shared state is `~/.local/state/devflow/`; the Skill target is
-`DEVFLOW_SKILL_HOME` or `~/.agents/skills/devflow/`.
+生成项目包含业务资产和调用已安装 `devflow` 的轻量启动器，不得包含工具包源代码。项目锁是领域资产根目录下的领域专用项目锁（对于 `biz-flow`，路径为 `docs/biz-flow/biz-flow.json`）；共享状态位于 `~/.local/state/devflow/`；Skill 目标目录为 `DEVFLOW_SKILL_HOME` 或 `~/.agents/skills/devflow/`。
 
-The npm flow is embedded wheel in `npm/dist/`, pipx, one Skill directory, then
-`devflow doctor`. The wrapper resolves the pipx-installed absolute path and never
-recursively starts itself through `PATH`. `npx dev-flow install` is the
-explicit recovery command when npm postinstall is disabled.
+npm 流程依次使用 `npm/dist/` 中的内嵌 wheel、pipx、一个 Skill 目录，最后运行 `devflow doctor`。包装器解析 pipx 安装的绝对路径，绝不能通过 `PATH` 递归启动自身。禁用 npm postinstall 时，`npx dev-flow install` 是显式恢复命令。
 
-Legacy state migration is an explicit operator task outside runtime startup.
-Runtime code reads only the new state directory and never falls back to a
-legacy path.
+旧状态迁移必须由操作员在运行时启动之外显式执行。运行时代码只读取新的状态目录，绝不回退到旧路径。
 
-## Skill authoring
+## Skill 编写
 
-Every installable Skill is a versioned product surface and must follow the
-rules in this section. The nested `skills/AGENTS.md` is a convenience
-for work started inside that directory; it is not a replacement for these
-repository-level rules. A new Skill is complete only when
-its runtime domain, prompt, references, generated assets, npm payload, and
-verification are all updated together.
+每个可安装 Skill 都是有版本的产品表面，必须遵守本节规则。`skills/AGENTS.md` 是在该目录内开始工作时的便捷说明，不能替代仓库级规则。只有同时更新运行时领域、提示词、参考资料、生成资产、npm 载荷和验证流程后，新 Skill 才算完成。
 
-Codex's project instruction chain is built from `AGENTS.md` files found from
-the project root to the current directory. `SKILL.md` is loaded when a Skill
-is selected; `agents/openai.yaml` supplies optional Skill UI, invocation, and
-tool-dependency metadata. Keep these layers consistent: a narrower
-`AGENTS.md` or Skill instruction may add constraints, but must not weaken
-repository contracts or authorize an unsafe operation. Required behavior
-must live in `AGENTS.md`, `SKILL.md`, or an executable gate, not only in
-optional UI metadata.
+Codex 的项目指令链由从项目根目录到当前目录找到的 `AGENTS.md` 文件构成。选择 Skill 后会加载 `SKILL.md`；`agents/openai.yaml` 提供可选的 Skill 界面、调用和工具依赖元数据。必须保持这些层级一致：更窄范围的 `AGENTS.md` 或 Skill 指令可以增加约束，但不得削弱仓库契约或授权不安全操作。必需行为必须写入 `AGENTS.md`、`SKILL.md` 或可执行门禁，不能只写在可选的界面元数据中。
 
-For every new or changed Skill:
+对于每个新增或修改的 Skill：
 
-- Use one canonical directory under `skills/<category>/<skill-name>/`.
-  The directory name, `SKILL.md` frontmatter `name`, lock `skill` value, and
-  generated npm payload must agree exactly. Do not add aliases, legacy paths,
-  or a second copy maintained by hand.
-- Keep `SKILL.md` concise and operational. It must state the CLI route, the
-  allowed project roots and artifacts, the safety/ownership gates, the
-  authoritative output, and the references that must be read for each
-  workflow. Never tell the model to guess missing evidence or silently bypass
-  a failed gate.
-- Give each Skill one `agents/openai.yaml` interface with the project-required
-  `display_name`, `short_description`, and domain-specific `default_prompt`.
-  Other documented metadata such as icons, invocation policy, and tool
-  dependencies is allowed when needed. The default prompt supplements
-  `SKILL.md`; it must route only to that Skill, require the installed
-  `devflow` CLI, preserve core contracts, require redacted authoritative
-  output, and name the stopping conditions for unsafe, ambiguous, or failed
-  validation. Do not use a generic prompt that routes among unrelated Skills.
-- Put detailed procedures, schemas, examples, and policy in `references/`.
-  Reference paths must be relative to the Skill, stable, and explicitly
-  routed from `SKILL.md` or the default prompt. Keep generated business data
-  separate from reusable instructions and never embed secrets or credentials.
-- Preserve deterministic behavior: do not add runtime prompt discovery,
-  network-only instructions, hidden tool fallbacks, dynamic plugin loading,
-  or instructions that mutate source, state, locks, or history without an
-  explicit workflow and the domain's validation gate.
-- Update the canonical Skill first, then regenerate or copy the npm payload
-  through `scripts/release.py`. Review the resulting tree for path/name
-  mismatches and run the full verification commands below.
+- 只使用 `skills/<category>/<skill-name>/` 下的一个规范目录。目录名、`SKILL.md` frontmatter 中的 `name`、锁中的 `skill` 值以及生成的 npm 载荷必须完全一致。不得添加别名、旧路径或需要手工维护的副本。
+- 保持 `SKILL.md` 简洁且可执行。必须说明 CLI 路由、允许的项目根目录和资产、安全与所有权门禁、权威输出，以及每个工作流必须阅读的参考资料。绝不能要求模型猜测缺失证据或静默绕过失败门禁。
+- 每个 Skill 只提供一个 `agents/openai.yaml` 接口，并包含项目要求的 `display_name`、`short_description` 和领域专用 `default_prompt`。必要时可以使用文档规定的图标、调用策略和工具依赖等可选字段。默认提示词用于补充 `SKILL.md`；必须只路由到该 Skill，要求使用已安装的 `devflow` CLI，保留核心契约，要求返回已脱敏的权威输出，并明确不安全、含糊或验证失败时的停止条件。不得使用在无关 Skill 之间路由的通用提示词。
+- 将详细流程、模式、示例和策略放在 `references/` 中。参考路径必须相对于 Skill、保持稳定，并从 `SKILL.md` 或默认提示词中明确路由。生成的业务数据必须与可复用说明分离，绝不能嵌入密钥或凭据。
+- 保持行为确定：不得加入运行时提示词发现、仅依赖网络的说明、隐藏工具回退、动态插件加载，也不得加入会在没有显式工作流和领域验证门禁的情况下修改源代码、状态、锁或历史的指令。
+- 先更新规范 Skill，再通过 `scripts/release.py` 重新生成或复制 npm 载荷。检查生成后的树，确认路径和名称匹配，并运行下方完整验证命令。
 
-When reviewing a Skill change, check prompt precedence, domain isolation,
-evidence requirements, redaction, artifact paths, failure behavior, and
-canonical/npm parity in addition to ordinary code correctness.
+审查 Skill 变更时，除常规代码正确性外，还要检查提示词优先级、领域隔离、证据要求、脱敏、资产路径、失败行为，以及规范目录与 npm 目录的一致性。
 
-## Verification
+## 验证
 
-For code/schema/template changes run the relevant tests, then:
+对于代码、模式或模板变更，先运行相关测试，然后运行：
 
 ```text
 python -m pytest -q
@@ -112,7 +51,4 @@ python -m compileall -q devflow tests
 git diff --check
 ```
 
-Release changes additionally run `python scripts/release.py`, verify one wheel
-with only the `devflow` entry point, one npm Skill payload, synchronized versions,
-and the isolated npm -> pipx -> Skill sync -> `doctor` flow. Do not commit
-`dist/`, npm wheel/vendor/tgz artifacts, caches, or local state.
+发布变更还需运行 `python scripts/release.py`，确认 wheel 只包含 `devflow` 入口、npm 载荷包含一个 Skill、版本已同步，并完成隔离的 npm -> pipx -> Skill 同步 -> `doctor` 流程。不得提交 `dist/`、npm wheel/vendor/tgz 产物、缓存或本地状态。

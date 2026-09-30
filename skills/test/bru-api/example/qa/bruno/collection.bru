@@ -1,0 +1,64 @@
+auth {
+  mode: none
+}
+
+script:pre-request {
+  // devflow：运行时配置
+  const rawConfig = bru.getEnvVar("__QA_EXECUTION_CONFIG");
+  if (!rawConfig) throw new Error("runtime execution config is missing");
+  const runtimeConfig = JSON.parse(rawConfig);
+
+  const setCommonHeader = (name, value) => {
+    if (value === undefined || value === null || value === "") return;
+    const current = req.getHeader(name);
+    if (current === undefined || current === null) req.setHeader(name, String(value));
+  };
+  const requireEnv = (name) => {
+    const value = bru.getEnvVar(name);
+    if (!value) throw new Error(`${name} must be configured in the Bruno environment`);
+    return value;
+  };
+
+  Object.entries(runtimeConfig.headers || {}).forEach(([name, value]) => {
+    setCommonHeader(name, value);
+  });
+
+  if (runtimeConfig.sign && runtimeConfig.sign.provider === "sha256") {
+    const CryptoJS = require("crypto-js");
+    const accessKey = requireEnv("ACCESS_KEY");
+    const secretKey = requireEnv("SECRET_KEY");
+    const requestPath = req.getPath() || "/";
+    const queryString = req.getQueryString() || "";
+    const params = {};
+    queryString.split("&").filter(Boolean).forEach((pair) => {
+      const separator = pair.indexOf("=");
+      const rawKey = separator >= 0 ? pair.slice(0, separator) : pair;
+      const rawValue = separator >= 0 ? pair.slice(separator + 1) : "";
+      const key = decodeURIComponent(rawKey.replace(/\+/g, " "));
+      const value = decodeURIComponent(rawValue.replace(/\+/g, " "));
+      if (Object.prototype.hasOwnProperty.call(params, key)) {
+        params[key] = Array.isArray(params[key]) ? params[key].concat(value) : [params[key], value];
+      } else {
+        params[key] = value;
+      }
+    });
+    const configuredTimestamp = req.getHeader("timestamp");
+    params.timestamp = configuredTimestamp === undefined || configuredTimestamp === null
+      ? Date.now().toString()
+      : String(configuredTimestamp);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === null || value === undefined || value === "") delete params[key];
+      else if (Array.isArray(value)) params[key] = `[${value.sort().join(",")}]`;
+    });
+    const signParams = Object.keys(params).sort().map((key) => `${key}=${params[key]}`).join("&");
+    const rawBody = req.getBody();
+    const body = typeof rawBody === "string" ? rawBody : (rawBody ? JSON.stringify(rawBody) : "");
+    const signText = body
+      ? `${requestPath}&${body}&${signParams}&${secretKey}`
+      : `${requestPath}&${signParams}&${secretKey}`;
+    setCommonHeader("sign", CryptoJS.SHA256(signText).toString());
+    setCommonHeader("timestamp", params.timestamp);
+    setCommonHeader("accesskey", accessKey);
+  }
+  // devflow：运行时配置结束
+}

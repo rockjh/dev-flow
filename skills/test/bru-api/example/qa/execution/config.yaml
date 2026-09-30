@@ -1,0 +1,6 @@
+active_environment: example
+tooling: shared-cli
+coverage_profile: full-matrix
+cli_timeout: 60
+sign:
+  provider: disabled

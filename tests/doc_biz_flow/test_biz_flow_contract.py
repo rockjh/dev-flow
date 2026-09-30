@@ -40,6 +40,8 @@ class BizFlowContractTests(unittest.TestCase):
     def initialize_and_confirm(self, root: Path) -> Path:
         code, result = self.invoke("biz-flow", "init", "--project", str(root))
         self.assertEqual(0, code, result)
+        self.assertTrue((root / "docs" / "biz-flow" / "biz-flow.json").is_file())
+        self.assertFalse((root / ".devflow.lock.json").exists())
         code, result = self.invoke("biz-flow", "discover", "--project", str(root))
         self.assertEqual(0, code, result)
         overview = root / "docs" / "biz-flow" / "业务流程覆盖总览.md"
@@ -90,7 +92,7 @@ class BizFlowContractTests(unittest.TestCase):
             docs = root / "docs" / "biz-flow"
             self.assertTrue((docs / "业务流程覆盖总览.md").is_file())
             self.assertTrue((docs / "biz-flow.yaml").is_file())
-            self.assertEqual([], list(docs.glob("*.json")))
+            self.assertEqual([], [path for path in docs.glob("*.json") if path.name != "biz-flow.json"])
 
     def _legacy_markdown_comparison_reports_fact_drift_without_a_score(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -537,6 +539,7 @@ class BizFlowContractTests(unittest.TestCase):
             self.assertTrue(result.source_fingerprint)
 
     def test_domain_and_subcommand_help_are_statically_registered(self) -> None:
+        docs = Path.cwd() / "docs" / "biz-flow"
         for arguments, expected in (
             (["biz-flow", "--help"], "discover"),
             (["biz-flow", "discover", "--help"], "--commit"),
@@ -546,6 +549,14 @@ class BizFlowContractTests(unittest.TestCase):
                 code = console_main(arguments)
             self.assertEqual(0, code)
             self.assertIn(expected, output.getvalue())
+        self.assertFalse(docs.exists())
+
+    def test_invalid_init_does_not_create_docs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            code, result = self.invoke("biz-flow", "init", "--project", str(root))
+            self.assertNotEqual(0, code, result)
+            self.assertFalse((root / "docs").exists())
 
 
 if __name__ == "__main__":

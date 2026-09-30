@@ -21,7 +21,7 @@ try {
   process.exit(1);
 }
 if (result.error) {
-  console.error(`devflow is not available: ${result.error.message}`);
+  console.error(`devflow 不可用：${result.error.message}`);
   process.exit(1);
 }
 process.exit(result.status ?? 1);

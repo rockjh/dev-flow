@@ -1,16 +1,10 @@
-# Direct Database Access
-
-Use direct MySQL, Elasticsearch, MongoDB, or other datastore statements only in these two cases:
-
-1. `missing_prerequisite_api`: the module exposes no API or approved test control that can create data required by its API cases.
-2. `missing_response_state`: an API response does not expose the state needed to prove that the operation succeeded.
-
-Prefer a public or approved test API whenever it exists. Database setup is test preparation, never the business action under test. Database assertions complement the HTTP status and available business response assertions; they do not replace observable response checks that the service does provide.
-
-## Case Format
-
-Declare case-owned steps in `cases.yaml`. The runner gathers every selected `setup` step into one run-level plan and materializes only a prerequisite guard in the case. Bruno retains `assertion` steps in `script:post-response`, and the runner enables its developer sandbox only when the selected scope contains database steps.
-
+#鐩存帴鏁版嵁搴撹闂?
+浠呭湪浠ヤ笅涓ょ鎯呭喌涓嬩娇鐢ㄧ洿鎺ySQL銆丒lasticsearch銆丮ongoDB鎴栧叾浠栨暟鎹瓨鍌ㄨ鍙ワ細
+1. `missing_prerequisite_api` 锛氭ā鍧椾笉鍏紑API鎴栨壒鍑嗙殑娴嬭瘯鎺т欢锛屽彲浠ュ垱寤哄叾API妗堜緥鎵€闇€鐨勬暟鎹€?
+2. `missing_response_state` 锛?API鍝嶅簲涓嶆毚闇茶瘉鏄庢搷浣滄垚鍔熸墍闇€鐨勭姸鎬併€?
+棣栭€夊叕鍏辨垨宸叉壒鍑嗙殑娴嬭瘯API 锛堝彧瑕佸瓨鍦級銆?鏁版嵁搴撹缃槸娴嬭瘯鍑嗗锛岃€屼笉鏄祴璇曚腑鐨勪笟鍔℃搷浣溿€?鏁版嵁搴撴柇瑷€鏄HTTP鐘舵€佸拰鍙敤涓氬姟鍝嶅簲鏂█鐨勮ˉ鍏咃紱瀹冧滑涓嶄細鍙栦唬鏈嶅姟鎻愪緵鐨勫彲瑙傚療鍝嶅簲妫€鏌ャ€?
+# #妗堜緥鏍煎紡
+鍦╜cases.yaml`涓０鏄庝釜妗堟墍鏈夌殑姝ラ銆?Runner灏嗘瘡涓€夊畾鐨刞setup`姝ラ鏀堕泦鍒颁竴涓繍琛岀骇鍒鍒掍腑锛屽苟鍦ㄦ渚嬩腑浠呭疄鐜板厛鍐虫潯浠堕槻鎶ゃ€?Bruno鍦╜script:post-response`涓繚鐣檂assertion`姝ラ锛屽苟涓斾粎褰撴墍閫夎寖鍥村寘鍚暟鎹簱姝ラ鏃讹紝杩愯鍣ㄦ墠鍚敤鍏跺紑鍙戜汉鍛樻矙鐩掋€?
 ```yaml
 database_steps:
   - phase: setup
@@ -126,21 +120,11 @@ database_steps:
       await connection.end();
 ```
 
-`evidence` identifies the schema, entity, repository, migration, or index mapping that proves the statement and expected value. An assertion step must declare its exact `expected` result. A setup step must declare its data source, record estimate, idempotence, read-only ownership precheck, run-owned selector, setup verification, bounded cleanup, and cleanup absence verification. Setup and cleanup scripts use `DEVFLOW_DATA_NAMESPACE`; they are executed once at run scope rather than once per Bruno case. A true precheck reuses the row without running setup and never schedules that row for cleanup.
-
-## Other Engines
-
-- MongoDB uses the official `mongodb` client, an exact document selector, and `$setOnInsert` with `upsert`; `$set` is rejected because it can modify existing data.
-- Elasticsearch and OpenSearch use their official clients with exact index/document IDs and create semantics; overwrite-style `index` calls are rejected.
-- Redis uses the official client with a run-owned exact key and `NX` creation semantics.
-- MySQL/MariaDB, PostgreSQL, Oracle, and SQL Server use parameterized, insert-if-absent statements and exact-key deletes.
-
-Declare required Node clients in `qa/bruno/package.json` and pin their versions. Do not add a generic database abstraction for a one-off step.
-
-## Runtime And Safety
-
-Connection addresses, database/index names, users, passwords, TLS settings, and fixture identifiers come only from the active Bruno environment or its process environment. Never commit resolved credentials or credential-bearing URLs.
-
-Statements should use parameter binding or exact document IDs and be idempotent where possible.
-
-Each possible creation is journaled before setup begins, then promoted to `created` only after setup verification. This allows a partially failed write to be cleaned without claiming that creation succeeded. Cleanup runs in reverse dependency order after the suite or later through `devflow bru-api mock-data-clean`; interrupted runs remain recoverable by run ID. A connection, query, expectation, cleanup, or absence-verification error is a failure, not a manual pass.
+QUERY LENGTH LIMIT EXCEEDED. MAX ALLOWED QUERY : 500 CHARS
+# #鍏朵粬寮曟搸
+QUERY LENGTH LIMIT EXCEEDED. MAX ALLOWED QUERY : 500 CHARS
+鍦╜qa/bruno/package.json`涓０鏄庢墍闇€鐨勮妭鐐瑰鎴风骞跺浐瀹氬叾鐗堟湰銆?涓嶈涓轰竴娆℃€ф楠ゆ坊鍔犻€氱敤鏁版嵁搴撴娊璞°€?
+# #杩愯鏃跺拰瀹夊叏鎬?
+杩炴帴鍦板潃銆佹暟鎹簱/绱㈠紩鍚嶇О銆佺敤鎴枫€佸瘑鐮併€乀LS璁剧疆鍜屽す鍏锋爣璇嗙浠呮潵鑷椿鍔ㄧ殑BRUNO鐜鎴栧叾杩囩▼鐜銆?鍒囧嬁鎻愪氦宸茶В鏋愮殑鍑嵁鎴栧叿鏈夊嚟鎹殑URL銆?
+MYMEMORY WARNING: YOU USED ALL AVAILABLE FREE TRANSLATIONS FOR TODAY. NEXT AVAILABLE IN  10 HOURS 20 MINUTES 15 SECONDS VISIT HTTPS://MYMEMORY.TRANSLATED.NET/DOC/USAGELIMITS.PHP TO TRANSLATE MORE
+MYMEMORY WARNING: YOU USED ALL AVAILABLE FREE TRANSLATIONS FOR TODAY. NEXT AVAILABLE IN  10 HOURS 20 MINUTES 14 SECONDS VISIT HTTPS://MYMEMORY.TRANSLATED.NET/DOC/USAGELIMITS.PHP TO TRANSLATE MORE

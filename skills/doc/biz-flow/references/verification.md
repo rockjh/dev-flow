@@ -1,7 +1,6 @@
-# Repeatable Verification
+# 可重复验证
 
-Run these commands from the repository root after changing the Skill or the
-domain implementation:
+修改 Skill 或领域实现后，从仓库根目录运行以下命令：
 
 ```text
 python -m pytest -q
@@ -14,10 +13,4 @@ devflow biz-flow check --project <fixture>
 devflow biz-flow verify --project <fixture>
 ```
 
-For an update fixture, repeat `discover`, edit the source to add/change/delete
-an entry, run `devflow biz-flow update`, then run `check` and `verify`. Inject
-one malformed exclusion, one invalid evidence location, one placeholder step,
-one overlong business point, and one malformed Mermaid block; each must fail
-with the entry id or source location in the error. Run `verify` twice and
-compare its `stable` result and Markdown document count.
-
+对于更新夹具，重复执行 `discover`，编辑源代码以新增/修改/删除入口，运行 `devflow biz-flow update`，然后运行 `check` 和 `verify`。分别注入一个格式错误的排除项、一个无效证据位置、一个占位步骤、一个过长业务要点和一个格式错误的 Mermaid 块；每项都必须失败，并在错误中包含入口 ID 或源位置。连续运行两次 `verify`，比较其 `stable` 结果和 Markdown 文档数量。

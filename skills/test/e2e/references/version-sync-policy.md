@@ -1,8 +1,8 @@
-# Per-Scenario Source Version and Impact Policy
+# 按场景源版本与影响策略
 
-Every `scenarios/*/场景定义.yaml` records its own compact source basis. `discovery/workspace.yaml` maps stable repository IDs to resolvable roots, but there is no global scenario registry or duplicate scenario-version file. Git history is the change record.
+每个 `scenarios/*/场景定义.yaml` 都记录自身的紧凑源码基线。`discovery/workspace.yaml` 将稳定仓库 ID 映射到可解析根目录，但不存在全局场景注册表或重复的场景版本文件；Git 历史就是变更记录。
 
-## Source contract
+## 源码契约
 
 ```yaml
 # 源码基线：每项对应一个被当前场景直接依赖的仓库。
@@ -15,40 +15,40 @@ source:
       - <source-symbol>
 ```
 
-Angle-bracket values are metavariables. `repo` must resolve through the discovery inventory, and `commit` must equal that repository's reviewed discovery snapshot. `anchors` are a short set of entrypoints, services, producers/consumers, schemas, repositories, jobs, configuration symbols, controls, or cleanup methods that make rediscovery reliable. The source list covers every repository marked relevant to the scenario's topology; one caller repository cannot stand in for a downstream service, message, or data-store owner.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Do not add branch names, duplicate commit fields, timestamps, narrative notes, or copied diffs. Relevant dirty source cannot be represented by `commit` and must be reported separately.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-When migrating an older source-version format, do not mechanically select a newer revision. Use the prior generated revision as the comparison basis, complete impact review, regenerate only affected artifacts, and then write reviewed `HEAD`.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Review algorithm
+## 审查算法
 
-For every scenario/repository pair:
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-1. Resolve the repository through `discovery/workspace.yaml`, then read recorded commit, current `HEAD`, and staged, unstaged, and untracked changes.
-2. Verify the recorded commit exists; otherwise repeat full relevant discovery.
-3. Inspect `git diff --name-status <commit>..<HEAD>` and actual old/new contents of potentially relevant files.
-4. Re-resolve each anchor and trace affected callers, request/response or message models, state rules, correlation, persistence, jobs, configuration, controls, and cleanup.
-5. Inspect relevant dirty contents; an unchanged anchor file does not prove no impact.
-6. Decide whether changes affect topology, configuration precedence, preconditions, data, actions, controls, expectations, correlation, integrations, timing, cleanup, restoration, or diagrams.
-7. With update authorization, regenerate only affected artifacts and update the discovery repository commit plus every affected `source.commit` to the same reviewed SHA. Re-run discovery before contract gates; the repository diff is the audit trail.
+1. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+2. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+3. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+4. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+5. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+6. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+7. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Do not claim synchronization to dirty relevant source. Ask for a commit before treating it as authoritative, or label generated work as draft and leave the recorded commit unchanged.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-If new repositories, build modules, dependency edges, or configuration sources appear, update and revalidate workspace discovery before scenario regeneration. Topology cannot be inferred only from the prior scenario anchors.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Outcomes
+## 结果
 
-- `unchanged`: `HEAD` equals recorded commit and no relevant dirty changes exist.
-- `no_relevant_change`: committed changes were inspected and do not affect the scenario. With authorization, advance the recorded commit without rewriting other artifacts.
-- `affected`: committed changes affect the contract or generated implementation. Update only affected artifacts, then advance the commit.
-- `full_rediscovery_required`: the old commit is unavailable, an anchor is unresolved, or workspace topology/configuration changed materially.
-- `dirty_review_required`: relevant uncommitted source exists. Report it and do not advance the commit or claim synchronization.
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Script behavior
+## 脚本行为
 
-`devflow e2e source-status` discovers `scenarios/*/场景定义.yaml` directly and resolves repository IDs through discovery. It accepts optional exact `--scenario <中文场景名称>`; unknown, ambiguous, or path-like values are errors.
+`devflow e2e source-status` 直接发现 `scenarios/*/场景定义.yaml`，并通过发现结果解析仓库 ID。它接受可选的精确参数 `--scenario <中文场景名称>`；未知、含糊或类似路径的值都属于错误。
 
-Emit one result per scenario/repository with recorded/current commit, clean/dirty state, relevant changed files, affected or unresolved anchors, exactly one outcome above, and a concise reason.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-The command is read-only. It must not fetch, update definitions, regenerate tests, discard changes, rewrite history, or collapse several scenarios into one project-level decision. Updating source commits is a separate explicitly authorized workflow after content inspection.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。

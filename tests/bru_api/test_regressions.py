@@ -76,7 +76,7 @@ def execution_fixture(
     environment: dict[str, str] | None = None,
 ) -> tuple[Path, Path]:
     execution = root / "execution"
-    environments = execution / "environments"
+    environments = execution / "env"
     environments.mkdir(parents=True, exist_ok=True)
     config = execution / "config.yaml"
     config.write_text(json.dumps({
@@ -1248,13 +1248,7 @@ class RegressionTests(unittest.TestCase):
             map_path.write_text(json.dumps({
                 "modules": [{"id": "things", "name": "things", "swagger_tags": ["things"]}],
             }), encoding="utf-8")
-            legacy_environment = root / "bruno" / "environments"
-            legacy_environment.mkdir(parents=True)
             load_script("qa_constraints").ensure_rule_library(root)
-            (legacy_environment / "local.bru").write_text(
-                "vars {\n  BASE_URL: http://127.0.0.1:18080\n  TENANT_ID:\n}\n",
-                encoding="utf-8",
-            )
             parser.write_partitioned(parser.extract(spec_path, document), map_path, output_dir)
             endpoints = parser.load_document(output_dir / "things" / "endpoints.yaml")
             self.assertEqual(endpoints["endpoints"][0]["tag_description"], "Thing management")
@@ -1268,14 +1262,13 @@ class RegressionTests(unittest.TestCase):
             self.assertNotIn("auth:", config_text)
             self.assertNotIn("custom_headers:", config_text)
             self.assertNotIn("version:", config_text)
-            self.assertTrue((root / "execution" / "environments" / "local.bru").is_file())
-            self.assertFalse((root / "bruno" / "environments").exists())
+            self.assertTrue((root / "execution" / "env" / "local.bru").is_file())
             self.assertTrue((root / "execution" / "run.bat").is_file())
             self.assertTrue((root / "execution" / "run.sh").is_file())
             self.assertIn("devflow bru-api run", (root / "execution" / "run.bat").read_text(encoding="utf-8"))
             self.assertIn("devflow bru-api run", (root / "execution" / "run.sh").read_text(encoding="utf-8"))
             self.assertEqual(
-                sorted(path.name for path in (root / "execution" / "environments").glob("*.bru")),
+                sorted(path.name for path in (root / "execution" / "env").glob("*.bru")),
                 ["local.bru"],
             )
             self.assertTrue((root / "bruno" / "collection.bru").is_file())
@@ -1689,7 +1682,7 @@ class RegressionTests(unittest.TestCase):
         coverage = load_script("check_api_coverage")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "environments").mkdir()
+            (root / "env").mkdir()
             case = {
                 "id": "product_query_success",
                 "title": "查询商品库存成功",
@@ -1701,7 +1694,7 @@ class RegressionTests(unittest.TestCase):
                 "meta {\n  name: product_query_success\n  type: http\n}\nget {\n  url: {{BASE_URL}}/products\n}\nassert {\n  res.status: eq 200\n  res.body.data: eq 1\n}\n",
                 encoding="utf-8",
             )
-            (root / "environments" / "local.bru").write_text("vars { BASE_URL: http://localhost }\n", encoding="utf-8")
+            (root / "env" / "local.bru").write_text("vars { BASE_URL: http://localhost }\n", encoding="utf-8")
             (root / "collection.bru").write_text("meta { name: collection }\n", encoding="utf-8")
             covered, _, _, errors = coverage.case_files([case], root)
             self.assertEqual(covered, {"product_query_success"})
@@ -3951,7 +3944,7 @@ class RegressionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             qa_root = Path(directory) / "qa"
             execution = qa_root / "execution"
-            environments = execution / "environments"
+            environments = execution / "env"
             environments.mkdir(parents=True)
             (qa_root / "qa.yaml").write_text("version: 1\ntooling: shared-cli\n", encoding="utf-8")
             (execution / "config.yaml").write_text(

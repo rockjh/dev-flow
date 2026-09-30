@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+CHINESE_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+
 from .context import build_context
 from .data import generate_scenario_data
 
@@ -39,6 +41,8 @@ def _safe_name(value: Any, fallback: str) -> str:
     text = str(value or fallback).strip()
     text = re.sub(r"[\\/:*?\"<>|\x00-\x1f]", "_", text)
     text = re.sub(r"\s+", " ", text).strip(" .")
+    if not CHINESE_RE.search(text):
+        text = f"业务场景_{fallback}"
     return text[:80] or fallback
 
 

@@ -1,0 +1,146 @@
+version: 1
+generator_version: '6.2'
+coverage_profile: full-matrix
+openapi_sha256: 22560d4b15fc44d83be3f5c3ca880f9a2ca227f4d2e70f1930e80eca39ea009a
+design_sha256: 1239de3603929fc5c72e870ff9249afa38c378d2750592284c9cce48a7f0787f
+last_generated_at: '2026-09-29T14:59:16.948837+00:00'
+endpoints:
+  CANCELTASK_POST_TASKS_TASKID_CANCEL:
+    fingerprint: 57da5ff4d7d1ba8d05fc42233d99956e464badb43cfce99f4a52a358967185eb
+  CREATETASK_POST_TASKS:
+    fingerprint: f7a3be47eb9ac3f4b412bebff0398a186b8231c7658df6d1bb2ee89c373fcb60
+  GETTASK_GET_TASKS_TASKID:
+    fingerprint: 4f235f4b1d6c8e1e546e28b5b668a3d5b27d06d8259324c2e9d530734806833a
+  LISTTASKS_GET_TASKS:
+    fingerprint: e1adb6079e790ffd63f7885a2dfca742553920f0fe3d157c61d52d1d5b65b54a
+modules:
+  tasks:
+    contract_fingerprint: 6a3299a2ce8c1181d662e372a8601ca28ebb76b1c0f5dcf6d1c60f748b660c7f
+    endpoint_ids:
+    - LISTTASKS_GET_TASKS
+    - CREATETASK_POST_TASKS
+    - GETTASK_GET_TASKS_TASKID
+    - CANCELTASK_POST_TASKS_TASKID_CANCEL
+cases:
+  LISTTASKS_GET_TASKS_MISSING_X_TENANT_ID:
+    module: tasks
+    endpoint_id: LISTTASKS_GET_TASKS
+    fingerprint: 8e1028de13afc233023eca6d10a4fdedb0131bf86291933fc5300176239692c0
+    manual_review: false
+  LISTTASKS_GET_TASKS_INVALID_MINLENGTH_X_TENANT_ID:
+    module: tasks
+    endpoint_id: LISTTASKS_GET_TASKS
+    fingerprint: 1080ec0d94ddd2a24573ecc5a2e6c50c0f12619e829b8868ac8ddaf02b38bc3e
+    manual_review: false
+  LISTTASKS_GET_TASKS_INVALID_MINIMUM_PAGE:
+    module: tasks
+    endpoint_id: LISTTASKS_GET_TASKS
+    fingerprint: 8095d804e367937fbd19bf0bc4d94c8a439d23f96fcfb84b97e4fe60129832c5
+    manual_review: false
+  LISTTASKS_GET_TASKS_INVALID_MINIMUM_PAGESIZE:
+    module: tasks
+    endpoint_id: LISTTASKS_GET_TASKS
+    fingerprint: 1ce45ba3ed31dba53e3527cd01dfe08fd8fb1f2864c5750ef90d996e69956fda
+    manual_review: false
+  LISTTASKS_GET_TASKS_INVALID_MAXIMUM_PAGESIZE:
+    module: tasks
+    endpoint_id: LISTTASKS_GET_TASKS
+    fingerprint: c1d7317d24632e43a8ef808ccce26980a237289a92ca5fbeb804464f88c9923b
+    manual_review: false
+  LISTTASKS_GET_TASKS_INVALID_STATUS:
+    module: tasks
+    endpoint_id: LISTTASKS_GET_TASKS
+    fingerprint: d417c68b67ea55aacdffce8038f8f48d43fa5eced2172ebb22594f2f43dd2cff
+    manual_review: false
+  LISTTASKS_GET_TASKS_INVALID_SORT:
+    module: tasks
+    endpoint_id: LISTTASKS_GET_TASKS
+    fingerprint: 6a1bfc1414f6291f1aaedde0cb60cc11a9d6511485cb67635a6164508552743a
+    manual_review: false
+  CREATETASK_POST_TASKS_MISSING_X_TENANT_ID:
+    module: tasks
+    endpoint_id: CREATETASK_POST_TASKS
+    fingerprint: cc007185316720208733b80de09df3b3152c10f8ec1f7a30cdfb9b8b97886fa5
+    manual_review: false
+  CREATETASK_POST_TASKS_INVALID_MINLENGTH_X_TENANT_ID:
+    module: tasks
+    endpoint_id: CREATETASK_POST_TASKS
+    fingerprint: e83839ffaeac4fb4d09335554f07b7870c7b84b5cc9b3c1382cd545e1cc18998
+    manual_review: false
+  CREATETASK_POST_TASKS_MISSING_IDEMPOTENCY_KEY:
+    module: tasks
+    endpoint_id: CREATETASK_POST_TASKS
+    fingerprint: 076405687965025cc952d516d7bc3c5d99614caf0b41e5c39ce109073bd5c7d6
+    manual_review: false
+  CREATETASK_POST_TASKS_INVALID_MINLENGTH_IDEMPOTENCY_KEY:
+    module: tasks
+    endpoint_id: CREATETASK_POST_TASKS
+    fingerprint: 8f761fe1c4d013a2bb24d2ad898cac40a38fa663289f28b56c1b897ddccead6d
+    manual_review: false
+  CREATETASK_POST_TASKS_INVALID_MAXLENGTH_IDEMPOTENCY_KEY:
+    module: tasks
+    endpoint_id: CREATETASK_POST_TASKS
+    fingerprint: 4009fa9d52753d67bbe525fac55202636ffbe622189cfab32ac46b28ddea4d9f
+    manual_review: false
+  CREATETASK_POST_TASKS_MISSING_BODY_TASKTYPE:
+    module: tasks
+    endpoint_id: CREATETASK_POST_TASKS
+    fingerprint: a74c72eb9a07ea69652cb31c6577aa9073b2dd8427f509594f7c4afe2e8bb1e4
+    manual_review: false
+  CREATETASK_POST_TASKS_MISSING_BODY_PAYLOAD:
+    module: tasks
+    endpoint_id: CREATETASK_POST_TASKS
+    fingerprint: a19311c758065750a0f18c56fb962fc537da58d6719ee14f55873cb9c3119d66
+    manual_review: false
+  CREATETASK_POST_TASKS_INVALID_BODY_ENUM_TASKTYPE:
+    module: tasks
+    endpoint_id: CREATETASK_POST_TASKS
+    fingerprint: f784f9f09b728a0111ddc78dbe779bc892bd3d478ee9ed1734162160117bd5fb
+    manual_review: false
+  CREATETASK_POST_TASKS_INVALID_CONTENT_TYPE:
+    module: tasks
+    endpoint_id: CREATETASK_POST_TASKS
+    fingerprint: 63bc4d787e74e782132df7031c0d43f9c0b2d86f46f4d340d0c1d2de90686566
+    manual_review: false
+  CREATETASK_POST_TASKS_TASK_CREATE_ACCEPTED:
+    module: tasks
+    endpoint_id: CREATETASK_POST_TASKS
+    fingerprint: be20cc90344843b84c3bb8d66aaffe2fccb0d8b03c17fe14a580aef2f129b390
+    manual_review: false
+  CREATETASK_POST_TASKS_TASK_CREATE_CONFLICT:
+    module: tasks
+    endpoint_id: CREATETASK_POST_TASKS
+    fingerprint: fba8485edc0e03ed2d40114217e68bba8bd1ecc452cd261bdf4889d138aa9f84
+    manual_review: false
+  LISTTASKS_GET_TASKS_TASK_LIST_PAGE:
+    module: tasks
+    endpoint_id: LISTTASKS_GET_TASKS
+    fingerprint: 389cc6a39424483d8e7255e67aec2c44da423f45ac5e18a5a74c547b6c5bc92e
+    manual_review: false
+  LISTTASKS_GET_TASKS_TASK_LIST_EMPTY:
+    module: tasks
+    endpoint_id: LISTTASKS_GET_TASKS
+    fingerprint: 5f417b18b81bafb85cfd21c52e5379da49f7510df243d0c810dfcd4b1d83eb42
+    manual_review: false
+  GETTASK_GET_TASKS_TASKID_TASK_GET_OWNED:
+    module: tasks
+    endpoint_id: GETTASK_GET_TASKS_TASKID
+    fingerprint: 1b2bba906d2f7e390a3f8018720b19adcbaebb5c147e2d3cfff7bb34984c3250
+    manual_review: false
+  GETTASK_GET_TASKS_TASKID_TASK_GET_MISSING:
+    module: tasks
+    endpoint_id: GETTASK_GET_TASKS_TASKID
+    fingerprint: b0be2bd84d232bb68abf11982e3353fd90bc9b3d971ab9f82da44ebe31be9bdc
+    manual_review: false
+  CANCELTASK_POST_TASKS_TASKID_CANCEL_TASK_CANCEL_QUEUED:
+    module: tasks
+    endpoint_id: CANCELTASK_POST_TASKS_TASKID_CANCEL
+    fingerprint: c0306a7661a2bba1f3eb210fe84689eb1b2a69e179fe3befb908d95aef3a0591
+    manual_review: false
+  CANCELTASK_POST_TASKS_TASKID_CANCEL_TASK_CANCEL_RUNNING:
+    module: tasks
+    endpoint_id: CANCELTASK_POST_TASKS_TASKID_CANCEL
+    fingerprint: 9b55dd0961086c27eb26f50ff180284a93340cba7e9cc6d5da8eab090b0e3d34
+    manual_review: false
+deleted_endpoint_ids: []
+manual_review_cases: []

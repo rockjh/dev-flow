@@ -1,0 +1,20 @@
+meta {
+  name: get-task-missing
+  type: http
+}
+
+get {
+  url: {{base_url}}/tasks/00000000-0000-4000-8000-000000000099
+}
+
+headers {
+  Authorization: Bearer {{auth_token}}
+  X-Tenant-Id: {{tenant_id}}
+}
+
+tests {
+  test("返回任务不存在", function() {
+    expect(res.status).to.equal(404);
+    expect(res.body.code).to.equal("TASK_NOT_FOUND");
+  });
+}

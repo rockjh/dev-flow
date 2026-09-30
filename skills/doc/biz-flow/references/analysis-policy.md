@@ -1,25 +1,38 @@
-# Analysis Policy
+# 分析策略
 
-Use this reference only for the biz-flow document workflow. The CLI schemas and generated index/report remain authoritative for fields and counts.
+本参考仅用于 biz-flow 文档流程。CLI schema 以及生成的索引/报告对字段和计数具有最终权威性。
 
-## Entry discovery
+## 入口发现
 
-Inspect framework configuration, annotations/decorators, route registration, service registration, scheduler/job declarations, message listener bindings, event subscriptions, file watchers/importers, command registration, webhook routes, and workflow/state-machine triggers. Search both source and configuration; a controller directory is not a complete inventory. Health, metrics, management, and static-resource handlers are excluded only when their non-business purpose is evidenced.
+### Python 示例源码约束
 
-For each entry retain: type, method/topic/job/event/file identifier, handler, source location, owning module, and the document file. A route may have only one primary owner. A cross-module call is a dependency in the owner document.
+示例项目必须让发现器能够从源码重建完整调用链。关键业务步骤使用静态、可追踪的 Python 写法：
+路由使用直接装饰器，容器使用模块级常量，读取使用 `if key in TABLE` 加 `TABLE[key]`，字段使用
+明确的下标或属性，列表副作用使用显式赋值（例如 `EVENTS[:] = EVENTS + [event]`）。不要用
+`dict.get`、`setdefault`、动态 `getattr`、容器别名、动态装饰器/注册表或把多个业务动作隐藏在
+推导式和通用辅助器中。它们会让调用、分支或持久化证据变成 `unresolved`，从而不能生成与
+`example/user-login` 等价的文档。
 
-`业务流程覆盖总览.md` is the review boundary. Resolve every discovery finding with code locations, record ownership decisions in the Markdown module documents, and exclude non-business candidates only with reason and source evidence. Re-run discovery after source/config changes; confirmation from a different source fingerprint is invalid. JSON scan and evidence structures are process-local and must not be persisted.
+新增示例后先运行 `discover`，确认入口、调用和 `unresolved=0`，再编辑模块确认标记并运行
+`generate`。若静态发现仍有未解析接收者，必须修改示例源码或补充领域实现；不得在 Markdown 中
+猜测缺失步骤，也不得用占位文本绕过门禁。
 
-## Call-chain and error review
+检查框架配置、注解/装饰器、路由注册、服务注册、调度器/作业声明、消息监听绑定、事件订阅、文件监视器/导入器、命令注册、Webhook 路由以及工作流/状态机触发器。源代码和配置都必须搜索；仅检查 controller 目录不能得到完整清单。只有在有证据证明不属于业务用途时，才能排除健康检查、指标、管理和静态资源处理器。
 
-Follow calls until the business result is produced. Check validation, state guards, persistence, transaction boundaries, locks, idempotency, concurrency, cache/files, external calls, message production, retries, and async scheduling. Search called helpers and exception adapters, not just the entry file. Only an active exception that can propagate to the entry is an entry error. Do not count framework-generated validation errors, unreachable branches, or caught exceptions that cannot escape.
+每个入口必须保留：类型、方法/topic/job/event/file 标识、处理器、源位置、所属模块和文档文件。一个路由只能有一个主要所有者。跨模块调用应作为所有者文档中的依赖记录。
 
-When the code uses an exception handler or adapter to convert an internal exception, retain both the throwing evidence and the mapping evidence. If the error code is assembled dynamically or the path crosses an unresolved boundary, record `代码中未确认` instead of inventing a code.
+`业务流程覆盖总览.md` 是评审边界。每个发现结果都要用代码位置闭环，在 Markdown 模块文档中记录归属决定；排除非业务候选项时必须同时记录原因和源代码证据。源代码或配置变更后必须重新发现；不同 source fingerprint 的确认无效。JSON 扫描和证据结构仅限进程内使用，不得持久化。
 
-## Incremental review
+## 调用链与错误评审
 
-Compare the old recorded revision with the target using Git, including shared utilities and configuration. Re-analyze a module when an entry, call, rule, error mapping, state transition, data operation, transaction/lock/async behavior, external integration, or shared dependency changes. If the old revision cannot be resolved, perform a full current-version scan and report that comparison as unavailable. If no business file changed, preserve document structure and only update the effective version metadata.
+跟踪调用直到产生业务结果。检查校验、状态保护、持久化、事务边界、锁、幂等性、并发、缓存/文件、外部调用、消息生产、重试和异步调度。除入口文件外，还要搜索被调用的辅助函数和异常适配器。只有能够传播到入口的活动异常才算入口错误；不要统计框架生成的校验错误、不可达分支或无法逃逸的已捕获异常。
 
-## Completion report
+代码使用异常处理器或适配器转换内部异常时，必须同时保留抛出证据和映射证据。如果错误码动态拼接，或路径跨越尚未解析的边界，应记录 `代码中未确认`，不得臆造错误码。
 
-Report effective commit and dirty status, module/document counts, URL, scheduled, message, and other entry counts, active error-code count, added/updated/deleted entries, version-only documents, business-changed documents, unresolved evidence, and both directions of entry/error-code coverage. A zero-entry repository is valid only when the scan evidence and excluded framework endpoints are reported.
+## 增量评审
+
+使用 Git 将旧记录版本与目标版本比较，同时包含共享工具和配置。入口、调用、规则、错误映射、状态迁移、数据操作、事务/锁/异步行为、外部集成或共享依赖发生变化时，必须重新分析模块。如果无法解析旧版本，则对当前版本执行完整扫描，并报告比较不可用。若业务文件没有变化，应保留文档结构，只更新有效版本元数据。
+
+## 完成报告
+
+报告有效 commit 和 dirty 状态、模块/文档数量、URL、定时任务、消息及其他入口数量、活动错误码数量、新增/更新/删除入口、仅版本变更文档、业务变更文档、未解决证据，以及入口与错误码双向覆盖情况。只有同时报告扫描证据和排除的框架端点时，零入口仓库才有效。

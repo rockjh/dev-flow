@@ -452,7 +452,7 @@ def generate_command(argv: list[str]) -> int:
         return 2
     if not args.design_root and not args.design_file and len(design.candidates) > 1:
         candidates = "\n".join(f"  - {path}" for path in design.candidates)
-        print("ERROR: multiple design roots found; choose one with --design-root:\n" + candidates, file=sys.stderr)
+        print("ERROR: multiple design roots found; biz-flow source is ambiguous:\n" + candidates, file=sys.stderr)
         _design_report(qa_root, {}, status="blocked", failures=["multiple design roots require an explicit selector"])
         return 2
     initialize_execution_layout(qa_root, local_scripts=False)
@@ -461,7 +461,7 @@ def generate_command(argv: list[str]) -> int:
         version_code = version_gate(qa_root, "--phase", "before-generate")
         if version_code:
             return version_code
-    from .execution_config import environment_file, load_bruno_environment, load_execution_config
+    from .execution_config import environment_file, load_bruno_environment_document, load_execution_config
 
     execution_config = load_execution_config(qa_root / EXECUTION / "config.yaml")
     coverage_profile = args.coverage_profile or execution_config["coverage_profile"]
@@ -541,7 +541,7 @@ def generate_command(argv: list[str]) -> int:
         write_discovery(qa_root, args.source_root)
     environment_path = environment_file(qa_root / EXECUTION / "config.yaml", execution_config)
     if environment_path.is_file():
-        apply_environment_values(manifest, load_bruno_environment(environment_path))
+        apply_environment_values(manifest, load_bruno_environment_document(environment_path)["vars"])
     for endpoint in manifest.get("endpoints", []):
         if isinstance(endpoint, dict):
             endpoint["obligations"] = constraint_obligations(endpoint)

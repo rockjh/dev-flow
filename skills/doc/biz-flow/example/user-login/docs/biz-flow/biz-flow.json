@@ -1,0 +1,8 @@
+{
+  "tool": "devflow",
+  "tool_version": "8.0.0",
+  "domain": "biz-flow",
+  "schema_version": "3",
+  "skill": "devflow/doc/biz-flow",
+  "asset_root": "docs/biz-flow"
+}

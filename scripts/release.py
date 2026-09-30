@@ -13,6 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NPM = ROOT / "npm"
+INSTALLABLE_SKILLS = ("doc/biz-flow", "test/bru-api", "test/e2e")
 
 
 def main() -> int:
@@ -55,7 +56,16 @@ def main() -> int:
     target_skills = NPM / "skills"
     if target_skills.exists():
         shutil.rmtree(target_skills)
-    shutil.copytree(ROOT / "skills", target_skills / "devflow")
+    skill_payload = target_skills / "devflow"
+    for relative in INSTALLABLE_SKILLS:
+        source = ROOT / "skills" / relative
+        if not source.is_dir():
+            raise RuntimeError(f"missing installable Skill: {source}")
+        shutil.copytree(
+            source,
+            skill_payload / relative,
+            ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+        )
     payload = sorted(path.relative_to(target_skills).parts[0] for path in target_skills.iterdir())
     if payload != ["devflow"]:
         raise RuntimeError(f"unexpected npm Skill payload: {payload}")

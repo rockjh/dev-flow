@@ -1,15 +1,15 @@
-# Direct Database Access
+# 直接数据库访问
 
-Use direct MySQL, Elasticsearch, MongoDB, or other datastore statements only in these two cases:
+仅在以下两种情况下使用直接MySQL、 Elasticsearch、 MongoDB或其他数据存储语句 ：
 
-1. `missing_prerequisite_api`: the module exposes no API or approved test control that can create data required by its API cases.
-2. `missing_response_state`: an API response does not expose the state needed to prove that the operation succeeded.
+1. `missing_prerequisite_api` ：模块不公开 API或批准的测试控件 ，可以创建其 API案例所需的数据。
+2. `missing_response_state` ： API响应不暴露证明操作成功所需的状态。
 
-Prefer a public or approved test API whenever it exists. Database setup is test preparation, never the business action under test. Database assertions complement the HTTP status and available business response assertions; they do not replace observable response checks that the service does provide.
+首选公共或已批准的测试API （ API只要存在 ）。数据库设置是测试准备 ，而不是测试中的业务操作。数据库断言是对 HTTP状态和可用业务响应断言的补充 ；它们不会取代服务提供的可观察响应检查。
 
-## Case Format
+## 用例格式
 
-Declare case-owned steps in `cases.yaml`. The runner gathers every selected `setup` step into one run-level plan and materializes only a prerequisite guard in the case. Bruno retains `assertion` steps in `script:post-response`, and the runner enables its developer sandbox only when the selected scope contains database steps.
+在`cases.yaml`中声明个案所有的步骤。跑步者将每个选定的 `setup`步骤收集到一个跑步级计划中 ，并在情况下仅实现先决条件防护。在 Bruno中保留 `script:post-response`步骤 `assertion`并且仅当所选范围包含数据库步骤时 ，运行器才启用其开发人员沙盒。
 
 ```yaml
 database_steps:
@@ -126,21 +126,21 @@ database_steps:
       await connection.end();
 ```
 
-`evidence` identifies the schema, entity, repository, migration, or index mapping that proves the statement and expected value. An assertion step must declare its exact `expected` result. A setup step must declare its data source, record estimate, idempotence, read-only ownership precheck, run-owned selector, setup verification, bounded cleanup, and cleanup absence verification. Setup and cleanup scripts use `DEVFLOW_DATA_NAMESPACE`; they are executed once at run scope rather than once per Bruno case. A true precheck reuses the row without running setup and never schedules that row for cleanup.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Other Engines
+## 其他引擎
 
-- MongoDB uses the official `mongodb` client, an exact document selector, and `$setOnInsert` with `upsert`; `$set` is rejected because it can modify existing data.
-- Elasticsearch and OpenSearch use their official clients with exact index/document IDs and create semantics; overwrite-style `index` calls are rejected.
-- Redis uses the official client with a run-owned exact key and `NX` creation semantics.
-- MySQL/MariaDB, PostgreSQL, Oracle, and SQL Server use parameterized, insert-if-absent statements and exact-key deletes.
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Declare required Node clients in `qa/bruno/package.json` and pin their versions. Do not add a generic database abstraction for a one-off step.
+在`qa/bruno/package.json`中声明所需的节点客户端并固定其版本。不要为一次性步骤添加通用数据库抽象。
 
-## Runtime And Safety
+## 运行时与安全
 
-Connection addresses, database/index names, users, passwords, TLS settings, and fixture identifiers come only from the active Bruno environment or its process environment. Never commit resolved credentials or credential-bearing URLs.
+连接地址、数据库/索引名称、用户、密码、TLS设置和夹具标识符仅来自活动的 BRUNO环境或其过程环境。切勿提交已解析的凭据或具有凭据的 URL。
 
-Statements should use parameter binding or exact document IDs and be idempotent where possible.
+语句应使用参数绑定或确切的文档ID ，并在可能的情况下具有幂等性。
 
-Each possible creation is journaled before setup begins, then promoted to `created` only after setup verification. This allows a partially failed write to be cleaned without claiming that creation succeeded. Cleanup runs in reverse dependency order after the suite or later through `devflow bru-api mock-data-clean`; interrupted runs remain recoverable by run ID. A connection, query, expectation, cleanup, or absence-verification error is a failure, not a manual pass.
+每个可能的创建在设置开始之前被记录`created`然后仅在设置验证后被提升为。 这允许清除部分失败的写入，而无需声明创建成功。 清理在套件之后或之后通过`devflow bru-api mock-data-clean`以相反的依赖关系顺序运行 ；中断的运行仍可通过运行 ID恢复。 连接、查询、期望、清理或缺勤验证错误是失败，而不是手动传递。

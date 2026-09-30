@@ -143,7 +143,7 @@ GENERIC_CASE_TITLES = {"请求成功", "操作成功", "成功", "请求失败",
 
 def is_business_request(path: Path, root: Path) -> bool:
     relative = path.relative_to(root)
-    return path.name.lower() != "collection.bru" and "environments" not in {
+    return path.name.lower() != "collection.bru" and "env" not in {
         part.lower() for part in relative.parts[:-1]
     }
 

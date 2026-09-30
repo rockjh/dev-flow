@@ -26,7 +26,7 @@ sys.dont_write_bytecode = True
 from .execution_config import (
     DEFAULT_CLI_TIMEOUT,
     environment_file,
-    load_bruno_environment,
+    load_bruno_environment_document,
     load_execution_config,
     required_environment_names,
 )
@@ -348,7 +348,7 @@ def main() -> int:
         context_failures.append("active Bruno environment cannot be resolved")
     else:
         try:
-            environment_values = load_bruno_environment(env_path)
+            environment_values = load_bruno_environment_document(env_path)["vars"]
         except ValueError as exc:
             context_failures.append(str(exc))
     static_report: dict[str, Any] | None = None

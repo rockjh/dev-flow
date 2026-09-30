@@ -1,0 +1,27 @@
+meta {
+  name: create-task-idempotency-conflict
+  type: http
+}
+
+post {
+  url: {{base_url}}/tasks
+  body: json
+}
+
+headers {
+  Authorization: Bearer {{auth_token}}
+  X-Tenant-Id: {{tenant_id}}
+  Idempotency-Key: reused-key
+  Content-Type: application/json
+}
+
+body:json {
+  {"taskType": "reindex", "payload": {"scope": "all"}}
+}
+
+tests {
+  test("拒绝幂等键冲突", function() {
+    expect(res.status).to.equal(409);
+    expect(res.body.code).to.equal("IDEMPOTENCY_CONFLICT");
+  });
+}

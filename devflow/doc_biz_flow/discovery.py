@@ -103,7 +103,17 @@ def _module_name(relative: Path, identifier: str, text: str = "", line: int = 0)
 
 
 def _error(line: str, file: str, number: int) -> ErrorEvidence:
-    code_match = CODE_RE.search(line) or ENUM_RE.search(line) or STATUS_CODE_RE.search(line)
+    # Prefer the code attached to the raised/thrown error.  Conditions often
+    # contain unrelated uppercase literals (for example a payment status
+    # ``"PAID"``) before the actual ``raise OrderError("PAYMENT_FAILED")``.
+    # Searching the whole condition first mislabels the business error.
+    raised = re.search(r"(?:raise|throw|panic)\b[^\n;]*", line, re.IGNORECASE)
+    code_match = (
+        (CODE_RE.search(raised.group(0)) if raised else None)
+        or CODE_RE.search(line)
+        or ENUM_RE.search(line)
+        or STATUS_CODE_RE.search(line)
+    )
     code = code_match.group(1) if code_match else "代码中未确认"
     condition = line.strip()
     phase = "async" if re.search(r"\b(?:async|await|submit|enqueue|publish|send)\b", condition, re.I) else "sync"
@@ -477,6 +487,10 @@ def _behaviors(function: FunctionInfo, relative: str) -> list[BehaviorEvidence]:
         stripped = line.strip()
         if not stripped or stripped.startswith(("#", "//", "/*", "*")):
             continue
+        # Python control flow is business evidence even when the localized
+        # behavior table is unavailable or encoded differently.
+        if re.match(r"^if\b", stripped):
+            evidence.append(BehaviorEvidence("校验", stripped, relative, function.start + offset))
         for kind, pattern in BEHAVIOR_PATTERNS:
             if pattern.search(stripped):
                 evidence.append(BehaviorEvidence(kind, stripped, relative, function.start + offset))

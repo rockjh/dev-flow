@@ -1,90 +1,90 @@
-# Cross-Service Integration Policy
+# 跨服务集成策略
 
-Read this reference when a scenario crosses a service boundary or uses messages, a data store, cache, scheduler, configuration center, device gateway, or another observer/control.
+当场景跨越服务边界，或使用消息、数据存储、缓存、调度器、配置中心、设备网关及其他观察/控制组件时，读取本参考。
 
-## Boundaries
+## 边界
 
-Keep these concerns separate:
+保持以下职责分离：
 
-1. `common/clients/` calls public or approved test/admin interfaces.
-2. `common/builders/` explicitly maps reusable formal-protocol payloads.
-3. `common/repositories/` owns parameterized read-only queries and stable record mapping.
-4. `common/controls/` owns default-off authorized and reversible controls.
-5. `common/integrations/` provides generic adapters for discovered component types.
-6. `common/fixtures/` owns adapter lifecycle, authorization, snapshots, and isolation.
-7. `common/assertions/` compares protocol, message, persistence, and observable evidence.
-8. Scenario modules express scenario-only actions, mappings, assertions, and cleanup.
+1. `common/clients/` 调用公开接口或经批准的测试/管理接口。
+2. `common/builders/` 显式构造可复用的正式协议载荷映射。
+3. `common/repositories/` 负责参数化只读查询和稳定的记录映射。
+4. `common/controls/` 负责默认关闭、经过授权且可回滚的控制操作。
+5. `common/integrations/` 为发现到的组件类型提供通用适配器。
+6. `common/fixtures/` 负责适配器生命周期、授权、快照和隔离。
+7. `common/assertions/` 比较协议、消息、持久化和可观测证据。
+8. 场景模块仅表达场景专属的操作、映射、断言和清理。
 
-Generic modules accept discovered configuration and scenario mappings. Never embed a project name, business endpoint, table, topic, configuration key, credential, enum, state, or environment address. Reuse an already approved pinned dependency; do not add a client library silently.
+通用模块接收发现到的配置和场景映射。不得嵌入项目名、业务端点、表、topic、配置键、凭据、枚举、状态或环境地址。复用已经批准并固定版本的依赖；不得静默添加客户端库。
 
-Instantiate and preflight only the services and components declared by the scenario. No adapter construction, connection, subscription, process inspection, or health check occurs during import or collection.
+只实例化并预检场景声明的服务和组件。导入或收集阶段不得构造适配器、建立连接、订阅、检查进程或执行健康检查。
 
-## HTTP and RPC
+## HTTP 与 RPC
 
-- Derive base address, context path, protocol, authentication, headers, serialization, timeout, and TLS from discovery and the active environment.
-- Use health, OpenAPI, query, or guaranteed-miss requests for read-only smoke.
-- Direct `requests`, `httpx`, and `urllib` calls use an explicit positive timeout. `urlopen` with request data is a write and is forbidden in smoke. An arbitrary fixture method such as `client.get()` is not transport proof.
-- A read-only RPC smoke call goes through a common `read_only_rpc` adapter that declares `READ`/`RPC`, a source anchor from discovery, one bounded non-write operation, and a returned real result.
-- Validate formal transport status and the design-defined business result separately.
-- Record `verified=True` only from a validation expression that consumes that call's result. HTTP smoke status is an integer and 5xx always fails.
-- A successful transport with a failed business result is a failure.
-- Do not retry a non-idempotent call unless design declares the idempotency semantics and the formal protocol declares the key shape.
-- Redact credentials and sensitive payload fields in diagnostics while retaining method, non-secret target identity, correlation key name, status, and bounded response summary.
+- 从发现结果和当前环境读取基础地址、上下文路径、协议、认证方式、请求头、序列化方式、超时和 TLS 配置。
+- 使用健康检查、OpenAPI、查询或保证未命中的请求执行只读冒烟检查。
+- 直接调用 `requests`、`httpx` 和 `urllib` 时必须设置明确且为正数的超时。携带请求数据的 `urlopen` 属于写操作，禁止用于冒烟检查。任意夹具方法（例如 `client.get()`）都不能证明传输层行为。
+- 只读 RPC 冒烟调用必须经过通用的 `read_only_rpc` 适配器；该适配器声明 `READ`/`RPC`、来自发现结果的源码锚点、一个有界的非写操作以及真实返回结果。
+- 分别验证正式传输状态和设计定义的业务结果。
+- 只有使用该调用结果的校验表达式才能记录 `verified=True`。HTTP 冒烟状态必须是整数，任何 5xx 都始终失败。
+- 传输成功但业务结果失败时，整体检查失败。
+- 除非设计声明幂等语义且正式协议声明键的形状，否则不得重试非幂等调用。
+- 在诊断信息中脱敏凭据和敏感载荷字段，同时保留方法、非敏感目标标识、关联键名称、状态和有界的响应摘要。
 
-## Messages
+## 消息
 
-For any discovered broker or gateway:
+对于发现到的任何 broker 或网关：
 
-1. create a unique run/scenario consumer identity;
-2. subscribe or capture starting position before the business action and wait for readiness;
-3. observe only a bounded offset/time window;
-4. match with design-defined correlation fields whose transport shape comes from the formal protocol;
-5. assert channel identity, key/headers, schema/version, and relevant business fields;
-6. close deterministically after success or failure.
+1. 创建唯一的运行/场景消费者标识；
+2. 在业务操作前订阅或捕获起始位置，并等待就绪；
+3. 只观察有界的偏移量/时间窗口；
+4. 使用设计定义的关联字段进行匹配，其传输形状必须来自正式协议；
+5. 断言通道标识、键/请求头、架构版本以及相关业务字段；
+6. 无论成功还是失败，都要确定性地关闭资源。
 
-Publishing is disabled by default. It requires a source-confirmed simulation contract, per-run authorization, and a configured test-only destination prefix or exact allowlist. Reject retained messages, unrestricted wildcards, or business destinations unless the source-backed test contract explicitly requires them and the user authorized the exact test environment.
+默认禁用发布。启用发布需要源代码确认的模拟契约、每次运行授权，以及配置好的仅测试目标前缀或精确允许列表。除非有源代码支持的测试契约明确要求且用户授权了确切测试环境，否则拒绝保留消息、无限制通配符和业务目标。
 
-For Kafka-like logs, wait for assignment and capture starting offsets. For MQTT-like brokers, use a unique client ID, protocol-defined QoS/TLS/session behavior, and deterministic disconnect. For other systems, preserve the same readiness, bounded observation, exact correlation, and cleanup invariants without forcing Kafka or MQTT terminology into generated code.
+对于类似 Kafka 的日志系统，等待分区分配并捕获起始偏移量。对于类似 MQTT 的 broker，使用唯一客户端 ID、协议定义的 QoS/TLS/会话行为以及确定性断开。对于其他系统，也必须保持相同的就绪、有界观察、精确关联和清理不变量，但不得将 Kafka 或 MQTT 术语强行写入生成代码。
 
-## Database observation
+## 数据库观察
 
-Observation repositories expose only parameterized read methods. Poll by the same scenario correlation key with a monotonic deadline and report the last observed record. Assert ownership, the requested business state/fields, and relevant relationships.
+观测仓储只提供参数化读取方法。使用同一场景关联键，在单调递增的截止时间前轮询，并报告最后一次观察到的记录。断言所有权、请求的业务状态/字段以及相关关系。
 
-A message proves publication; a database record proves persistence or consumption. When both are evidence sources, assert them independently, then compare every shared design/protocol-defined field. Define explicit mappings for different field names or representations. A time-range-only row, broad message match, or equal correlation ID alone is insufficient.
+消息可以证明已发布；数据库记录可以证明已持久化或已消费。当两者都是证据来源时，先分别断言，再比较所有共享且由设计/协议定义的字段。对于不同字段名或表示形式，必须定义明确映射。仅凭时间范围记录、宽泛的消息匹配或相同的关联 ID 都不足以形成证据。
 
-Database control follows [discovery-and-control-policy.md](discovery-and-control-policy.md). Keep control operations out of read repositories and test entrypoints. Multi-table setup is an ordered list of individually snapshotted, parameter-bound, exact single-row operations; restore attempted operations in reverse order and verify every restored state. Never use control SQL as the business action under test or to manufacture the final asserted result.
+数据库控制遵循 [discovery-and-control-policy.md](discovery-and-control-policy.md)。控制操作不得放入读取仓储或测试入口。多表设置必须是按顺序执行的列表，其中每项都是独立快照、绑定参数且精确定位单行的操作；按逆序恢复已尝试的操作，并验证每个恢复后的状态。不得使用控制 SQL 作为被测业务操作，也不得用它伪造最终断言结果。
 
-## Cache observation
+## 缓存观察
 
-Expose the smallest source-required read surface, such as exact-key value, existence, TTL, or exact hash fields. Cache evidence is secondary when a public API, event, operation record, or database provides stronger business evidence.
+只暴露源码要求的最小读取面，例如精确键值、是否存在、TTL 或精确哈希字段。当公开 API、事件、操作记录或数据库能够提供更强业务证据时，缓存证据只能作为次要证据。
 
-Load endpoint, credentials, logical database/index, TLS, serialization, and test prefix from the active environment. Bounded waits use monotonic deadlines and last-state diagnostics.
+从当前环境加载端点、凭据、逻辑数据库/索引、TLS、序列化方式和测试前缀。有界等待使用单调截止时间和最后状态诊断。
 
-If cleanup is necessary, a fixture may delete only an exact scenario-owned key under the configured test prefix. Reject wildcard deletion, namespace-wide clearing, database flushing, and deletion of pre-existing business keys.
+如需清理，夹具只能删除配置测试前缀下由当前场景精确拥有的键。拒绝通配符删除、清空整个命名空间、刷新数据库以及删除预先存在的业务键。
 
-## Schedulers and jobs
+## 调度器与作业
 
-Prefer an approved trigger or admin interface discovered in source. Correlate trigger arguments, execution record, and downstream state. A scheduler acknowledgement does not prove the job's business result.
+优先使用源码中发现的、经过批准的触发器或管理接口。关联触发参数、执行记录和下游状态。调度器确认并不能证明任务的业务结果。
 
-If time advancement or expiry simulation is needed, use a source-confirmed clock/configuration control or the controlled SQL policy. Snapshot the original state, isolate the target from other scenarios, trigger or await the job with a bounded deadline, verify its result, and restore the state.
+如果需要推进时间或模拟过期，使用源码确认的时钟/配置控制，或受控 SQL 策略。先快照原始状态，将目标与其他场景隔离，在有界截止时间内触发或等待任务，验证结果，然后恢复状态。
 
-Do not invoke an uncontrolled production schedule, alter global time, or call an undocumented scheduler endpoint.
+不得调用不受控的生产调度，不得修改全局时间，也不得调用未记录的调度器端点。
 
-## Dynamic configuration, mocks, and failure injection
+## 动态配置、模拟和故障注入
 
-- Use only controls found in application source/configuration and present in the scenario matrix.
-- Record the control scope, affected component, correlation/isolation method, prior value, intended value, and restoration evidence.
-- Default controls off. Enabling requires the exact target test environment and per-run authorization.
-- Apply controls as narrowly as the platform permits; reject global changes when unrelated traffic can be affected.
-- Snapshot before mutation, verify that the application consumed the change, and restore in guaranteed cleanup.
-- A mock response or injected failure must still be verified through the public business result and downstream evidence relevant to the scenario.
+- 只能使用应用源码/配置中发现且列在场景矩阵中的控制项。
+- 记录控制范围、受影响组件、关联/隔离方式、原值、目标值和恢复证据。
+- 控制项默认关闭。启用时必须指定准确的目标测试环境，并获得本次运行授权。
+- 按平台允许的最小范围应用控制；如果无关流量可能受到影响，则拒绝全局修改。
+- 修改前创建快照，确认应用已消费该变更，并在保证执行的清理阶段恢复。
+- 模拟响应或注入的故障仍必须通过公开业务结果和场景相关的下游证据进行验证。
 
-## Runtime diagnostics
+## 运行时诊断
 
-Every adapter reports only non-secret endpoint identity, component type, correlation-key name, bounded deadline, and last observed state. Never include credential values, complete connection strings, authorization headers, raw sensitive messages, or full database rows.
+每个适配器只报告非机密端点标识、组件类型、关联键名称、有界截止时间和最后观察状态。不得包含凭据值、完整连接字符串、授权标头、原始敏感消息或完整数据库行。
 
-Control and endpoint evidence is adapter-owned. Record it immediately after the real external call in the same straight-line block, derive endpoint status, summary, and verification from the returned object, and pass the same scenario-owned correlation value in a resource/key/selector or request-payload argument to both a write operation and its control event. Logging, headers, or tracing metadata do not establish isolation. Scenario steps and test entrypoints cannot emit these events.
+控制和端点证据由适配器负责。必须在同一段直线代码中紧跟真实外部调用记录证据，从返回对象推导端点状态、摘要和验证结果，并在资源/键/选择器或请求载荷参数中，将同一个场景所有的关联值同时传给写操作及其控制事件。日志、请求头或追踪元数据不能建立隔离。场景步骤和测试入口不得发出这些事件。
 
-Connection or runtime failures after preflight are failed smoke/business checks. They cannot be converted to `pending_environment`, `contract_blocked`, `skip`, or `xfail`.
+预检之后发生的连接或运行时故障属于失败的冒烟/业务检查。不得将其转换为 `pending_environment`、`contract_blocked`、`skip` 或 `xfail`。
 
-Likewise, a callable business entry that returns the wrong state, omits a downstream event, leaves a scheduler/consumer result absent, or reports transport success with an incorrect business envelope is a product/runtime failure with evidence. It is not `environment_missing`. Continue recording the remaining independently safe observations and cleanup before failing the scenario.
+同样，可调用的业务入口如果返回错误状态、遗漏下游事件、缺少调度器/消费者结果，或在业务信封错误时仍报告传输成功，都属于有证据的产品/运行时故障，而不是 `environment_missing`。在使场景失败前，继续记录其余独立且安全的观测并执行清理。

@@ -26,7 +26,7 @@ from ..core.schema import (
     BIZ_FLOW_SCHEMA_VERSION,
     validate_schema,
 )
-from ..core.artifacts import write_json
+from ..core.artifacts import lock_name, write_json
 from ..core.redaction import redact
 from .discovery import source_fingerprint, scan
 from .documents import apply_module_map, coverage, write_artifacts, write_discovery, _validate_mermaid
@@ -93,11 +93,18 @@ def _command_paths(argv: list[str]) -> tuple[Path, Path]:
     return project, _docs_root(project, docs)
 
 
-def _locked(argv: list[str], action):
+def _locked(argv: list[str], action, *, init: bool = False):
+    if any(value in {"-h", "--help"} for value in argv):
+        return action()
     try:
         project, docs_root = _command_paths(argv)
         if error := _write_scope_error(project, docs_root):
             print(f"ERROR: {error}", file=sys.stderr)
+            return 8
+        if init and not (project / ".git").exists():
+            return action()
+        if not init and not docs_root.is_dir():
+            print(f"ERROR: biz-flow is not initialized: {docs_root}", file=sys.stderr)
             return 8
         with _run_lock(docs_root):
             return action()
@@ -446,7 +453,7 @@ def _docs_root(project: Path, value: Path) -> Path:
 
 
 def init_command(argv: list[str]) -> int:
-    return _locked(argv, lambda: _init_command_unlocked(argv))
+    return _locked(argv, lambda: _init_command_unlocked(argv), init=True)
 
 
 def _init_command_unlocked(argv: list[str]) -> int:
@@ -495,6 +502,8 @@ _TRANSIENT_JSON = {
 def _remove_transient_artifacts(docs_root: Path) -> None:
     """Keep JSON/index/progress data process-local; Markdown and the YAML lock persist."""
     for path in docs_root.glob("*.json"):
+        if path.name == lock_name("biz-flow"):
+            continue
         try:
             path.unlink()
         except FileNotFoundError:
@@ -658,19 +667,19 @@ def _write_overview_report(docs_root: Path, result: ScanResult, report: dict[str
     entries = sorted(result.entries, key=lambda item: (item.module, item.entry_id))
     kinds = {"url", "webhook", "websocket", "sse"}
     lines = [
-        "# Business Flow Coverage Overview", "",
-        f"Git version: `{result.git.target}`", "",
-        "Module partition: user confirmed", "",
-        "## Coverage Statistics", "",
-        f"- Candidate entries: {result.candidate_entry_count}",
-        f"- Confirmed business entries: {len(entries)}",
-        f"- Excluded entries: {len(result.exclusions)}",
-        f"- HTTP entries: {sum(entry.kind in kinds for entry in entries)}",
-        f"- Scheduled entries: {sum(entry.kind == 'scheduled' for entry in entries)}",
-        f"- Message entries: {sum(entry.kind == 'message' for entry in entries)}",
-        f"- Unresolved findings: {len(result.unresolved)}",
-        f"- Mermaid errors: {len(report.get('coverage', {}).get('markdown_diagram_mismatches', [])) if isinstance(report.get('coverage'), dict) else 0}",
-        "", "## Module List", "",
+        "# 业务流程覆盖总览", "",
+        f"Git 版本：`{result.git.target}`", "",
+        "Module partition: user confirmed（模块划分：用户已确认）", "",
+        "## Coverage Statistics（覆盖统计）", "",
+        f"- Candidate entries（候选入口）：{result.candidate_entry_count}",
+        f"- Confirmed business entries（已确认业务入口）：{len(entries)}",
+        f"- Excluded entries（已排除入口）：{len(result.exclusions)}",
+        f"- HTTP entries（HTTP 入口）：{sum(entry.kind in kinds for entry in entries)}",
+        f"- Scheduled entries（定时任务入口）：{sum(entry.kind == 'scheduled' for entry in entries)}",
+        f"- Message entries（消息入口）：{sum(entry.kind == 'message' for entry in entries)}",
+        f"- Unresolved findings（未解决发现）：{len(result.unresolved)}",
+        f"- Mermaid errors（Mermaid 错误）：{len(report.get('coverage', {}).get('markdown_diagram_mismatches', [])) if isinstance(report.get('coverage'), dict) else 0}",
+        "", "## Module List（模块列表）", "",
     ]
     modules = sorted({entry.module for entry in entries})
     directive_map = {
@@ -681,7 +690,7 @@ def _write_overview_report(docs_root: Path, result: ScanResult, report: dict[str
         )
     }
     lines.extend(
-        f"- {module}: {sum(entry.module == module for entry in entries)} entries; file `{directive_map.get(module, '')}`"
+        f"- {module}: {sum(entry.module == module for entry in entries)} entries; file `{directive_map.get(module, '')}`（{sum(entry.module == module for entry in entries)} 个入口；文件）"
         for module in modules
     )
     lines.extend(["", "## Entry Details", "", "| 入口 ID | 业务描述 | 入口 | 归属 | 入口类型 | 源码位置 |", "| --- | --- | --- | --- | --- | --- |"])
@@ -690,13 +699,13 @@ def _write_overview_report(docs_root: Path, result: ScanResult, report: dict[str
         lines.append(
             f"| `{entry.entry_id}` | {title} | {entry.identifier} | `{directive_map.get(entry.module, '')}` | {entry.kind} | `{entry.file}:{entry.line}` |"
         )
-    lines.extend(["", "## Exclusions", ""])
+    lines.extend(["", "## Exclusions（排除项）", ""])
     lines.extend(f"- {item}" for item in sorted(result.exclusions))
     if not result.exclusions:
-        lines.append("- None")
-    lines.extend(["", "## Acceptance", "", "- Module partition: confirmed", "- Entry ownership: unique", "- Markdown generation: passed", "- Mermaid validation: passed"])
+        lines.append("- None（无）")
+    lines.extend(["", "## Acceptance（验收结果）", "", "- Module partition: confirmed（模块划分：已确认）", "- Entry ownership: unique（入口归属：唯一）", "- Markdown generation: passed（Markdown 生成：通过）", "- Mermaid validation: passed（Mermaid 校验：通过）"])
     if result.unresolved:
-        lines.extend(["", "## Unresolved Evidence", "", *[f"- {item}" for item in result.unresolved]])
+        lines.extend(["", "## 未解决证据", "", *[f"- {item}" for item in result.unresolved]])
     if directives:
         lines.extend(["", *directives])
     if marker:
@@ -1052,7 +1061,6 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
     _project(parser)
     parser.add_argument("--module")
     parser.add_argument("--commit", help="Git commit or ref; defaults to HEAD")
-    parser.add_argument("--full", action="store_true", help="Accepted for shared CLI compatibility")
     parser.add_argument("--confirm", action="store_true", help="Explicitly confirm the proposed module partition")
     args = parser.parse_args(argv)
     project = args.project.resolve()
@@ -1202,7 +1210,9 @@ def check_command(argv: list[str]) -> int:
         return 1
     forbidden_files = [
         path.name for path in docs_root.iterdir()
-        if path.is_file() and path.name != "biz-flow.yaml" and path.suffix.lower() != ".md"
+        if path.is_file()
+        and path.name not in {"biz-flow.yaml", lock_name("biz-flow")}
+        and path.suffix.lower() != ".md"
     ]
     forbidden_dirs = [path.name for path in docs_root.iterdir() if path.is_dir()]
     if forbidden_dirs:
@@ -1214,7 +1224,10 @@ def check_command(argv: list[str]) -> int:
     # Durable projects contain Markdown and the single YAML revision lock.
     # Validate that surface directly; JSON reports are intentionally not part
     # of the runtime contract anymore.
-    durable_json = [path for path in docs_root.glob("*.json") if path.is_file()]
+    durable_json = [
+        path for path in docs_root.glob("*.json")
+        if path.is_file() and path.name != lock_name("biz-flow")
+    ]
     if durable_json:
         print("biz-flow directory contains forbidden JSON artifacts: " + ", ".join(path.name for path in durable_json), file=sys.stderr)
         return 1

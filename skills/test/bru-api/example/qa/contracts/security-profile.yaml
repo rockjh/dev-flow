@@ -1,0 +1,20 @@
+version: 1
+source:
+  file: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\openapi.json
+  spec_version: 3.0.3
+  api_version: 1.0.0
+  sha256: 22560d4b15fc44d83be3f5c3ca880f9a2ca227f4d2e70f1930e80eca39ea009a
+auth-token:
+  type: authentication
+  header: Authorization
+  status: probe-required
+  security:
+  - '[{"bearerAuth": []}]'
+required-header-x-tenant-id:
+  type: required-header
+  header: X-Tenant-Id
+  status: probe-required
+required-header-idempotency-key:
+  type: required-header
+  header: Idempotency-Key
+  status: probe-required

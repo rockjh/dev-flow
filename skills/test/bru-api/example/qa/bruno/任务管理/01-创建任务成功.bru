@@ -1,0 +1,30 @@
+meta {
+  name: create-task-success
+  type: http
+}
+
+post {
+  url: {{base_url}}/tasks
+  body: json
+}
+
+headers {
+  Authorization: Bearer {{auth_token}}
+  X-Tenant-Id: {{tenant_id}}
+  Idempotency-Key: {{idempotency_key}}
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "taskType": "export",
+    "payload": {"format": "csv"}
+  }
+}
+
+tests {
+  test("返回排队状态", function() {
+    expect(res.status).to.equal(201);
+    expect(res.body.status).to.equal("queued");
+  });
+}

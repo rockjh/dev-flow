@@ -1,0 +1,20 @@
+meta {
+  name: cancel-task-running
+  type: http
+}
+
+post {
+  url: {{base_url}}/tasks/00000000-0000-4000-8000-000000000002/cancel
+}
+
+headers {
+  Authorization: Bearer {{auth_token}}
+  X-Tenant-Id: {{tenant_id}}
+}
+
+tests {
+  test("拒绝不可取消任务", function() {
+    expect(res.status).to.equal(409);
+    expect(res.body.code).to.equal("TASK_NOT_CANCELLABLE");
+  });
+}

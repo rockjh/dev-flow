@@ -1,4 +1,9 @@
 interface:
-  display_name: "Bruno API test generator"
-  short_description: "Generate Bruno tests and one Markdown execution report"
-  default_prompt: "Use the installed devflow CLI and route only API test requests to devflow/test/bru-api. Read OpenAPI, source/design evidence, and only the references required for the workflow. Preserve qa contracts, locks, ownership, safety, redaction, and executable Bruno/fixture formats. Generate human-facing Markdown and standard Mermaid sequenceDiagram flows, run static gates and Bruno, and return the redacted authoritative qa/reports/latest.md path with exit status. stop when evidence is missing, the target is ambiguous or unsafe, validation fails, or cleanup fails; never guess or bypass a gate."
+  display_name: "Bruno API \u6d4b\u8bd5\u751f\u6210"
+  short_description: "\u57fa\u4e8e biz-flow \u4ea7\u7269\u751f\u6210 API \u6d4b\u8bd5"
+  default_prompt: >-
+    使用已安装的 devflow CLI (installed devflow CLI)，只路由到 devflow/test/bru-api，并确认
+    devflow/doc/biz-flow 已完成。只读取 docs/biz-flow/ 的已确认 Markdown、锁和源码证据，
+    不重新维护业务设计；只生成 API 测试资产、中文 Bruno 请求、配置、锁和报告。
+    保留核心架构、安全、脱敏和所有权规则；stop when 证据缺失、目标不安全或校验失败，
+    返回 redacted authoritative 报告或产物路径。

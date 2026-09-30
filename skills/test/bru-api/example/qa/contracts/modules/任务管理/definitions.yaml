@@ -1,0 +1,75 @@
+version: 1
+module: tasks
+swagger_tag: 任务管理
+definitions:
+  TaskPage:
+    type: object
+    required:
+    - items
+    - page
+    - pageSize
+    - total
+    properties:
+      items:
+        type: array
+        items:
+          type: object
+          required:
+          - taskId
+          - taskType
+          - status
+          properties:
+            taskId:
+              type: string
+              format: uuid
+            taskType:
+              type: string
+            status:
+              type: string
+              enum:
+              - queued
+              - running
+              - cancelling
+              - completed
+              - failed
+          $ref: '#/components/schemas/Task'
+      page:
+        type: integer
+      pageSize:
+        type: integer
+      total:
+        type: integer
+  Task:
+    type: object
+    required:
+    - taskId
+    - taskType
+    - status
+    properties:
+      taskId:
+        type: string
+        format: uuid
+      taskType:
+        type: string
+      status:
+        type: string
+        enum:
+        - queued
+        - running
+        - cancelling
+        - completed
+        - failed
+  CreateTask:
+    type: object
+    required:
+    - taskType
+    - payload
+    properties:
+      taskType:
+        type: string
+        enum:
+        - reindex
+        - export
+      payload:
+        type: object
+        minProperties: 1

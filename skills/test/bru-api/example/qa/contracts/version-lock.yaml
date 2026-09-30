@@ -1,0 +1,9 @@
+version: 1
+status: draft
+business:
+  repo: E:\code\dev-flow\skills\test\bru-api\example
+  commit: filesystem:4e4e297b23f7e072
+  ref: filesystem
+  source_digest: 4e4e297b23f7e0723323b3dc810cb41ec6c2bb3ef510337888d5657bf54455e6
+  initialized_at: '2026-09-29T14:59:05.052625+00:00'
+  baseline_status: draft

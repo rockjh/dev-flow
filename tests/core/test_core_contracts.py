@@ -33,6 +33,21 @@ class CoreContractTests(unittest.TestCase):
             with self.assertRaisesRegex(DevflowError, "schema"):
                 require_lock(root, tool_version="1", domain="e2e", schema_version="new")
 
+    def test_biz_flow_project_lock_is_owned_by_docs_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = write_lock(root, tool_version="1", domain="biz-flow", schema_version="1")
+            self.assertEqual(root / "docs" / "biz-flow" / "biz-flow.json", path)
+            self.assertFalse((root / ".devflow.lock.json").exists())
+            require_lock(root, tool_version="1", domain="biz-flow", schema_version="1")
+
+    def test_biz_flow_does_not_accept_old_root_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_lock(root, tool_version="1", domain="e2e", schema_version="1")
+            with self.assertRaisesRegex(DevflowError, "docs.*biz-flow.*biz-flow.json"):
+                require_lock(root, tool_version="1", domain="biz-flow", schema_version="1")
+
     def test_config_schema_matches_runtime_optional_polling_contract(self) -> None:
         document = {
             "active_environment": "test",

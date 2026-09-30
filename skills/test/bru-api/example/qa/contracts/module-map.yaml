@@ -1,0 +1,7 @@
+version: 1
+modules:
+  - id: tasks
+    name: 任务管理
+    directory: 任务管理
+    business_scope: 租户范围内的任务创建、查询、详情和取消
+    swagger_tags: [任务管理]

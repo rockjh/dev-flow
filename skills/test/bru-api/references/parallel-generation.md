@@ -1,52 +1,35 @@
-# Parallel Module Generation And Execution
+# 妯″潡骞惰鐢熸垚涓庢墽琛?
 
-Use workers only after the coordinator freezes the OpenAPI inventory, module map, shared execution configuration, and `qa/constraints/rules.yaml`.
-
+浠呭湪鍗忚皟鑰呭喕缁?OpenAPI 娓呭崟銆佹ā鍧楁槧灏勩€佸叡浜墽琛岄厤缃拰 `qa/constraints/rules.yaml` 鍚庝娇鐢ㄥ伐浣滃櫒銆?
 Before dispatching each assignment, record its current-workspace boundary:
 
 ```bash
 devflow bru-api worker-start --module <module>
 ```
 
-## Ownership
+## 褰掑睘
 
-| Owner | Writable scope |
+| 璐熻矗浜?| 鍙啓鑼冨洿 |
 | --- | --- |
-| Coordinator | Global contracts, locks, constraint merges, execution configuration, collection files, cross-module flows, and final reports |
-| Module worker | Its `contracts/modules/<directory>/` and `bruno/<directory>/` only; execution evidence and logs remain process-local |
+| 鍗忚皟鑰?| 鍏ㄥ眬濂戠害銆侀攣銆佺害鏉熷悎骞躲€佹墽琛岄厤缃€侀泦鍚堟枃浠躲€佽法妯″潡娴佺▼鍜屾渶缁堟姤鍛?|
+| 妯″潡宸ヤ綔鍣?| 浠呴檺鍏?`contracts/modules/<directory>/` 鍜?`bruno/<directory>/`锛涙墽琛岃瘉鎹拰鏃ュ織淇濈暀鍦ㄨ繘绋嬫湰鍦?|
 
-Workers may read shared contracts, configuration, prior evidence, and execution-support source. Source inspection is limited to runtime configuration, authentication/header setup, fixtures, test-data preparation, and mock toggles; it must not supply business rules or expected results. They must not write business code, another module, `index.yaml`, `generation-state.yaml`, `qa-lock.yaml`, `version-lock.yaml`, `collection.bru`, shared environments, or cross-module flows.
+宸ヤ綔鍣ㄥ彲浠ヨ鍙栧叡浜绾︺€侀厤缃€佹棦鏈夎瘉鎹拰鎵ц鏀寔婧愪唬鐮併€傛簮浠ｇ爜妫€鏌ヤ粎闄愯繍琛屾椂閰嶇疆銆佽璇?鏍囧ご璁剧疆銆佸す鍏枫€佹祴璇曟暟鎹噯澶囧拰妯℃嫙寮€鍏筹紱涓嶅緱鎻愪緵涓氬姟瑙勫垯鎴栭鏈熺粨鏋溿€備笉寰楀啓鍏ヤ笟鍔′唬鐮併€佸叾浠栨ā鍧椼€乣index.yaml`銆乣generation-state.yaml`銆乣qa-lock.yaml`銆乣version-lock.yaml`銆乣collection.bru`銆佸叡浜幆澧冩垨璺ㄦā鍧楁祦绋嬨€?
+鍗忚皟鑰?records each assignment and gives the constraint validator the worker role, assigned module, and changed paths. `module-worker-boundary` and `business-code-immutable` fail any path outside the table above.
 
-The coordinator records each assignment and gives the constraint validator the worker role, assigned module, and changed paths. `module-worker-boundary` and `business-code-immutable` fail any path outside the table above.
+## 宸ヤ綔鍣ㄦ祦绋?
 
-## Worker Sequence
+1. 闃呰鍒嗛厤鐨勬ā鍧楀绾﹀拰鍏变韩鏈哄櫒瑙勫垯銆?2. 妫€鏌ユ墽琛屽垎閰嶇敤渚嬫墍闇€鐨勮繍琛屾椂閰嶇疆銆佽璇?绛惧悕/鏍囧ご璁剧疆銆佸す鍏枫€佹暟鎹簱娴嬭瘯鏁版嵁鍑嗗銆佷笂浼犳ā鏉垮拰澶栭儴鏈嶅姟妯℃嫙寮€鍏炽€?3. 闃呰宸插闃呯殑璁捐瑙勫垯鍜?OpenAPI 濂戠害锛岄殢鍚庣紪鍐欐ā鍧楄璁″紩鐢ㄣ€乣logic.yaml`銆乣cases.yaml`锛屽苟鍦ㄩ€傜敤鏃剁紪鍐欐槑纭祦绋?鎺掗櫎椤广€傛簮鍙戠幇浠呬綔涓烘墽琛屾敮鎸侊紝涓嶈兘鍒涘缓涓氬姟鐢ㄤ緥鎴栭鏈熷€笺€?4. 杩愯妯″潡鐗╁寲銆傚畠鍙啓鍏ユā鍧?Bruno 鐩綍銆乣materialization-state.yaml`銆乣module-lock.yaml` 鍜屾ā鍧楁枃妗ｃ€?5. 杩愯 `devflow bru-api run --module <module>`銆傚畠楠岃瘉妯″潡閿侊紝骞跺皢璇佹嵁鍜屾棩蹇椾繚瀛樺湪杩涚▼鏈湴涓存椂鐩綍銆?6. 杩愯 `devflow bru-api worker-check --module <module> --stage post-execution`銆傚彉鏇磋矾寰勬牴鎹褰曠殑蹇収璁＄畻銆?7. 杩斿洖瑙勫垯/鐢ㄤ緥/閫昏緫/娴佺▼ ID銆佹寜绫诲埆褰掔撼鐨勫け璐ヤ互鍙婇樆濉炴€х殑浜哄伐纭椤广€俙qa/reports/latest.md` 鐢卞崗璋冭€呰礋璐ｃ€?
+宸ヤ綔鍣ㄥけ璐ュ彧褰卞搷瀵瑰簲妯″潡锛屽叾浠栧伐浣滃櫒缁х画銆?
 
-1. Read the assigned module contracts and the shared machine rules.
-2. Inspect runtime configuration, authentication/signature/header setup, fixtures, database test-data preparation, upload templates, and external-service mock toggles needed to execute the assigned cases.
-3. Read the assigned reviewed design rules and OpenAPI contract, then write module design references, `logic.yaml`, `cases.yaml`, and explicit flows/exclusions when applicable. Source discovery remains execution support only and cannot create business cases or expected values.
-4. Run module materialization. It writes only the module Bruno directory, `materialization-state.yaml`, `module-lock.yaml`, and module documentation.
-5. Run `devflow bru-api run --module <module>`. It validates the module lock and keeps evidence and logs in a process-local temporary directory.
-6. Run `devflow bru-api worker-check --module <module> --stage post-execution`. Changed paths are calculated from the recorded snapshot.
-7. Return rule/case/logic/flow IDs, failures by category, and any blocking manual confirmations. The coordinator owns `qa/reports/latest.md`.
+## 鐙珛鎬т笌娴佺▼
 
-A worker failure affects only that module. Other workers continue.
-
-## Independence And Flows
-
-A module run cannot depend on another module having passed. Shared setup or captured identifiers require a coordinator-owned explicit flow. Never encode a dependency through filenames, module order, or shared mutable fixtures.
-
-Parallel execution additionally requires isolated accounts, tenants, records, and fixture paths. Without demonstrated isolation, workers may generate concurrently but the coordinator executes modules sequentially.
-
-## Coordinator Merge
+妯″潡杩愯涓嶈兘渚濊禆鍏朵粬妯″潡閫氳繃銆傚叡浜缃垨鎹曡幏鐨勬爣璇嗙闇€瑕佺敱鍗忚皟鑰呰礋璐ｇ殑鏄庣‘娴佺▼銆備笉寰楅€氳繃鏂囦欢鍚嶃€佹ā鍧楅『搴忔垨鍏变韩鍙彉澶瑰叿缂栫爜渚濊禆銆?
+骞惰鎵ц杩樿姹傞殧绂昏处鍙枫€佺鎴枫€佽褰曞拰澶瑰叿璺緞銆傛湭璇佹槑闅旂鏃讹紝宸ヤ綔鍣ㄥ彲浠ュ苟鍙戠敓鎴愶紝浣嗗崗璋冭€呭繀椤婚『搴忔墽琛屾ā鍧椼€?
+## 鍗忚皟鑰呭悎骞?
 
 After workers finish, the coordinator:
 
-1. validates each worker snapshot boundary and module lock;
-2. validates shared design rules and keeps observed evidence process-local;
-3. regenerates `index.yaml` and `generation-state.yaml` without resetting unchanged successful cases;
-4. materializes globally and refreshes `qa-lock.yaml`;
-5. validates cross-module flows;
-6. writes the single `qa/reports/latest.md` summary after the all-module run; and
-7. runs the all-module collection only when a coordinator-owned cross-module flow requires it.
-
-Worker reports are inputs, not proof. Shared constraints, global reconciliation, and execution evidence are authoritative.
+1. 楠岃瘉姣忎釜宸ヤ綔鍣ㄧ殑蹇収杈圭晫鍜屾ā鍧楅攣锛?2. 楠岃瘉鍏变韩璁捐瑙勫垯锛屽苟灏嗚瀵熻瘉鎹繚鐣欏湪杩涚▼鏈湴锛?3. 閲嶆柊鐢熸垚 `index.yaml` 鍜?`generation-state.yaml`锛屼笉閲嶇疆鏈敼鍙樼殑鎴愬姛鐢ㄤ緥锛?4. 鍏ㄥ眬鐗╁寲骞跺埛鏂?`qa-lock.yaml`锛?5. 楠岃瘉璺ㄦā鍧楁祦绋嬶紱
+6. 鍦ㄥ叏妯″潡杩愯鍚庡啓鍏ュ敮涓€鐨?`qa/reports/latest.md` 鎽樿锛涗互鍙?7. 浠呭綋鍗忚皟鑰呰礋璐ｇ殑璺ㄦā鍧楁祦绋嬮渶瑕佹椂杩愯鍏ㄦā鍧楅泦鍚堛€?
+宸ヤ綔鍣ㄦ姤鍛婃槸杈撳叆锛屼笉鏄瘉鏄庛€傚叡浜害鏉熴€佸叏灞€鏍稿鍜屾墽琛岃瘉鎹叿鏈夋潈濞佹€с€?

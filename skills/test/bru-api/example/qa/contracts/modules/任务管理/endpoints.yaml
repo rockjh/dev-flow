@@ -1,0 +1,654 @@
+version: 1
+module: tasks
+name: 任务管理
+swagger_tag: 任务管理
+tag_description: tenant-scoped task creation, search, retrieval, and cancellation
+source:
+  file: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\openapi.json
+  spec_version: 3.0.3
+  api_version: 1.0.0
+  sha256: 22560d4b15fc44d83be3f5c3ca880f9a2ca227f4d2e70f1930e80eca39ea009a
+endpoints:
+- id: LISTTASKS_GET_TASKS
+  method: GET
+  path: /tasks
+  operation_id: listTasks
+  tags:
+  - tasks
+  summary: List tasks
+  parameters:
+  - name: X-Tenant-Id
+    in: header
+    required: true
+    $ref: '#/components/parameters/TenantId'
+    schema:
+      type: string
+      minLength: 1
+  - name: page
+    in: query
+    required: false
+    $ref: '#/components/parameters/Page'
+    schema:
+      type: integer
+      minimum: 1
+      default: 1
+  - name: pageSize
+    in: query
+    required: false
+    $ref: '#/components/parameters/PageSize'
+    schema:
+      type: integer
+      minimum: 1
+      maximum: 100
+      default: 20
+  - name: status
+    in: query
+    required: false
+    $ref: '#/components/parameters/Status'
+    schema:
+      type: string
+      enum:
+      - queued
+      - running
+      - cancelling
+      - completed
+      - failed
+  - name: sort
+    in: query
+    required: false
+    $ref: '#/components/parameters/Sort'
+    schema:
+      type: string
+      enum:
+      - createdAt.asc
+      - createdAt.desc
+  request_body: null
+  responses:
+    '200':
+      description: Task page
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+            - items
+            - page
+            - pageSize
+            - total
+            properties:
+              items:
+                type: array
+                items:
+                  type: object
+                  required:
+                  - taskId
+                  - taskType
+                  - status
+                  properties:
+                    taskId:
+                      type: string
+                      format: uuid
+                    taskType:
+                      type: string
+                    status:
+                      type: string
+                      enum:
+                      - queued
+                      - running
+                      - cancelling
+                      - completed
+                      - failed
+                  $ref: '#/components/schemas/Task'
+              page:
+                type: integer
+              pageSize:
+                type: integer
+              total:
+                type: integer
+            $ref: '#/components/schemas/TaskPage'
+    '400':
+      description: Invalid query
+    '401':
+      description: Unauthenticated
+    '403':
+      description: Forbidden
+  security: &id001
+  - bearerAuth: []
+  evidence:
+    source_kind: openapi
+    file: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\openapi.json
+    symbol: listTasks
+    line: 1
+    endpoint_scope:
+    - LISTTASKS_GET_TASKS
+    confidence: high
+  security_headers:
+  - Authorization
+  obligations:
+  - id: VALIDATION:GET /tasks:header.X-Tenant-Id:required
+    kind: validation
+    target: header.X-Tenant-Id
+    constraint: required
+    evidence: true
+  - id: VALIDATION:GET /tasks:header.X-Tenant-Id:minLength
+    kind: validation
+    target: header.X-Tenant-Id
+    constraint: minLength
+    evidence: 1
+  - id: QUERY:GET /tasks:query.page:minimum
+    kind: query
+    target: query.page
+    constraint: minimum
+    evidence: 1
+  - id: QUERY:GET /tasks:query.pageSize:minimum
+    kind: query
+    target: query.pageSize
+    constraint: minimum
+    evidence: 1
+  - id: QUERY:GET /tasks:query.pageSize:maximum
+    kind: query
+    target: query.pageSize
+    constraint: maximum
+    evidence: 100
+  - id: QUERY:GET /tasks:query.status:enum
+    kind: query
+    target: query.status
+    constraint: enum
+    evidence:
+    - queued
+    - running
+    - cancelling
+    - completed
+    - failed
+  - id: QUERY:GET /tasks:query.sort:enum
+    kind: query
+    target: query.sort
+    constraint: enum
+    evidence:
+    - createdAt.asc
+    - createdAt.desc
+  primary_tag: tasks
+  swagger_tag: 任务管理
+  tag_description: Tenant-scoped task lifecycle
+  module: tasks
+  case_ids:
+  - LISTTASKS_GET_TASKS_MISSING_X_TENANT_ID
+  - LISTTASKS_GET_TASKS_INVALID_MINLENGTH_X_TENANT_ID
+  - LISTTASKS_GET_TASKS_INVALID_MINIMUM_PAGE
+  - LISTTASKS_GET_TASKS_INVALID_MINIMUM_PAGESIZE
+  - LISTTASKS_GET_TASKS_INVALID_MAXIMUM_PAGESIZE
+  - LISTTASKS_GET_TASKS_INVALID_STATUS
+  - LISTTASKS_GET_TASKS_INVALID_SORT
+  - LISTTASKS_GET_TASKS_TASK_LIST_PAGE
+  - LISTTASKS_GET_TASKS_TASK_LIST_EMPTY
+  scenario_matrix:
+    success:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    authentication:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    authorization:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    validation:
+      applicable: true
+      status: inferred
+      reason: 契约声明了输入校验约束
+    business_error:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    query:
+      applicable: true
+      status: confirmed
+      reason: reviewed design rule declares this scenario
+    safety:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    file:
+      applicable: false
+      status: confirmed
+      reason: 接口不是文件上传或下载
+- id: CREATETASK_POST_TASKS
+  method: POST
+  path: /tasks
+  operation_id: createTask
+  tags:
+  - tasks
+  summary: Create a task
+  parameters:
+  - name: X-Tenant-Id
+    in: header
+    required: true
+    $ref: '#/components/parameters/TenantId'
+    schema:
+      type: string
+      minLength: 1
+  - name: Idempotency-Key
+    in: header
+    required: true
+    $ref: '#/components/parameters/IdempotencyKey'
+    schema:
+      type: string
+      minLength: 8
+      maxLength: 80
+      example: '{{idempotency_key}}'
+      x-local-environment: idempotency_key
+  request_body:
+    required: true
+    content:
+      application/json:
+        schema:
+          type: object
+          required:
+          - taskType
+          - payload
+          properties:
+            taskType:
+              type: string
+              enum:
+              - reindex
+              - export
+            payload:
+              type: object
+              minProperties: 1
+          $ref: '#/components/schemas/CreateTask'
+  responses:
+    '201':
+      description: Task accepted
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+            - taskId
+            - taskType
+            - status
+            properties:
+              taskId:
+                type: string
+                format: uuid
+              taskType:
+                type: string
+              status:
+                type: string
+                enum:
+                - queued
+                - running
+                - cancelling
+                - completed
+                - failed
+            $ref: '#/components/schemas/Task'
+    '400':
+      description: Invalid request
+    '401':
+      description: Unauthenticated
+    '403':
+      description: Forbidden
+    '409':
+      description: Idempotency conflict
+    '415':
+      description: Unsupported media type
+  security: *id001
+  evidence:
+    source_kind: openapi
+    file: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\openapi.json
+    symbol: createTask
+    line: 1
+    endpoint_scope:
+    - CREATETASK_POST_TASKS
+    confidence: high
+  security_headers:
+  - Authorization
+  obligations:
+  - id: VALIDATION:POST /tasks:header.X-Tenant-Id:required
+    kind: validation
+    target: header.X-Tenant-Id
+    constraint: required
+    evidence: true
+  - id: VALIDATION:POST /tasks:header.X-Tenant-Id:minLength
+    kind: validation
+    target: header.X-Tenant-Id
+    constraint: minLength
+    evidence: 1
+  - id: VALIDATION:POST /tasks:header.Idempotency-Key:required
+    kind: validation
+    target: header.Idempotency-Key
+    constraint: required
+    evidence: true
+  - id: VALIDATION:POST /tasks:header.Idempotency-Key:minLength
+    kind: validation
+    target: header.Idempotency-Key
+    constraint: minLength
+    evidence: 8
+  - id: VALIDATION:POST /tasks:header.Idempotency-Key:maxLength
+    kind: validation
+    target: header.Idempotency-Key
+    constraint: maxLength
+    evidence: 80
+  - id: VALIDATION:POST /tasks:body.taskType:missing
+    kind: validation
+    target: body.taskType
+    constraint: missing
+    evidence: true
+  - id: VALIDATION:POST /tasks:body.taskType:enum
+    kind: validation
+    target: body.taskType
+    constraint: enum
+    evidence:
+    - reindex
+    - export
+  - id: VALIDATION:POST /tasks:body.payload:missing
+    kind: validation
+    target: body.payload
+    constraint: missing
+    evidence: true
+  - id: VALIDATION:POST /tasks:Content-Type:content-type
+    kind: validation
+    target: Content-Type
+    constraint: content-type
+    evidence: application/json
+  primary_tag: tasks
+  swagger_tag: 任务管理
+  tag_description: Tenant-scoped task lifecycle
+  module: tasks
+  case_ids:
+  - CREATETASK_POST_TASKS_MISSING_X_TENANT_ID
+  - CREATETASK_POST_TASKS_INVALID_MINLENGTH_X_TENANT_ID
+  - CREATETASK_POST_TASKS_MISSING_IDEMPOTENCY_KEY
+  - CREATETASK_POST_TASKS_INVALID_MINLENGTH_IDEMPOTENCY_KEY
+  - CREATETASK_POST_TASKS_INVALID_MAXLENGTH_IDEMPOTENCY_KEY
+  - CREATETASK_POST_TASKS_MISSING_BODY_TASKTYPE
+  - CREATETASK_POST_TASKS_MISSING_BODY_PAYLOAD
+  - CREATETASK_POST_TASKS_INVALID_BODY_ENUM_TASKTYPE
+  - CREATETASK_POST_TASKS_INVALID_CONTENT_TYPE
+  - CREATETASK_POST_TASKS_TASK_CREATE_ACCEPTED
+  - CREATETASK_POST_TASKS_TASK_CREATE_CONFLICT
+  scenario_matrix:
+    success:
+      applicable: true
+      status: confirmed
+      reason: reviewed design rule declares this scenario
+    authentication:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    authorization:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    validation:
+      applicable: true
+      status: inferred
+      reason: 契约声明了输入校验约束
+    business_error:
+      applicable: true
+      status: confirmed
+      reason: reviewed design rule declares this scenario
+    query:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    safety:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    file:
+      applicable: false
+      status: confirmed
+      reason: 接口不是文件上传或下载
+- id: GETTASK_GET_TASKS_TASKID
+  method: GET
+  path: /tasks/{taskId}
+  operation_id: getTask
+  tags:
+  - tasks
+  summary: Get a task
+  parameters:
+  - name: X-Tenant-Id
+    in: header
+    required: true
+    $ref: '#/components/parameters/TenantId'
+    schema:
+      type: string
+      minLength: 1
+  - name: taskId
+    in: path
+    required: true
+    $ref: '#/components/parameters/TaskId'
+    schema:
+      type: string
+      format: uuid
+      example: '{{task_id}}'
+      x-local-environment: task_id
+  request_body: null
+  responses:
+    '200':
+      description: Task
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+            - taskId
+            - taskType
+            - status
+            properties:
+              taskId:
+                type: string
+                format: uuid
+              taskType:
+                type: string
+              status:
+                type: string
+                enum:
+                - queued
+                - running
+                - cancelling
+                - completed
+                - failed
+            $ref: '#/components/schemas/Task'
+    '401':
+      description: Unauthenticated
+    '403':
+      description: Forbidden
+    '404':
+      description: Not found
+  security: *id001
+  evidence:
+    source_kind: openapi
+    file: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\openapi.json
+    symbol: getTask
+    line: 1
+    endpoint_scope:
+    - GETTASK_GET_TASKS_TASKID
+    confidence: high
+  security_headers:
+  - Authorization
+  obligations:
+  - id: VALIDATION:GET /tasks/{taskId}:header.X-Tenant-Id:required
+    kind: validation
+    target: header.X-Tenant-Id
+    constraint: required
+    evidence: true
+  - id: VALIDATION:GET /tasks/{taskId}:header.X-Tenant-Id:minLength
+    kind: validation
+    target: header.X-Tenant-Id
+    constraint: minLength
+    evidence: 1
+  - id: VALIDATION:GET /tasks/{taskId}:path.taskId:format
+    kind: validation
+    target: path.taskId
+    constraint: format
+    evidence: uuid
+  primary_tag: tasks
+  swagger_tag: 任务管理
+  tag_description: Tenant-scoped task lifecycle
+  module: tasks
+  case_ids:
+  - GETTASK_GET_TASKS_TASKID_TASK_GET_OWNED
+  - GETTASK_GET_TASKS_TASKID_TASK_GET_MISSING
+  scenario_matrix:
+    success:
+      applicable: true
+      status: confirmed
+      reason: reviewed design rule declares this scenario
+    authentication:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    authorization:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    validation:
+      applicable: true
+      status: inferred
+      reason: 契约声明了输入校验约束
+    business_error:
+      applicable: true
+      status: confirmed
+      reason: reviewed design rule declares this scenario
+    query:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    safety:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    file:
+      applicable: false
+      status: confirmed
+      reason: 接口不是文件上传或下载
+- id: CANCELTASK_POST_TASKS_TASKID_CANCEL
+  method: POST
+  path: /tasks/{taskId}/cancel
+  operation_id: cancelTask
+  tags:
+  - tasks
+  summary: Request cancellation
+  parameters:
+  - name: X-Tenant-Id
+    in: header
+    required: true
+    $ref: '#/components/parameters/TenantId'
+    schema:
+      type: string
+      minLength: 1
+  - name: taskId
+    in: path
+    required: true
+    $ref: '#/components/parameters/TaskId'
+    schema:
+      type: string
+      format: uuid
+      example: '{{task_id}}'
+      x-local-environment: task_id
+  request_body: null
+  responses:
+    '202':
+      description: Cancellation requested
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+            - taskId
+            - taskType
+            - status
+            properties:
+              taskId:
+                type: string
+                format: uuid
+              taskType:
+                type: string
+              status:
+                type: string
+                enum:
+                - queued
+                - running
+                - cancelling
+                - completed
+                - failed
+            $ref: '#/components/schemas/Task'
+    '401':
+      description: Unauthenticated
+    '403':
+      description: Forbidden
+    '404':
+      description: Not found
+    '409':
+      description: Not cancellable
+  security: *id001
+  evidence:
+    source_kind: openapi
+    file: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\openapi.json
+    symbol: cancelTask
+    line: 1
+    endpoint_scope:
+    - CANCELTASK_POST_TASKS_TASKID_CANCEL
+    confidence: high
+  security_headers:
+  - Authorization
+  obligations:
+  - id: VALIDATION:POST /tasks/{taskId}/cancel:header.X-Tenant-Id:required
+    kind: validation
+    target: header.X-Tenant-Id
+    constraint: required
+    evidence: true
+  - id: VALIDATION:POST /tasks/{taskId}/cancel:header.X-Tenant-Id:minLength
+    kind: validation
+    target: header.X-Tenant-Id
+    constraint: minLength
+    evidence: 1
+  - id: VALIDATION:POST /tasks/{taskId}/cancel:path.taskId:format
+    kind: validation
+    target: path.taskId
+    constraint: format
+    evidence: uuid
+  primary_tag: tasks
+  swagger_tag: 任务管理
+  tag_description: Tenant-scoped task lifecycle
+  module: tasks
+  case_ids:
+  - CANCELTASK_POST_TASKS_TASKID_CANCEL_TASK_CANCEL_QUEUED
+  - CANCELTASK_POST_TASKS_TASKID_CANCEL_TASK_CANCEL_RUNNING
+  scenario_matrix:
+    success:
+      applicable: true
+      status: confirmed
+      reason: reviewed design rule declares this scenario
+    authentication:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    authorization:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    validation:
+      applicable: true
+      status: inferred
+      reason: 契约声明了输入校验约束
+    business_error:
+      applicable: true
+      status: confirmed
+      reason: reviewed design rule declares this scenario
+    query:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    safety:
+      applicable: false
+      status: confirmed
+      reason: reviewed design rules do not declare this scenario
+    file:
+      applicable: false
+      status: confirmed
+      reason: 接口不是文件上传或下载

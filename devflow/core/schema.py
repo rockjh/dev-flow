@@ -88,11 +88,11 @@ E2E_RUN_STAGES = (
 
 COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
     "bru-api.init": {
-        "options": {"--qa-root": "path", "--design-root": "path[]", "--design-file": "path[]"}
+        "options": {"--qa-root": "path"}
     },
     "bru-api.understand": {
         "options": {
-            "--qa-root": "path", "--openapi": "path", "--design-root": "path[]", "--design-file": "path[]",
+            "--qa-root": "path", "--openapi": "path",
         }
     },
     "bru-api.generate": {
@@ -103,8 +103,6 @@ COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
             "--incremental": "boolean",
             "--no-seed-cases": "boolean",
             "--source-root": "path[]",
-            "--design-root": "path[]",
-            "--design-file": "path[]",
             "--coverage-profile": ["contract-draft", "full-matrix"],
             "--base-url": "loopback-url[]",
             "--port": "integer[]",
@@ -542,7 +540,7 @@ SCENARIO_DOCUMENT_SCHEMA = _object(
                     "action": NONEMPTY_STRING,
                     "control": {"type": "string", "enum": list(E2E_CONTROL_NAMES)},
                     "side_effect": {"type": "string", "enum": ["none", "read", "write"]},
-                    "data_ref": {"type": "string", "pattern": "^业务数据\\.json#/"},
+                    "data_ref": {"type": "string", "pattern": "^涓氬姟鏁版嵁\\.json#/"},
                     "expect": NONEMPTY_STRING_LIST,
                     "status": {"type": "string", "enum": list(E2E_STEP_STATUSES)},
                     "status_reason": NONEMPTY_STRING,
@@ -596,7 +594,7 @@ SCENARIO_DOCUMENT_SCHEMA = _object(
 SCENARIO_SCHEMA: dict[str, Any] = {
     "schema_version": E2E_GATE_SCHEMA_VERSION,
     "contract": "e2e.scenario",
-    "path": "scenarios/<scenario>/场景定义.yaml",
+    "path": "scenarios/<scenario>/鍦烘櫙瀹氫箟.yaml",
     "required": list(SCENARIO_REQUIRED),
     "status": list(E2E_SCENARIO_STATUSES),
     "generation_mode": list(E2E_GENERATION_MODES),
@@ -606,7 +604,7 @@ SCENARIO_SCHEMA: dict[str, Any] = {
     "candidate_kinds": list(E2E_CANDIDATE_KINDS),
     "candidate_status": list(E2E_CANDIDATE_STATUSES),
     "document": SCENARIO_DOCUMENT_SCHEMA,
-    "required_sibling_artifacts": ["业务数据.json", "业务流程图.md", "test_<scenario>.py"],
+    "required_sibling_artifacts": ["涓氬姟鏁版嵁.json", "涓氬姟娴佺▼鍥?md", "test_<scenario>.py"],
     "machine_gate": "devflow e2e check --gate contracts",
 }
 
@@ -886,7 +884,7 @@ CONFIG_SCHEMA: dict[str, Any] = {
             },
             additional=True,
         ),
-        "scenarios/<scenario>/业务数据.json": {
+        "scenarios/<scenario>/涓氬姟鏁版嵁.json": {
             "type": "object",
             "additionalProperties": {"type": "object"},
             "description": "Top-level keys are exact environment names; data_ref resolves only inside the active environment.",

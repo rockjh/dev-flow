@@ -74,3 +74,14 @@ def test_mermaid_success_uses_cleaned_label() -> None:
     diagram = _diagram(entry)
     assert "SECRET" not in diagram
     assert "password: [REDACTED]" in diagram
+
+
+def test_error_code_prefers_raised_literal_over_condition_status() -> None:
+    from devflow.doc_biz_flow.discovery import _error
+
+    evidence = _error(
+        'payment_id not in PAYMENTS or status != "PAID" -> raise OrderError("PAYMENT_FAILED")',
+        "app.py",
+        10,
+    )
+    assert evidence.code == "PAYMENT_FAILED"

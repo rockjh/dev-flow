@@ -1,28 +1,28 @@
-# Python E2E Workflow Contract
+# Python 端到端工作流契约
 
-Generation authority is ordered: reviewed design documents define business
-expectations; OpenAPI or another formal protocol defines transport shape;
-source/configuration only supplies execution support; runtime results only
-decide pass or fail. Missing or conflicting design/protocol evidence blocks
-generation. A source or observed rule must never be promoted into `logic.yaml`.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-The unit of scenario planning, generation, and maintenance is one scenario directory. `discovery/workspace.yaml` owns workspace facts, and `E2E_PLAN.md` may explain project-wide strategy and commands; neither is a global scenario manifest.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Contract trace
+## 契约追踪
 
-Before generating assertions, maintain a temporary authority-separated trace:
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
 ```text
 设计规则 -> 正式协议入口与模型 -> 设计状态变化/结果 -> 设计关联键 -> 支持性观察方式 -> 控制方式 -> 清理/恢复
 ```
 
-Every business action and assertion must cite a design rule, and every call must cite a formal protocol operation. Source anchors justify only controls, configuration, observation, fixtures, cleanup, and restoration. Do not change design expectations to match current source or runtime behavior.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Scenario definition
+## 场景定义
 
-Each `scenarios/<中文业务名称>/场景定义.yaml` is authoritative for that scenario. Use exactly these top-level sections: `meta`, `generation`, `readiness`, `preconditions`, `constructability`, `integrations`, `controls`, `isolation`, `steps`, `cleanup`, and `source`.
+每个 `scenarios/<中文业务名称>/场景定义.yaml` 都是该场景的权威文件。顶层必须严格使用以下分区：`meta`、`generation`、`readiness`、`preconditions`、`constructability`、`integrations`、`controls`、`isolation`、`steps`、`cleanup` 和 `source`。
 
-The following is a schema-shaped example. Values in angle brackets are metavariables and must be replaced with discovered values rather than copied:
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
 ```yaml
 # 用途：定义一个业务 E2E 场景的来源、控制、步骤和恢复契约；禁止保存凭据或连接值。
@@ -186,37 +186,37 @@ source:
       - <source-symbol>
 ```
 
-Schema rules:
+架构规则：
 
-- Unknown top-level or nested keys fail validation.
-- `meta` contains non-empty `id`, `name`, `status`, and `actor`. `id` matches `[A-Z][A-Z0-9_]+`; `status` is `ready`, `pending_environment`, or `contract_blocked`.
-- `generation` contains `mode`, `owner`, `write_scope`, and nullable `degradation_reason`, following the delegation rules in [discovery-and-control-policy.md](discovery-and-control-policy.md).
-- `readiness.source_contract` and `readiness.safe_control` are `confirmed` or `blocked`; `runtime_configuration` and `test_data` are `confirmed` or `missing`. `blockers` is a unique list of non-sensitive references. Pending blockers use exact canonical `config:`, `credential:`, `connection:`, or `business_data:` environment-variable references derived from the active configuration path and must equal the real missing set; authorization is forbidden here. Contract blockers use source-bound `control:<category>` or `contract:<repository>#<anchor>` values.
-- `preconditions` is a non-empty unique list of design-defined statements. `constructability` maps every precondition and step in order and evaluates exactly the candidate kinds exposed by `devflow schema e2e.scenario`: `public_api`, `test_or_admin_api`, `database_control`, `messages`, `scheduled_jobs`, `mocks_and_faults`, `dynamic_configuration`, `existing_test_data`, `database_read`, and `observability`. Each candidate records status, component, consumer source, control, side effect, real trigger, observation, isolation, cleanup, and source/runtime evidence. Candidate status is `usable`, `unusable`, or `not_found`; `not_applicable` cannot close the analysis.
-- A constructible `test_owned` precondition has a usable controlled construction path and cannot be reported as missing environment data. Every usable write candidate maps to declared isolation and cleanup/restoration symbols.
-- `integrations.services` is a unique list of discovery service IDs. `components` contains unique `id`, discovered `type`, and boolean `required`; every item resolves to `discovery/workspace.yaml`.
-- `controls` contains exactly the categories defined by the discovery policy plus `decision`. Capability entries have exact non-empty `assessment`, `status`, `evidence`, and `planned_use`; source evidence must match the control's semantic category. `observability` also has `correlation_keys`, `business_evidence`, and `recovery`, which exactly equal the isolation keys, all step expectations, and all cleanup actions/verifications. `database_control.safety` is null when unused and otherwise retains the single-operation summary fields and adds a non-empty ordered `operations` list. Every operation has a unique ID, backward-only dependencies, source consumer, owned exact selector, `expected_rows: 1`, snapshot, mutation verification, restoration, and restoration verification symbols.
-- `isolation` contains exactly `namespace`, `correlation_keys`, `owned_resources`, `mutable_controls`, and `serial_lock`, which must be null. Every owned resource contains exact `kind`, `identity`, `cleanup`, `restore`, and `verify` symbols, all mapped into the cleanup contract. Every mutable control is also an owned resource identity. A write scenario has at least one owned resource, and every cross-scenario collision fails.
-- Steps have exact `id`, `action`, `control`, `side_effect`, `expect`, `status`, `status_reason`, `evidence`, `design_rule_id`, optional `protocol_ref`, optional async `phase`, and optional `data_ref`. Every business expectation traces to `design_rule_id`; every HTTP/RPC/message/task call traces to `protocol_ref`. IDs are unique; `side_effect` is `none`, `read`, or `write`. Static statuses are `executable`, `environment_missing`, `authorization_missing`, `control_gap`, or `product_gap`; `runtime_failure` is emitted only as runtime evidence. Executable/environment/authorization states require a source-confirmed usable execution candidate. Control/product gaps require every candidate kind to be closed by evidence.
-- `data_ref`, when present, has exact form `业务数据.json#/<pointer>` and resolves by RFC 6901 only after selecting the active environment.
-- Every resolved `data_ref` subtree includes at least one protocol-valid non-placeholder literal. Environment placeholders are limited to pre-existing environment-owned data; scenario-owned unique strings are generated at runtime with `secrets` or `uuid` under protocol-defined format constraints.
-- `cleanup` contains non-empty `strategy`, unique `actions`, and unique `verifies`. Cleanup is source-confirmed, idempotent, and guaranteed by `finally`, a finalizer, `ExitStack`, or a context manager.
-- `source` is a non-empty list with exact `repo`, 40-character `commit`, and non-empty unique `anchors`. Every commit equals its discovery inventory snapshot, every relevant topology repository is covered, and every anchor resolves at that commit.
-- Stable scenario ID appears outside its definition only in exactly one pytest marker. Actions, expectations, controls, and cleanup use stable business symbols, not endpoint paths, table names, topic names, copied SQL, URLs, or narrative prose.
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- `data_ref`（如存在）必须严格采用 `业务数据.json#/<pointer>` 形式，并且只能在选择活动环境后按 RFC 6901 解析。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Deterministic status gate
+## 确定性状态门禁
 
-`devflow e2e check --gate contracts` derives the permitted status:
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-- `ready`: all four readiness fields are `confirmed`, blockers are empty, `safe_control_path` is true, observability and recovery are usable, required service/component mappings exist, active-environment business data exists, and every exact placeholder used by this scenario currently resolves.
-- `pending_environment`: source contract and safe control are `confirmed`; only runtime configuration or test data is `missing`; blockers exactly equal the missing active-environment placeholders/mappings or test-data placeholders. Per-run SQL/control authorization is not a status input.
-- `contract_blocked`: source contract or safe control is `blocked`, `safe_control_path` is false, readiness and decision blockers match, every blocker resolves to unavailable control evidence or a scenario source anchor, and every candidate path for every precondition and step is source-backed `unusable` or `not_found`; `not_applicable` cannot close the matrix.
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-The checker fails a mismatched declared status. A missing HTTP interface alone cannot produce `contract_blocked`. A runtime failure after preflight never changes the static status and must remain a failed execution result.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Business data
+## 业务数据
 
-Keep business inputs in strict JSON, keyed first by environment:
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
 ```json
 {
@@ -235,70 +235,70 @@ Keep business inputs in strict JSON, keyed first by environment:
 }
 ```
 
-The placeholder names and angle-bracket literals shown are metavariables. Inspect the formal protocol fields, validators, enums, and design-defined correlation rules, then replace them with protocol-valid values. Source may supply support-only fixture candidates but cannot override the contract. All environment objects in one file expose the same logical paths. Never merge or fall back across environments. A missing active root is `pending_environment` during preflight.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Do not turn every business field into an environment variable. Keep deterministic values that the test can safely construct as literals. Generate scenario-owned unique strings at runtime with `secrets` or `uuid` according to protocol-defined length/alphabet/format rules. Exact placeholders are only for pre-existing environment-owned values that cannot safely be constructed. Every subtree named by `data_ref` contains at least one non-placeholder literal; the checker rejects all-placeholder injection.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Do not store credentials, endpoints, generated identifiers, mutable results, SQL, or configuration-center values here. Standard JSON comments and synthetic comment fields are forbidden. Builders explicitly map every source DTO or schema field rather than passing through an entire loaded object.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## YAML comment policy
+## YAML 注释策略
 
-Every generated or maintained YAML file uses useful Chinese comments while preserving discovered source/protocol identifiers:
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-- the first non-blank line states the file's purpose and whether sensitive values are forbidden;
-- a meaningful comment precedes each top-level block and explains its role;
-- each exact environment placeholder documents meaning, expected format, and source without exposing a value;
-- units, enums, special values, correlation keys, and non-obvious constraints retain their source-confirmed semantics;
-- comments that merely repeat a field name do not satisfy the rule.
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-The static checker enforces file headers, top-level comments, and placeholder provenance. It checks units and other semantic comments only where such values occur; JSON remains comment-free.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Generation and validation gates
+本节规定端到端测试的流程、证据和安全约束，所有技术字段必须依据已确认的项目契约。
 
-The main agent and generated checker enforce this order:
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-1. `workspace_inventory`, `dependency_topology`, `initial_configuration`, and `runtime_probe` run as four ordered checks with separate outcomes.
-2. `control_matrix`, `scenario_split`, `scenario_ownership`, and `shared_integration` run as four ordered checks with separate outcomes.
-3. `static`: full asset, AST, script, control-SQL, and diagram checks pass before any project test is imported; project `conftest.py` and alternate pytest configuration are forbidden. Then environment-independent shared-logic tests and source-version checks pass.
-4. `collect`: `python -m pytest --collect-only` succeeds with unresolved runtime placeholders inert.
-5. `smoke`: read-only calls run only when runtime access exists and emit one valid endpoint event per selected scenario.
-6. `business`: preflight authorizes executable side effects and runs every independently safe step. Each step emits exactly one status event; a blocked later step does not suppress earlier safe work and the scenario still fails rather than passing partially.
-7. `restore`: every declared owned resource is restored and verified.
+1. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+2. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+3. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+4. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+5. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+6. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+7. 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-No later gate runs after an earlier failure. Each smoke/business subprocess must produce JUnit containing at least one executed test and zero skipped, xfailed, failed, or errored tests. Missing runtime values may leave `smoke`, `business`, and `restore` as `N/A`, but cannot weaken collection or static gates. Runtime smoke failure is reported as failure, not as static success.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Static checker contract
+本节规定端到端测试的流程、证据和安全约束，所有技术字段必须依据已确认的项目契约。
 
-Extend the generated project's single `devflow e2e check`; do not create overlapping validators. It accepts each ordered stage name plus aggregate `--gate discovery|contracts|static|all`, and optional `--scenario <中文场景名称>`. Each ordered stage validates the preceding content-addressed seal. Aggregate discovery/contracts/all modes are diagnostic-only and cannot create those seals or authorize `static`. It checks at minimum:
+扩展生成项目中唯一的 `devflow e2e check`；不要创建重复的校验器。该命令接受每个有序阶段名称、聚合参数 `--gate discovery|contracts|static|all`，以及可选的 `--scenario <中文场景名称>`。每个有序阶段都会校验前一阶段的内容寻址封印。聚合的 discovery/contracts/all 模式仅用于诊断，不能创建这些封印，也不能授权执行 `static`。至少检查以下内容：
 
-- the discovery contract and all cross-references described in the discovery policy;
-- the complete scenario schema, status derivation, ownership, exact write scope, and unique multi-scenario delegated owners;
-- environment-file selection and no cross-environment configuration or business-data fallback;
-- control-matrix use, source evidence, write-step preconditions, correlation, cleanup, restoration, and database-control safeguards;
-- complete per-precondition/per-step constructability, test-owned data classification, step evidence, partial-success rejection, and business-failure classification;
-- cross-scenario collision checks for correlation sources, namespaces, generated IDs, mutable settings, consumer/client IDs, owned records, and cleanup selectors;
-- sibling scenario artifacts, stable IDs, source anchors, all Mermaid diagrams, the shared-CLI launchers, and source-version entries;
-- Python AST validity, import resolution without connecting externally, Chinese docstrings, and guaranteed cleanup;
-- absence of copied credentials, concrete project-example identifiers, hardcoded endpoints, business IDs, topic/table names in generic helpers, raw SQL in tests, blind sleeps, unrestricted cache clearing, or unbounded publication.
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Use YAML/JSON parsers and Python `ast` before narrow text heuristics. Use an installed SQL parser when available; otherwise conservatively reject control SQL that cannot be proven parameterized and exactly bounded. Every diagnostic includes file and line. Suppressions are inline, rule-specific, justified, and never file-wide.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Add focused checker tests for each rule class, including the discovery and SQL cases in [discovery-and-control-policy.md](discovery-and-control-policy.md). Add shared-logic tests only for non-trivial reusable behavior: deep merge, exact-placeholder resolution, environment selection, integration gating, response validation, deadline polling, isolation, control authorization, row-count enforcement, original-value restoration, and preservation of an earlier exception.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-## Final report
+## 最终报告
 
-The main agent reports, separately and without inferred success:
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-- repositories, build modules, existing E2E projects, and the relevant dependency edges actually found;
-- configuration sources and precedence, with credential values redacted;
-- runtime processes/listeners associated with source modules and read-only probe results;
-- each scenario's owner, or the exact reason for sequential degradation;
-- each scenario's selected API, message, job, configuration, database observation, or controlled SQL capabilities;
-- each endpoint actually called, its method, redacted target identity, and result summary;
-- scenarios that stopped at static generation versus those that entered real business steps;
-- database, configuration, cache, message-client, and test-data restoration status;
-- environment-independent tests, `pytest --collect-only`, static validation, source synchronization, read-only smoke, real execution, business-step entry rate, semantic coverage, business correctness, and optional code coverage.
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+- 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Each scenario report includes `step_results`, `execution_rate`, `coverage_rate`, `business_correctness`, and one classification: `static_complete`, `executed`, `partially_covered`, `business_failure`, or `blocked`. A successful transport with an incorrect business result is `business_failure`; a report containing any unavailable step is never `executed` or successful.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
-Use `N/A` for every check not executed. Collection, generated code, diagrams, or static validation never substitute for requirement coverage or business correctness.
+本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。

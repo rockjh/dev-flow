@@ -1,21 +1,17 @@
-# Biz-flow Requirements Gate Matrix
+# Biz-flow 需求门禁矩阵
 
-Use this matrix before declaring a run complete. CLI schemas, generated
-reports, and the final Markdown are authoritative; prose analysis must cite
-source evidence for every semantic claim.
+在宣布运行完成前使用此矩阵。CLI schema、生成报告和最终 Markdown 具有权威性；文字分析中的每个语义结论都必须引用源代码证据。
 
-| Requirement | Required gate | Failure evidence |
+| 需求 | 必需门禁 | 失败证据 |
 | --- | --- | --- |
-| R1 Whole scan | Discovery covers source/config registrations, platform bases, HTTP/webhook, messages/topics, events, imports, schedulers/XXL-JOB, async, and CLI; excludes non-business paths | Candidate source location and scanner reason |
-| R1 Deduplication | Entry IDs and `core_capabilities` are unique | Duplicate IDs/capabilities in discovery report |
-| R2 Module confirmation | Every entry has exactly one responsibility module or explicit `待确认`; exclusions have reason and real `file:line` evidence; user confirmation is recorded | Module map, overview, and confirmation marker |
-| R3-R5 Delegation | Main role owns scan/partition; each module has one writer; each entry has one read-only analysis result | Orchestration task boundary, fingerprint, status, and merge record |
-| R5 Evidence | Entry result contains function, participants, ordered calls, all reachable branches, loops, async, persistence, external calls, outcomes, source evidence, and unresolved questions | Structured entry review; critical unknowns block generation |
-| R6-R8 Diagram fidelity | Concrete participants and actions; `alt`/`else`, `loop`, and `opt` represent source-backed paths; every entry has `sequenceDiagram` and `autonumber` | Final Markdown diagram validation |
-| R9 Structure | Business title, trigger, function, diagram appear in fixed order; human text has no source paths/line numbers; markers survive redaction | `check` reports section, marker, or redaction violation |
-| R9 Mermaid | Structural syntax is valid; use a renderer when available and report structural-only scope otherwise | Renderer output or structural validator location |
-| R10 Stability | Stable IDs, ownership, order, and content for unchanged source/partition; lock advances only after coverage checks | `verify` twice returns `stable=true` |
+| R1 全量扫描 | 发现覆盖源代码/配置注册、平台基类、HTTP/Webhook、消息/topic、事件、导入、调度器/XXL-JOB、异步和 CLI，并排除非业务路径 | 候选源位置和扫描器原因 |
+| R1 去重 | 入口 ID 和 `core_capabilities` 唯一 | 发现报告中的重复 ID/能力 |
+| R2 模块确认 | 每个入口恰好归属一个职责模块，或明确标记 `待确认`；排除项有原因和真实 `file:line` 证据；记录用户确认 | 模块映射、总览和确认标记 |
+| R3-R5 委派 | 主角色负责扫描/分区；每个模块只有一个写入者；每个入口有一个只读分析结果 | 编排任务边界、fingerprint、状态和合并记录 |
+| R5 证据 | 入口结果包含功能、参与者、有序调用、所有可达分支、循环、异步、持久化、外部调用、结果、源代码证据和未解决问题 | 结构化入口评审；关键未知项阻止生成 |
+| R6-R8 图准确性 | 使用具体参与者和动作；`alt`/`else`、`loop`、`opt` 表示有源代码依据的路径；每个入口都有 `sequenceDiagram` 和 `autonumber` | 最终 Markdown 图校验 |
+| R9 结构 | 业务标题、触发器、功能和图按固定顺序出现；面向人的文字不得包含源路径/行号；脱敏后标记仍完整 | `check` 报告中的章节、标记或脱敏违规 |
+| R9 Mermaid | 结构语法有效；有渲染器时使用渲染器，否则报告仅执行结构校验 | 渲染器输出或结构校验器位置 |
+| R10 稳定性 | 源代码/分区未变时保持 ID、归属、顺序和内容稳定；覆盖检查通过后才推进锁 | 连续两次 `verify` 返回 `stable=true` |
 
-Never replace an unknown with a guessed rule or a generic participant. Record
-the evidence and unresolved reason, and stop generation when it affects entry
-existence, ownership, or a key business branch.
+不得用猜测的规则或通用参与者替代未知项。记录证据和未解决原因；当未知项影响入口存在性、归属或关键业务分支时，停止生成。
