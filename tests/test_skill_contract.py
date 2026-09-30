@@ -12,7 +12,7 @@ SKILLS = ROOT / "skills"
 
 class SkillContractTests(unittest.TestCase):
     def test_every_installable_skill_has_a_domain_specific_prompt_contract(self) -> None:
-        skill_files = sorted(SKILLS.glob("*/*/SKILL.md"))
+        skill_files = sorted(SKILLS.glob("*/SKILL.md"))
         self.assertTrue(skill_files)
 
         for skill_file in skill_files:
@@ -40,7 +40,7 @@ class SkillContractTests(unittest.TestCase):
             self.assertIn("stop when", prompt, agent_file)
 
     def test_biz_flow_prompt_and_skill_cover_revised_workflow(self) -> None:
-        skill = SKILLS / "doc" / "biz-flow"
+        skill = SKILLS / "biz-flow-doc-generator"
         text = (skill / "SKILL.md").read_text(encoding="utf-8")
         prompt = yaml.safe_load((skill / "agents" / "openai.yaml").read_text(encoding="utf-8"))["interface"]["default_prompt"]
         for value in (text, prompt):

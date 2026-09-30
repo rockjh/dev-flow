@@ -6,7 +6,7 @@
 
 - 仓库、Python 包、公共 CLI 和 npm 安装器均使用 `devflow`；npm 包名称为 `dev-flow`。
 - 唯一的控制台入口是 `devflow = devflow.cli:console_main`。`python -m devflow` 会调用同一个入口。
-- 共享契约位于 `devflow/core/`；领域模块位于 `devflow/bru_api/`、`devflow/test_e2e/` 和 `devflow/doc_biz_flow/`。可安装的 Skill 位于 `skills/<category>/<skill-name>/`，并安装到 `~/.agents/skills/devflow/<category>/<skill-name>/`。
+- 共享契约位于 `devflow/core/`；领域模块位于 `devflow/bru_api_test_generator/`、`devflow/e2e_test_generator/` 和 `devflow/biz_flow_doc_generator/`。可安装的 Skill 位于 `skills/<skill-name>/`，并安装到 `~/.agents/skills/devflow/<skill-name>/`。
 - 命令使用静态注册。不得加入动态插件发现、运行时扫描、兼容性门面、占位模块或第二套扩展机制。
 - 不得恢复旧版包名或命令名、旧版 Skill 目录、旧版 npm 包装器、第二个 `pyproject.toml`，也不得在生成项目中复制工具包源代码。
 
@@ -32,7 +32,7 @@ Codex 的项目指令链由从项目根目录到当前目录找到的 `AGENTS.md
 
 对于每个新增或修改的 Skill：
 
-- 只使用 `skills/<category>/<skill-name>/` 下的一个规范目录。目录名、`SKILL.md` frontmatter 中的 `name`、锁中的 `skill` 值以及生成的 npm 载荷必须完全一致。不得添加别名、旧路径或需要手工维护的副本。
+- 只使用 `skills/<skill-name>/` 下的一个规范目录。目录名、`SKILL.md` frontmatter 中的 `name`、锁中的 `skill` 值以及生成的 npm 载荷必须完全一致。不得添加别名、旧路径或需要手工维护的副本。
 - 保持 `SKILL.md` 简洁且可执行。必须说明 CLI 路由、允许的项目根目录和资产、安全与所有权门禁、权威输出，以及每个工作流必须阅读的参考资料。绝不能要求模型猜测缺失证据或静默绕过失败门禁。
 - 每个 Skill 只提供一个 `agents/openai.yaml` 接口，并包含项目要求的 `display_name`、`short_description` 和领域专用 `default_prompt`。必要时可以使用文档规定的图标、调用策略和工具依赖等可选字段。默认提示词用于补充 `SKILL.md`；必须只路由到该 Skill，要求使用已安装的 `devflow` CLI，保留核心契约，要求返回已脱敏的权威输出，并明确不安全、含糊或验证失败时的停止条件。不得使用在无关 Skill 之间路由的通用提示词。
 - 将详细流程、模式、示例和策略放在 `references/` 中。参考路径必须相对于 Skill、保持稳定，并从 `SKILL.md` 或默认提示词中明确路由。生成的业务数据必须与可复用说明分离，绝不能嵌入密钥或凭据。

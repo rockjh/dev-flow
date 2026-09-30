@@ -30,9 +30,9 @@ DOMAINS: dict[str, Callable[[list[str]], int]] = {}
 
 def _domains() -> dict[str, Callable[[list[str]], int]]:
     if not DOMAINS:
-        from .bru_api.cli import main as bru_api_main
-        from .doc_biz_flow.cli import main as biz_flow_main
-        from .test_e2e.cli import main as e2e_main
+        from .bru_api_test_generator.cli import main as bru_api_main
+        from .biz_flow_doc_generator.cli import main as biz_flow_main
+        from .e2e_test_generator.cli import main as e2e_main
 
         DOMAINS.update({"bru-api": bru_api_main, "biz-flow": biz_flow_main, "e2e": e2e_main})
     return DOMAINS

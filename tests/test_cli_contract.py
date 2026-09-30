@@ -96,7 +96,7 @@ class CliContractTests(unittest.TestCase):
             self.assertEqual("TARGET_NOT_FOUND", missing["error"]["code"])
 
     def test_mock_data_subcommand_help_is_registered(self) -> None:
-        from devflow.bru_api.cli import main as bru_api_main
+        from devflow.bru_api_test_generator.cli import main as bru_api_main
 
         stream = io.StringIO()
         with redirect_stdout(stream), self.assertRaises(SystemExit) as exit_context:
@@ -132,7 +132,7 @@ class CliContractTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertNotIn("--design-file", check["data"]["options"])
 
-        from devflow.test_e2e.cli import main as e2e_main
+        from devflow.e2e_test_generator.cli import main as e2e_main
 
         for command in ("discover", "generate"):
             stream = io.StringIO()

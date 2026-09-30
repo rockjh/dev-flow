@@ -13,7 +13,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NPM = ROOT / "npm"
-INSTALLABLE_SKILLS = ("doc/biz-flow", "test/bru-api", "test/e2e")
+INSTALLABLE_SKILLS = (
+    "bru-api-test-generator",
+    "biz-flow-doc-generator",
+    "e2e-test-generator",
+)
 
 
 def main() -> int:

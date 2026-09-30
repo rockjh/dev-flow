@@ -8,14 +8,14 @@
 每个 Skill 必须严格遵循以下契约：
 
 ```text
-<category>/<skill-name>/
+<skill-name>/
   SKILL.md
   agents/openai.yaml
   references/            # optional, but every referenced file must exist
 ```
 
 `SKILL.md` frontmatter 必须包含稳定的 `name`，与完整的
-`devflow/<category>/<skill-name>` 路径一致，并包含简短准确的 `description`。
+`devflow/<skill-name>` 路径一致，并包含简短准确的 `description`。
 正文必须说明命令路由、输入/项目边界、必需工作流、校验门禁以及返回的权威报告或工件。
 
 `agents/openai.yaml` 必须包含一个 `interface`，并提供项目要求的

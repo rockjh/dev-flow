@@ -1,0 +1,8 @@
+{
+  "tool": "devflow",
+  "tool_version": "8.0.0",
+  "domain": "bru-api",
+  "schema_version": "6.2",
+  "skill": "devflow/bru-api-test-generator",
+  "asset_root": "qa"
+}

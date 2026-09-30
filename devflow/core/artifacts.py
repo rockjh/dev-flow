@@ -57,7 +57,7 @@ def write_lock(project_root: Path, *, tool_version: str, domain: str, schema_ver
         "tool_version": tool_version,
         "domain": domain,
         "schema_version": schema_version,
-        "skill": {"bru-api": "devflow/test/bru-api", "e2e": "devflow/test/e2e", "biz-flow": "devflow/doc/biz-flow"}[domain],
+        "skill": {"bru-api": "devflow/bru-api-test-generator", "e2e": "devflow/e2e-test-generator", "biz-flow": "devflow/biz-flow-doc-generator"}[domain],
         "asset_root": asset_root,
     })
 
@@ -98,7 +98,7 @@ def require_lock(
             "Use the locked domain schema or explicitly reinitialize the project.",
         )
     expected_asset_root = {"bru-api": "qa", "e2e": "test/e2e", "biz-flow": "docs/biz-flow"}[domain]
-    expected_skill = {"bru-api": "devflow/test/bru-api", "e2e": "devflow/test/e2e", "biz-flow": "devflow/doc/biz-flow"}[domain]
+    expected_skill = {"bru-api": "devflow/bru-api-test-generator", "e2e": "devflow/e2e-test-generator", "biz-flow": "devflow/biz-flow-doc-generator"}[domain]
     if value.get("asset_root") != expected_asset_root or value.get("skill") != expected_skill:
         raise DevflowError(
             "GATE_FAILED",
