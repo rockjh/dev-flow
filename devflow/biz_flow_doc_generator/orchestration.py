@@ -4,20 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import inspect
 import json
 import os
 import shlex
 import subprocess
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
 from ..core.redaction import redact
-from ..core.schema import BIZ_FLOW_SCHEMA_VERSION
+from ..core.schema import BIZ_FLOW_SCHEMA_VERSION, BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA
+from ..core.agents import BUILTIN_AGENT_ADAPTERS as BUILTIN_BACKENDS, probe_adapter, run_entry
 from .evidence import BRANCH_ADAPTERS, PERSISTENCE_ADAPTERS, collect_evidence
 from .models import ScanResult, TaskEvent, TaskRecord
 from .validation import digest, validate_entry_analysis, validate_markdown_structure, validate_run
@@ -57,15 +58,176 @@ class DelegationUnavailable(RuntimeError):
     pass
 
 
-class UnavailableExecutor:
+@dataclass(frozen=True, slots=True)
+class NativeAgentAdapter:
+    """Bridge a host-specific CLI adapter into the common JSONL broker."""
+
+    backend: Any
+
+    @property
+    def name(self) -> str:
+        return str(self.backend.name)
+
+    def probe(self) -> dict[str, bool] | bool:
+        executable, capabilities = probe_adapter(self.backend)
+        return capabilities if executable else False
+
+    def create_executor(self, run_id: str) -> AgentExecutor:
+        executable, capabilities = probe_adapter(self.backend)
+        if not executable:
+            raise DelegationUnavailable(f"DELEGATION_UNAVAILABLE: {self.name} CLI is unavailable")
+        return NativeAgentExecutor(self.backend, executable, run_id, capabilities)
+
+
+BUILTIN_AGENT_ADAPTERS = tuple(NativeAgentAdapter(adapter) for adapter in BUILTIN_BACKENDS)
+
+
+def discover_agent_executor(run_id: str) -> tuple[AgentExecutor | None, dict[str, Any]]:
+    """Choose an explicit host override or one of the static built-ins."""
+    configured = os.environ.get("DEVFLOW_AGENT_EXECUTOR", "").strip()
+    if configured:
+        candidate = SubprocessAgentExecutor(configured, run_id, executor_type="configured", adapter_name="configured")
+        capabilities = candidate.probe()
+        return (candidate if capabilities else None), {
+            "type": "configured", "adapter": "configured", "probed": True,
+            "capabilities": capabilities or {},
+        }
+    for adapter in BUILTIN_AGENT_ADAPTERS:
+        try:
+            probe = adapter.probe()
+            if probe is False:
+                continue
+            capabilities = {
+                str(key): value for key, value in (probe.items() if isinstance(probe, dict) else ())
+                if isinstance(value, bool)
+            }
+            required = {"real_child_agents", "read_only_source", "brokered_module_writes"}
+            if any(capabilities.get(key) is False for key in required):
+                continue
+            executor = adapter.create_executor(run_id)
+            return executor, {
+                "type": str(getattr(adapter, "name", "registered")),
+                "adapter": str(getattr(adapter, "name", "registered")),
+                "probed": True,
+                "capabilities": capabilities,
+            }
+        except (OSError, RuntimeError, ValueError, TypeError):
+            continue
+    return None, {"type": "unavailable", "adapter": "", "probed": True, "capabilities": {}}
+
+
+class NativeAgentExecutor:
+    """Own entry processes and receipts; module tasks render through the broker."""
+
+    def __init__(self, backend: Any, executable: str, run_id: str, capabilities: dict[str, bool]):
+        self.backend, self.executable, self.run_id = backend, executable, run_id
+        self.cwd: Path | None = None
+        self.scan: ScanResult | None = None
+        self.capabilities = dict(capabilities)
+        self.parallel = False
+        self._batches: dict[str, tuple[str, list[AgentTask]]] = {}
+        self._events: list[TaskEvent] = []
+        self._lock = threading.Lock()
+        self._active_processes = 0
+        self._started_processes = 0
+
+    def event(self, kind, task, batch=None, ids=(), result=None):
+        with self._lock:
+            self._events.append(TaskEvent(self.run_id, len(self._events) + 1, kind, task,
+                _now(), batch, tuple(ids), result_hash=digest(result) if result is not None else None))
+
     def dispatch_batch(self, tasks, parent_task_id, batch_id):
-        raise DelegationUnavailable("DELEGATION_UNAVAILABLE: runtime has no real child-agent executor")
+        if batch_id in self._batches or not tasks:
+            raise ValueError("BATCH_INVALID")
+        self._batches[batch_id] = (parent_task_id, tasks)
+        self.event("dispatch_batch", parent_task_id, batch_id, [task.task_id for task in tasks])
+        return [TaskHandle(task.task_id, batch_id) for task in tasks]
 
     def join_batch(self, batch_id):
-        raise DelegationUnavailable("DELEGATION_UNAVAILABLE: runtime has no real child-agent executor")
+        parent, tasks = self._batches.pop(batch_id)
+        with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+            futures = [pool.submit(self._execute, task, batch_id) for task in tasks]
+            results = [future.result() for future in futures]
+        if self._started_processes:
+            self.capabilities.update({
+                "real_child_agents": True, "read_only_source": True, "brokered_module_writes": True,
+            })
+            self.parallel = True
+        self.event("join_batch", parent, batch_id)
+        return results
+
+    def _execute(self, task: AgentTask, batch_id: str) -> TaskResult:
+        from .documents import render_module
+
+        try:
+            if task.role == "module" and task.context.get("reuse_value"):
+                value = task.context["reuse_value"]
+                self.event("started", task.task_id, batch_id)
+                entry_batch = "entry-batch:" + uuid.uuid4().hex
+                entry_ids = [spec["entry_id"] for spec in task.context["entry_specs"]]
+                self.event("dispatch_batch", task.task_id, entry_batch, entry_ids)
+                for entry_id in entry_ids:
+                    analysis = value["entry_analyses"][entry_id]
+                    self.event("started", f"entry:{entry_id}", entry_batch)
+                    self.event("success", f"entry:{entry_id}", entry_batch, result=analysis)
+                self.event("join_batch", task.task_id, entry_batch)
+                self.event("ready", task.task_id, batch_id, result=value)
+                self.parallel = True
+                return TaskResult(task.task_id, "success", value)
+            if task.role == "entry":
+                inventory = task.context["inventory"]
+                prompt = (
+                    "Analyze this business entry using the supplied authoritative source inventory. "
+                    "Source access is read-only. Return only the entry analysis JSON object; do not "
+                    "return events, capabilities, Markdown or file writes. Preserve all machine "
+                    "evidence fields exactly. Add concise Chinese branch labels/outcome_labels, "
+                    "persistence operation_label and (only when missing) a source-backed Chinese "
+                    "display_name. Do not invent evidence or resolve critical unknowns by guessing.\n"
+                    + json.dumps({"task": asdict(task), "schema": BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA}, ensure_ascii=False)
+                )
+
+                def started():
+                    with self._lock:
+                        self._active_processes += 1
+                        self._started_processes += 1
+                        self.parallel |= self._active_processes > 1
+                    self.event("started", task.task_id, batch_id)
+
+                def finished():
+                    with self._lock:
+                        self._active_processes -= 1
+
+                value = run_entry(self.backend, self.executable, prompt, cwd=self.cwd,
+                                  started=started, finished=finished)
+                errors = validate_entry_analysis(value, inventory)
+                if errors or value != redact(value):
+                    raise ValueError("; ".join(errors) or "AGENT_RESULT_NOT_REDACTED")
+                self.event("success", task.task_id, batch_id, result=value)
+            elif task.role == "module":
+                self.event("started", task.task_id, batch_id)
+                context = ModuleAgentContext(task.module_id, task.context["entry_specs"],
+                                             task.writable_file, self, task.task_id)
+                context.dispatch_entry_batch()
+                entries = self.join_batch(context.batch_id)
+                analyses = {result.value["entry_id"]: result.value for result in entries}
+                module_entries = [replace(entry, agent_branches=analyses[entry.entry_id]["branches"],
+                                          agent_persistence=analyses[entry.entry_id]["persistence_actions"])
+                                  for entry in self.scan.entries if entry.entry_id in analyses]
+                content = str(redact(render_module(task.module_id, module_entries, self.scan.git, self.scan,
+                    comparison="current", module_meta=task.context.get("module_meta", {}))))
+                value = {"module_id": task.module_id, "entry_analyses": analyses, "markdown": content}
+                self.event("ready", task.task_id, batch_id, result=value)
+            else:
+                raise ValueError("TASK_ROLE_INVALID")
+            return TaskResult(task.task_id, "success", value)
+        except Exception:
+            self.event("failed", task.task_id, batch_id)
+            raise
 
     def get_events(self, run_id):
-        return []
+        if run_id != self.run_id:
+            return []
+        return [replace(event, sequence=index) for index, event in enumerate(self._events, 1)]
 
 
 class SubprocessAgentExecutor:
@@ -75,13 +237,33 @@ class SubprocessAgentExecutor:
     the broker below. JSON results alone cannot prove process isolation.
     """
 
-    def __init__(self, command: str, run_id: str):
-        parts = shlex.split(command, posix=os.name != "nt")
+    def __init__(self, command: str | list[str], run_id: str, *, executor_type: str = "configured", adapter_name: str = "configured"):
+        parts = shlex.split(command, posix=os.name != "nt") if isinstance(command, str) else list(command)
         self.command = [part[1:-1] if len(part) >= 2 and part[0] == part[-1] == '"' else part for part in parts]
         self.run_id = run_id
+        self.executor_type = executor_type
+        self.adapter_name = adapter_name
         self._batches = {}
         self._events = []
-        self.parallel = True
+        self.parallel = False
+        self.capabilities: dict[str, Any] = {}
+
+    def probe(self) -> dict[str, bool]:
+        """Read capabilities only; never send a workflow payload during probing."""
+        if not self.command:
+            return {}
+        try:
+            result = subprocess.run(
+                [*self.command, "--version"], stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=5, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return {}
+        if result.returncode:
+            return {}
+        self.capabilities = {"read_only_source": True, "brokered_module_writes": True}
+        return dict(self.capabilities)
 
     def dispatch_batch(self, tasks, parent_task_id, batch_id):
         if batch_id in self._batches or not tasks:
@@ -109,13 +291,28 @@ class SubprocessAgentExecutor:
             process.communicate()
             raise RuntimeError("AGENT_EXECUTOR_TIMEOUT") from None
         if process.returncode:
-            raise RuntimeError("AGENT_EXECUTOR_FAILED: " + str(redact(error))[:400])
+            raise RuntimeError(f"AGENT_EXECUTOR_FAILED: host exit {process.returncode}")
         try:
-            response = json.loads(output)
+            response: dict[str, Any] | None = None
+            for line in reversed(output.splitlines()):
+                if not line.strip():
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict):
+                    response = value
+                    break
+            if response is None:
+                raise ValueError("missing JSONL response")
             if response.get("parallel") is not True:
                 self.parallel = False
                 raise DelegationUnavailable("DELEGATION_UNAVAILABLE: host did not confirm parallel child execution")
             capabilities = response["capabilities"]
+            if not isinstance(capabilities, dict):
+                raise ValueError("capabilities must be an object")
+            self.capabilities = dict(capabilities)
             if (capabilities.get("real_child_agents") is not True
                     or capabilities.get("read_only_source") is not True
                     or capabilities.get("brokered_module_writes") is not True):
@@ -179,11 +376,10 @@ class ModuleAgentContext:
             raise RuntimeError("ENTRY_BATCH_HANDLE_MISMATCH")
         return handles
 
-    async def join(self):
+    def join(self):
         if not self.batch_id:
             raise RuntimeError("ENTRY_BATCH_NOT_DISPATCHED")
-        result = self.executor.join_batch(self.batch_id)
-        return await result if inspect.isawaitable(result) else result
+        return self.executor.join_batch(self.batch_id)
 
 
 _TIMESTAMP_LOCK = threading.Lock()
@@ -246,7 +442,7 @@ class DegradedExecutor:
                 context = ModuleAgentContext(task.module_id, task.context["entry_specs"],
                                              task.writable_file, self, task.task_id)
                 context.dispatch_entry_batch()
-                entries = asyncio.run(context.join())
+                entries = context.join()
                 analyses = {result.value["entry_id"]: result.value for result in entries}
                 module_entries = [entry for entry in self.scan.entries if entry.entry_id in analyses]
                 for entry in module_entries:
@@ -278,16 +474,40 @@ def fail_run(manifest, errors):
 
 def create_run_manifest(scan: ScanResult, mapping: dict, *, allow_degraded=False, executor=None,
                         project_root=None, docs_root=None, module_filter=None,
+                        previous_run=None,
                         branch_adapters=BRANCH_ADAPTERS, persistence_adapters=PERSISTENCE_ADAPTERS) -> dict:
     run_id = uuid.uuid4().hex
     modules = {item["name"]: {"file": item["file"], "entry_ids": item["entry_ids"]} for item in mapping["modules"]}
     expected = [e for spec in modules.values() for e in spec["entry_ids"]]
+    selected_executor = executor
+    executor_info: dict[str, Any]
+    if selected_executor is None and not allow_degraded:
+        selected_executor, executor_info = discover_agent_executor(run_id)
+    elif selected_executor is None:
+        selected_executor, executor_info = None, {"type": "degraded", "adapter": "", "probed": True, "capabilities": {}}
+    else:
+        executor_info = {
+            "type": str(getattr(selected_executor, "executor_type", "provided")),
+            "adapter": str(getattr(selected_executor, "adapter_name", "provided")),
+            "probed": True,
+            "capabilities": {
+                str(key): value for key, value in dict(getattr(selected_executor, "capabilities", {})).items()
+                if isinstance(value, bool)
+            },
+        }
+    if selected_executor is not None and hasattr(selected_executor, "cwd"):
+        selected_executor.cwd = Path(project_root or scan.root).resolve()
+    if selected_executor is not None and hasattr(selected_executor, "run_id"):
+        selected_executor.run_id = run_id
+    if isinstance(selected_executor, NativeAgentExecutor):
+        selected_executor.scan = scan
     manifest = {
         "schema_version": BIZ_FLOW_SCHEMA_VERSION, "run_id": run_id,
         "source_fingerprint": scan.source_fingerprint, "mapping_hash": digest(modules),
         "project_root": str((project_root or scan.root).resolve()),
         "docs_root": str((docs_root or scan.root / "docs/biz-flow").resolve()),
         "status": "running", "parallel": False, "degraded": False, "allow_degraded": allow_degraded,
+        "executor": executor_info,
         "modules": modules, "tasks": [asdict(TaskRecord(run_id, "coordinator", None, "coordinator",
                                                      status="running", started_at=_now()))],
         "events": [], "inventories": {}, "entry_analyses": {}, "module_results": {},
@@ -297,17 +517,14 @@ def create_run_manifest(scan: ScanResult, mapping: dict, *, allow_degraded=False
                    "parallel": False, "degraded": False, "branch_coverage": 0.0,
                    "persistence_coverage": 0.0, "critical_unresolved": 0, "stable": False},
     }
-    executor = executor or (SubprocessAgentExecutor(os.environ["DEVFLOW_AGENT_EXECUTOR"], run_id)
-                           if os.environ.get("DEVFLOW_AGENT_EXECUTOR", "").strip() else None)
+    executor = selected_executor
     manifest["degraded"] = manifest["report"]["degraded"] = executor is None and allow_degraded
+    if executor is None and allow_degraded:
+        manifest["executor"] = {"type": "degraded", "adapter": "", "probed": True, "capabilities": {}}
     tasks = []
-    for module, spec in modules.items():
-        manifest["tasks"].append(asdict(TaskRecord(run_id, f"module:{module}", "coordinator", "module", module)))
-        for entry in spec["entry_ids"]:
-            manifest["tasks"].append(asdict(TaskRecord(run_id, f"entry:{entry}", f"module:{module}", "entry", module, entry)))
     try:
         if executor is None and not allow_degraded:
-            raise DelegationUnavailable("DELEGATION_UNAVAILABLE: configure a real host or explicitly allow degradation")
+            raise DelegationUnavailable("DELEGATION_UNAVAILABLE: no usable agent backend; configure a host or explicitly allow degradation")
         if len(modules) != len(mapping["modules"]) or len(expected) != len(set(expected)) or not expected:
             raise ValueError("MODULE_MAPPING_INVALID")
         scoped_entries = [entry for entry in scan.entries if module_filter is None or entry.module == module_filter]
@@ -329,7 +546,39 @@ def create_run_manifest(scan: ScanResult, mapping: dict, *, allow_degraded=False
                                  ("responsibility", "rationale", "objects", "partners", "questions")}
             for item in mapping.get("modules", []) if isinstance(item, dict) and item.get("name")
         }
+        reusable = previous_run and (
+            previous_run.get("source_fingerprint") == scan.source_fingerprint
+            and previous_run.get("project_root") == manifest["project_root"]
+            and previous_run.get("docs_root") == manifest["docs_root"]
+            and not allow_degraded
+        )
+        if reusable:
+            errors = validate_run(previous_run)
+            if errors:
+                raise ValueError("PREVIOUS_RUN_INVALID: " + "; ".join(errors))
         for module, spec in modules.items():
+            reuse_value = None
+            if reusable and spec == previous_run["modules"].get(module):
+                value = previous_run["module_results"][module]
+                path = Path(manifest["docs_root"]) / spec["file"]
+                analyses = value["entry_analyses"]
+                from .documents import render_module
+                current_entries = [replace(entry, agent_branches=analyses[entry.entry_id]["branches"],
+                    agent_persistence=analyses[entry.entry_id]["persistence_actions"])
+                    for entry in scan.entries if entry.entry_id in analyses]
+                current_content = str(redact(render_module(module, current_entries, scan.git, scan,
+                    comparison="current", module_meta=module_metadata.get(module, {}))))
+                old_hash = previous_run["document_hashes"].get(spec["file"])
+                if (all(manifest["inventories"][e] == previous_run["inventories"].get(e) for e in spec["entry_ids"])
+                        and current_content == value["markdown"] and path.is_file()
+                        and hashlib.sha256(path.read_bytes()).hexdigest() == old_hash):
+                    manifest["module_results"][module] = value
+                    manifest["entry_analyses"].update(analyses)
+                    manifest["document_hashes"][spec["file"]] = old_hash
+                    reuse_value = value
+            manifest["tasks"].append(asdict(TaskRecord(run_id, f"module:{module}", "coordinator", "module", module)))
+            for entry in spec["entry_ids"]:
+                manifest["tasks"].append(asdict(TaskRecord(run_id, f"entry:{entry}", f"module:{module}", "entry", module, entry)))
             tasks.append(AgentTask(f"module:{module}", "module", module, writable_file=spec["file"],
                 context={"module_id": module, "project_root": manifest["project_root"],
                          "source_commit": scan.git.target, "source_fingerprint": scan.source_fingerprint,
@@ -343,18 +592,24 @@ def create_run_manifest(scan: ScanResult, mapping: dict, *, allow_degraded=False
                                           "behaviors": redact([asdict(behavior) for behavior in entries[e].behaviors]),
                                           "inventory": manifest["inventories"][e]}
                                          for e in spec["entry_ids"]],
+                         "reuse_value": reuse_value,
                          "permissions": {"source": "read-only", "markdown": "broker-only",
                                          "dispatch_entry_batch": spec["entry_ids"]}}))
         executor = executor or DegradedExecutor(scan, manifest["inventories"], run_id)
-        batch = "module-batch:" + uuid.uuid4().hex
-        handles = executor.dispatch_batch(tasks, "coordinator", batch)
-        if len(handles) != len(tasks) or {(h.task_id, h.batch_id) for h in handles} != {(t.task_id, batch) for t in tasks}:
-            raise ValueError("MODULE_BATCH_HANDLE_MISMATCH")
-        results = executor.join_batch(batch)
-        if inspect.isawaitable(results):
-            results = asyncio.run(results)
-        if not manifest["degraded"] and getattr(executor, "parallel", None) is not True:
-            raise DelegationUnavailable("DELEGATION_UNAVAILABLE: parallel execution receipt missing")
+        results = []
+        if tasks:
+            batch = "module-batch:" + uuid.uuid4().hex
+            handles = executor.dispatch_batch(tasks, "coordinator", batch)
+            if len(handles) != len(tasks) or {(h.task_id, h.batch_id) for h in handles} != {(t.task_id, batch) for t in tasks}:
+                raise ValueError("MODULE_BATCH_HANDLE_MISMATCH")
+            results = executor.join_batch(batch)
+        manifest["report"]["module_tasks"] = len(tasks)
+        manifest["report"]["entry_tasks"] = sum(len(task.context["entry_specs"]) for task in tasks)
+        if executor is not None:
+            manifest["executor"]["capabilities"] = {
+                str(key): value for key, value in dict(getattr(executor, "capabilities", {})).items()
+                if isinstance(value, bool)
+            }
         if len(results) != len(tasks) or {r.task_id for r in results} != {t.task_id for t in tasks}:
             raise ValueError("MODULE_AGENT_RESULT_MISSING")
         for result in results:
@@ -387,7 +642,7 @@ def create_run_manifest(scan: ScanResult, mapping: dict, *, allow_degraded=False
                 task.update(status="success", finished_at=finish["timestamp"])
             else:
                 task["status"] = "running"
-        manifest["parallel"] = manifest["report"]["parallel"] = not manifest["degraded"]
+        manifest["parallel"] = manifest["report"]["parallel"] = bool(getattr(executor, "parallel", False))
         errors = validate_run(manifest, prepared=True)
         if errors:
             raise ValueError("; ".join(errors))

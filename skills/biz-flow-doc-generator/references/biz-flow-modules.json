@@ -44,7 +44,7 @@
   "additional_entries": [],
   "exclusions": [],
   "modules": [
-    {"name": "relation-sync", "display_name": "Relation Sync", "rationale": "按关系生命周期、条件领取和资源协作边界归组。", "file": "00-relation-sync.md", "responsibility": "关系领取与远端同步", "objects": ["Relation"], "partners": ["资源服务"], "questions": [], "entry_ids": ["url:POST /relations/sync"]},
-    {"name": "notification", "display_name": "Notification", "rationale": "按失败事件生命周期和消息通知职责归组。", "file": "01-notification.md", "responsibility": "失败事件通知", "objects": ["FailureEvent"], "partners": ["消息系统"], "questions": [], "entry_ids": ["message:relation-failed"]}
+    {"name": "relation-sync", "display_name": "关系同步", "rationale": "按关系生命周期、条件领取和资源协作边界归组。", "file": "00-关系同步.md", "responsibility": "关系领取与远端同步", "objects": ["Relation"], "partners": ["资源服务"], "questions": [], "entry_ids": ["url:POST /relations/sync"]},
+    {"name": "notification", "display_name": "失败通知", "rationale": "按失败事件生命周期和消息通知职责归组。", "file": "01-失败通知.md", "responsibility": "失败事件通知", "objects": ["FailureEvent"], "partners": ["消息系统"], "questions": [], "entry_ids": ["message:relation-failed"]}
   ]
 }

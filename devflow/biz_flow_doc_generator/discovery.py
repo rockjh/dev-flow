@@ -92,7 +92,14 @@ def _comment_label(text: str, line: int) -> str:
 
 def _module_name(relative: Path, identifier: str, text: str = "", line: int = 0) -> str:
     # Module ownership comes from source/package boundaries, never prose.
-    parts = [part for part in relative.parts[:-1] if part.lower() not in {"src", "app", "api", "controller", "controllers", "service", "services"}]
+    parts = [
+        part for part in relative.parts[:-1]
+        if part.lower() not in {
+            "src", "app", "api", "controller", "controllers", "service", "services",
+            "impl", "implementation", "config", "configuration", "infra", "infrastructure",
+            "dao", "repository", "persistence", "v0", "v1",
+        }
+    ]
     candidate = parts[-1] if parts else relative.stem
     if not candidate or candidate.lower() in {"main", "index", "app"}:
         route_parts = [part for part in identifier.split(" ", 1)[-1].strip("/").split("/") if part]

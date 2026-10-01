@@ -35,6 +35,17 @@ Python 证据层通过静态注册的项目适配器扫描语言、框架、配�
 每个 ID 都要同时出现在入口 JSON、Mermaid `%% devflow:branch id="..."` 或
 `%% devflow:persistence id="..."` 注释、对应矩阵和 run manifest。没有数据库动作的入口不添加数据库参与者。
 
+## Host executor discovery and JSONL
+
+运行时选择顺序固定为：显式 `DEVFLOW_AGENT_EXECUTOR`、静态内置 Codex/Claude
+适配器。选择前只允许读取版本、帮助或能力信息；
+探测不得写项目、修改 shell/环境变量、发送业务请求或创建持久化数据。每个适配器
+隔离目标 CLI 的参数和响应转换，发现失败或能力不足就继续下一个候选。内置适配器由
+运行时为每个入口启动一个受限、临时的 CLI 子进程，并在同一模块批次内并行执行；模块
+Markdown 由运行时汇总并交给单写者提交。能力探测只能确认只读和代理写入边界，
+`real_child_agents` 只有在这些子进程真实启动并返回后才写入 manifest。适配器不能伪造
+`real_child_agents`、`read_only_source` 或 `brokered_module_writes`。
+
 ## Host executor JSONL
 
 当设置 `DEVFLOW_AGENT_EXECUTOR` 时，运行时把一个批次作为一行 JSON
@@ -45,7 +56,7 @@ Python 证据层通过静态注册的项目适配器扫描语言、框架、配�
 每个结果必须包含 `task_id`、`status`（`success` 或 `failed`），成功时包含上面的入口
 结构化结果，失败时包含 `error`。`events` 必须是本批次的真实生命周期回执（至少包括每个任务的
 `started` 和完成事件（入口为 `success`、模块为 `ready`），以及对应的 `join_batch`）；运行时会为批次补记 `dispatch_batch` 并重新编号。
-响应若包含非空 `writes` 会被拒绝；命令不得直接写项目文件；模块文件写入由运行时持有的模块写入能力完成。
+响应若包含非空 `writes` 会被拒绝；命令不得直接写项目文件；模块文件写入由运行时持有的模块写入能力完成。运行 manifest 记录执行器类型、适配器、探测结果、能力、`parallel` 和 `degraded` 状态。
 
 ## 失败和降级
 

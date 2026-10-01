@@ -16,11 +16,18 @@ Read only the references needed for the current operation:
 - [agent-orchestration.md](references/agent-orchestration.md) for the task and JSON protocol.
 - [verification.md](references/verification.md) and [version-management.md](references/version-management.md) before acceptance or version changes.
 
-The workflow is `init -> discover -> review and explicitly confirm the module
-mapping -> generate -> check -> verify`. Stop on unsafe paths, stale source or
-mapping fingerprints, ambiguous ownership, missing evidence, redaction failure,
-or any failed gate. Do not guess a business rule, storage object, participant,
-branch outcome, or external result.
+The workflow is `init -> discover -> review the module table and suggested
+exclusions -> adjust only disputed rows when needed -> confirm once -> generate
+-> check -> verify`. The discover overview is the user-facing boundary: it
+contains a Chinese business-module table (responsibility, representative
+entries/count, and stable Markdown file) followed immediately by a suggested
+exclusion table. Every full entry mapping remains in the process-local machine
+map. Stop on unsafe paths, stale source or mapping fingerprints, ambiguous
+ownership, missing evidence, redaction failure, or any failed gate. Do not
+guess a business rule, storage object, participant, branch outcome, or external
+result. A default confirmation is sufficient when the user has no adjustment;
+an adjustment must preserve unaffected entry ownership and re-analyze only the
+affected module.
 
 The `skill_version` is `1.0.0`. Before generation, the overview must contain
 the explicit `<!-- devflow:module-confirmed -->` marker. Markdown follows a fixed order of business title,
@@ -61,12 +68,19 @@ run. A persistence-free entry has no storage participant requirement. Multiple
 Mermaid diagrams are allowed for a complex entry when each diagram remains
 inside that entry section and all diagrams are included in coverage checks.
 
-The normal runtime requires a real host executor. If none is available, the
-result is `DELEGATION_UNAVAILABLE` and no Markdown is generated. A host may be
-selected explicitly with `DEVFLOW_AGENT_EXECUTOR`; it must implement the JSONL
-protocol in [agent-orchestration.md](references/agent-orchestration.md). Only
-an explicit user request for `--allow-degraded` enables serial evidence-based
-execution, and its manifest must retain `degraded=true` and `parallel=false`.
+The runtime first honors `DEVFLOW_AGENT_EXECUTOR`, then probes the static
+built-in Codex/Claude adapters without writing files or changing the
+environment. Built-in adapters start one restricted, temporary CLI child
+per entry and run the entries in a module batch concurrently; the runtime
+merges their structured results and owns Markdown rendering. Each adapter owns
+its CLI arguments and translates to the single JSONL protocol in
+[agent-orchestration.md](references/agent-orchestration.md);
+the Skill never assumes private CLI flags are universal. If no adapter passes
+the capability probe, the result is `DELEGATION_UNAVAILABLE` and no Markdown is
+generated. Only an explicit user request for `--allow-degraded` enables serial
+evidence-based execution, and its manifest must retain `degraded=true` and
+`parallel=false`. No command writes shell configuration or user environment
+variables.
 Degraded mode still runs the source evidence adapters and every coverage gate;
 it may not invent agent prose or silently omit unresolved facts.
 

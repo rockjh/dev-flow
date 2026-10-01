@@ -16,7 +16,7 @@ from pathlib import Path
 from ..core.artifacts import require_version_file, write_json, write_version_file, state_root
 from ..core.errors import DevflowError
 from .discovery import scan
-from .documents import apply_module_map, write_artifacts, write_discovery, _validate_mermaid
+from .documents import apply_module_map, write_artifacts, write_discovery, _display, _validate_mermaid
 from .git import changed_paths, working_tree_paths
 from .models import BehaviorEvidence, EntryPoint, ErrorEvidence, GitInfo, ScanResult
 from .orchestration import create_run_manifest, fail_run, finish_run, write_module
@@ -263,7 +263,13 @@ def _clear_confirmation_marker(docs_root: Path) -> None:
             continue
 
 
-def _apply_overview_mapping(docs_root: Path, module_path: Path, result: ScanResult) -> list[str]:
+def _apply_overview_mapping(
+    docs_root: Path,
+    module_path: Path,
+    result: ScanResult,
+    *,
+    allow_partition_change: bool = False,
+) -> list[str]:
     """Apply user-edited Markdown module directives to the transient map."""
     overview = next((item for item in docs_root.glob("*.md") if not re.match(r"^\d+-", item.name)), None)
     if overview is None:
@@ -323,7 +329,7 @@ def _apply_overview_mapping(docs_root: Path, module_path: Path, result: ScanResu
     # A discovery-created map is only a proposal. The first explicit overview
     # confirmation is allowed to establish its user-owned partition; later
     # changes to an already confirmed partition must be reviewed again.
-    if document.get("confirmed") is True and existing_signature != proposed_signature:
+    if document.get("confirmed") is True and existing_signature != proposed_signature and not allow_partition_change:
         document["confirmed"] = False
         module_path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         overview.write_text(overview.read_text(encoding="utf-8").replace("<!-- devflow:module-confirmed -->", ""), encoding="utf-8")
@@ -336,9 +342,9 @@ def _apply_overview_mapping(docs_root: Path, module_path: Path, result: ScanResu
     for item in modules:
         old = dict(template.get(str(item["name"]), {}))
         old.update(item)
-        old.setdefault("display_name", str(item["name"]))
-        old.setdefault("rationale", "confirmed module boundary")
-        old.setdefault("responsibility", f"processes {item['name']} entry points")
+        old.setdefault("display_name", _display(str(item["name"])))
+        old.setdefault("rationale", f"依据入口归属和源码调用关系确认模块边界：{item['name']}。")
+        old.setdefault("responsibility", f"{old['display_name']}：处理已确认的业务入口。")
         old.setdefault("objects", [])
         old.setdefault("partners", [])
         old.setdefault("questions", [])
@@ -369,6 +375,7 @@ def _write_overview_report(docs_root: Path, result: ScanResult, report: dict[str
     directives = re.findall(r"<!--\s*devflow:(?:module|exclude)\s+[^>]+-->", current)
     marker = "<!-- devflow:module-confirmed -->" if "<!-- devflow:module-confirmed -->" in current else ""
     entries = sorted(result.entries, key=lambda item: (item.module, item.entry_id))
+    module_map = _read_json(docs_root / "biz-flow-modules.json")
     kinds = {"url", "webhook", "websocket", "sse"}
     lines = [
         "# 业务流程覆盖总览", "",
@@ -383,7 +390,9 @@ def _write_overview_report(docs_root: Path, result: ScanResult, report: dict[str
         f"- Message entries（消息入口）：{sum(entry.kind == 'message' for entry in entries)}",
         f"- Unresolved findings（未解决发现）：{len(result.unresolved)}",
         f"- Mermaid errors（Mermaid 错误）：{len(report.get('coverage', {}).get('markdown_diagram_mismatches', [])) if isinstance(report.get('coverage'), dict) else 0}",
-        "", "## Module List（模块列表）", "",
+        "", "## 业务模块划分", "",
+        "| 模块标识 | 业务模块 | 职责 | 归属业务入口 | 文档文件 |",
+        "| --- | --- | --- | --- | --- |",
     ]
     modules = sorted({entry.module for entry in entries})
     directive_map = {
@@ -393,9 +402,33 @@ def _write_overview_report(docs_root: Path, result: ScanResult, report: dict[str
             current,
         )
     }
+    module_records = {
+        str(item.get("name")): item
+        for item in module_map.get("modules", [])
+        if isinstance(item, dict) and item.get("name")
+    }
+    for module in modules:
+        record = module_records.get(module, {})
+        ids = [str(value) for value in record.get("entry_ids", [])] or [entry.entry_id for entry in entries if entry.module == module]
+        representative = ids if len(ids) <= 5 else [*ids[:3], f"入口 {len(ids)} 个"]
+        lines.append(
+            f"| {module} | {record.get('display_name', module)} | {record.get('responsibility', '按源码证据处理业务入口')} | "
+            f"{'; '.join(f'`{value}`' for value in representative)} | `{record.get('file', directive_map.get(module, ''))}` |"
+        )
+    if not modules:
+        lines.append("| — | 暂无业务模块 | — | — | — |")
+    exclusions = [item for item in module_map.get("exclusions", []) if isinstance(item, dict)]
+    lines.extend(["", "## 建议忽略的入口", "", "| 入口标识 | 来源证据 | 建议 | 原因 |", "| --- | --- | --- | --- |"])
     lines.extend(
-        f"- {module}: {sum(entry.module == module for entry in entries)} entries; file `{directive_map.get(module, '')}`（{sum(entry.module == module for entry in entries)} 个入口；文件）"
-        for module in modules
+        f"| {item.get('candidate', '')} | `{'; '.join(map(str, item.get('evidence', [])))}` | 忽略 | {item.get('reason', '')} |"
+        for item in exclusions
+    )
+    if not exclusions:
+        lines.append("| — | — | 保留 | 未发现建议忽略项。 |")
+    lines.extend(["", "## Module List（模块列表）", ""])
+    lines.extend(
+        f"- {module}: {record.get('responsibility', '按源码证据处理业务入口')}；file `{record.get('file', directive_map.get(module, ''))}`"
+        for module, record in module_records.items()
     )
     lines.extend(["", "## Entry Details", "", "| 入口 ID | 业务描述 | 入口 | 归属 | 入口类型 | 源码位置 |", "| --- | --- | --- | --- | --- | --- |"])
     for entry in entries:
@@ -411,7 +444,7 @@ def _write_overview_report(docs_root: Path, result: ScanResult, report: dict[str
     if result.unresolved:
         lines.extend(["", "## 未解决证据", "", *[f"- {item}" for item in result.unresolved]])
     if directives:
-        lines.extend(["", *directives])
+        lines.extend(["", "<!-- devflow:machine-map -->", *directives])
     if marker:
         lines.append(marker)
     rendered = "\n".join(lines).rstrip() + "\n"
@@ -477,6 +510,22 @@ def _manifest_matches(path: Path, source_fingerprint: str, project: Path, docs_r
     )
 
 
+def _previous_success_manifest(source_fingerprint: str, project: Path, docs_root: Path) -> dict[str, object] | None:
+    """Return the latest validated run for this source and document scope."""
+    root = state_root() / "biz-flow"
+    candidates = sorted(root.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True) if root.is_dir() else []
+    for path in candidates:
+        if not _manifest_matches(path, source_fingerprint, project, docs_root):
+            continue
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict) and value.get("status") == "success" and not validate_run(value):
+            return value
+    return None
+
+
 def _refresh_map_for_non_source_update(project: Path, docs_root: Path, result: ScanResult) -> None:
     """Keep a confirmed map usable when an update only changes prose files."""
     path = docs_root / "biz-flow-modules.json"
@@ -520,21 +569,30 @@ def _discover_command_unlocked(argv: list[str]) -> int:
     _clear_confirmation_marker(docs_root)
     discovery_path, module_map_path = write_discovery(result, docs_root)
     proposal = _read_json(module_map_path) or {}
-    print("module partition proposal:")
+    print("业务模块划分：")
+    print("| 模块标识 | 业务模块 | 职责 | 归属业务入口 | 文档文件 |")
+    print("| --- | --- | --- | --- | --- |")
     for module in proposal.get("modules", []):
         if not isinstance(module, dict):
             continue
         entry_ids = [str(value) for value in module.get("entry_ids", [])]
+        representative = entry_ids if len(entry_ids) <= 5 else [*entry_ids[:3], f"入口 {len(entry_ids)} 个"]
         print(
-            f"- {module.get('name')}: file={module.get('file')} entries={len(entry_ids)} "
-            f"[{', '.join(entry_ids)}]"
+            f"| {module.get('name')} | {module.get('display_name', module.get('name'))} | "
+            f"{module.get('responsibility', '')} | {'; '.join(f'`{value}`' for value in representative)} | "
+            f"`{module.get('file')}` |"
         )
+    print("建议忽略的入口：")
+    print("| 入口标识 | 来源证据 | 建议 | 原因 |")
+    print("| --- | --- | --- | --- |")
     for exclusion in proposal.get("exclusions", []):
         if isinstance(exclusion, dict):
             print(
-                f"- excluded {exclusion.get('candidate')}: {exclusion.get('reason')} "
-                f"(evidence: {', '.join(map(str, exclusion.get('evidence', [])))})"
+                f"| {exclusion.get('candidate')} | `{'; '.join(map(str, exclusion.get('evidence', [])))}` | 忽略 | "
+                f"{exclusion.get('reason')} |"
             )
+    if not proposal.get("exclusions"):
+        print("| — | — | 保留 | 未发现建议忽略项。 |")
     _remove_transient_artifacts(docs_root)
     print(
         f"discovered entries={len(result.entries)} unresolved={len(result.unresolved)} "
@@ -728,6 +786,10 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
         _remove_transient_artifacts(docs_root)
         print(f"ERROR: {error or 'biz-flow scan could not be restored'}", file=sys.stderr)
         return 8
+    if args.confirm:
+        if not (docs_root / "biz-flow-modules.json").is_file():
+            write_discovery(result, docs_root)
+        _confirm_overview(docs_root)
     if not _overview_confirmed(docs_root):
         print(
             "ERROR: module partition is awaiting user confirmation; review "
@@ -738,7 +800,13 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
         return 8
     if not (docs_root / "biz-flow-modules.json").is_file():
         write_discovery(result, docs_root)
-    mapping_errors = _apply_overview_mapping(docs_root, docs_root / "biz-flow-modules.json", result)
+    mapping_errors = _apply_overview_mapping(
+        docs_root,
+        docs_root / "biz-flow-modules.json",
+        result,
+        allow_partition_change=args.confirm,
+    )
+
     if mapping_errors:
         for error in mapping_errors:
             print(f"ERROR: {error}", file=sys.stderr)
@@ -762,9 +830,11 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
                 "modules": [item for item in mapping.get("modules", [])
                             if isinstance(item, dict) and str(item.get("name")) == args.module],
             }
+        previous_run = _previous_success_manifest(result.source_fingerprint, project, docs_root)
         manifest = create_run_manifest(
             result, mapping, allow_degraded=args.allow_degraded,
             project_root=project, docs_root=docs_root, module_filter=args.module,
+            previous_run=previous_run,
         )
     except Exception as exc:
         _remove_transient_artifacts(docs_root)

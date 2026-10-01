@@ -1700,6 +1700,12 @@ BIZ_FLOW_RUN_MANIFEST_SCHEMA = _object({
     "status": {"enum": ["pending", "running", "success", "failed"]},
     "parallel": {"type": "boolean"}, "degraded": {"type": "boolean"},
     "allow_degraded": {"type": "boolean"},
+    "executor": _object({
+        "type": {"type": "string", "minLength": 1},
+        "adapter": {"type": "string"},
+        "probed": {"type": "boolean"},
+        "capabilities": {"type": "object", "additionalProperties": {"type": "boolean"}},
+    }, ("type", "adapter", "probed", "capabilities")),
     "modules": {"type": "object", "additionalProperties": _object({
         "file": {"type": "string", "minLength": 1},
         "entry_ids": _array({"type": "string", "minLength": 1}, minimum=1, unique=True),
@@ -1751,7 +1757,11 @@ BIZ_FLOW_RUN_MANIFEST_SCHEMA = _object({
         "stable": {"type": "boolean"},
     }),
     "errors": _array({"type": "string"}),
-})
+}, (
+    "schema_version", "run_id", "source_fingerprint", "mapping_hash", "project_root", "docs_root",
+    "status", "parallel", "degraded", "allow_degraded", "modules", "tasks", "events", "inventories",
+    "entry_analyses", "module_results", "document_hashes", "report", "errors",
+))
 
 BIZ_FLOW_ERROR_SCHEMA = _object({
     "code": NONEMPTY_STRING,

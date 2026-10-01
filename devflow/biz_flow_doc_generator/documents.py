@@ -100,6 +100,8 @@ def _chinese_module_filename(index: int, name: str) -> str:
     """Return the canonical NN-Chinese-name.md module filename."""
     chinese = "".join(re.findall(r"[\u3400-\u9fff]+", str(name)))
     if not chinese:
+        chinese = "".join(re.findall(r"[\u3400-\u9fff]+", _display(str(name))))
+    if not chinese:
         chinese = "业务模块"
     return f"{index:02d}-{chinese[:40]}.md"
 
@@ -120,10 +122,37 @@ def _mermaid_text(value: object, limit: int = 140) -> str:
     return text[:limit]
 
 
+_MODULE_WORDS = {
+    "admin": "管理",
+    "api": "接口",
+    "config": "配置",
+    "configuration": "配置",
+    "dao": "数据访问",
+    "device": "设备",
+    "esim": "eSIM",
+    "file": "文件",
+    "order": "订单",
+    "profile": "Profile",
+    "relation": "关系",
+    "sync": "同步",
+    "user": "用户",
+    "vehicle": "车辆",
+}
+
+
 def _display(value: str) -> str:
+    """Return a stable, human-facing business name with Chinese context."""
     if value == "公共能力":
         return value
-    return value.replace("-", " ").replace("_", " ").title()
+    raw = str(value).replace("_", "-").strip("-")
+    parts = [part for part in raw.split("-") if part and part.casefold() not in {"v0", "v1", "impl", "src"}]
+    labels = [_MODULE_WORDS.get(part.casefold(), part) for part in parts]
+    rendered = "".join(labels).strip()
+    if not rendered or rendered.casefold() == raw.casefold():
+        rendered = f"业务模块（{raw}）"
+    elif not re.search(r"[\u3400-\u9fff]", rendered):
+        rendered = f"{rendered}业务"
+    return rendered
 
 
 def _entry_title(entry: EntryPoint) -> str:
@@ -377,14 +406,25 @@ def _business_step(behavior: BehaviorEvidence) -> str:
     return statements.get(behavior.kind, f"执行 {behavior.kind} 处理；具体规则代码中未确认。")
 
 
+def _non_business_reason(entry: EntryPoint) -> str | None:
+    """Suggest exclusions while keeping every candidate in the scan evidence."""
+    identifier = entry.identifier.casefold()
+    relative = entry.file.replace("\\", "/").casefold()
+    filename = Path(relative).stem
+    parts = set(Path(relative).parts)
+    if re.search(r"(?:^|[/ ])(?:health|actuator|metrics|static|swagger|openapi)(?:[/ ]|$)", identifier):
+        return "健康检查、框架管理或静态资源入口，不承载业务处理。"
+    if {"test", "tests", "src/test", "src/tests"} & parts or re.search(r"(?:test|tests|it|architecturetest)$", filename):
+        return "测试或架构校验入口，不是运行时业务触发器。"
+    if re.search(r"(?:^|[/])(?:config|configuration|settings|bootstrap)(?:[/]|$)", relative) or re.search(r"(?:config|configuration|settings)$", filename):
+        return "基础设施配置入口，不直接产生业务结果。"
+    if re.search(r"(?:dao|repository|persistence|persistenceadapter|dataaccess)$", filename) or re.search(r"(?:^|[/])(?:dao|repository|persistence|infrastructure)(?:[/]|$)", relative):
+        return "DAO、仓储或基础设施适配器是被调用的数据访问实现，不是独立业务触发器。"
+    return None
+
+
 def _non_business_candidate(entry: EntryPoint) -> bool:
-    return bool(
-        re.search(
-            r"(?:^|[/ ])(?:health|actuator|metrics|static|swagger|openapi)(?:[/ ]|$)",
-            entry.identifier,
-            re.IGNORECASE,
-        )
-    )
+    return _non_business_reason(entry) is not None
 
 
 def _source_line(value: str) -> int:
@@ -906,10 +946,11 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
         if isinstance(item, dict) and str(item.get("candidate", "")) in known_candidates
     }
     for entry in scan.entries:
-        if _non_business_candidate(entry) and entry.entry_id not in previous_exclusions:
+        reason = _non_business_reason(entry)
+        if reason and entry.entry_id not in previous_exclusions:
             previous_exclusions[entry.entry_id] = {
                 "candidate": entry.entry_id,
-                "reason": "健康检查、框架管理或静态资源入口，不承载业务处理，默认排除。",
+                "reason": reason,
                 "evidence": [f"{entry.file}:{entry.line}"],
             }
     excluded_ids = set(previous_exclusions)
@@ -955,8 +996,16 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
             for entry in group
         } | ({"消息/异步系统"} if any(entry.has_async for entry in group) else set()))
         partners = [item for item in partners if item]
-        responsibility = f"Source entry group for module {name}; confirm the business responsibility from the listed entry evidence."
-        rationale = f"Grouped by source structure and call ownership; candidate entries: {', '.join(entry_ids)}."
+        display_name = next(
+            (
+                entry.title.strip()
+                for entry in group
+                if entry.title.strip() and not entry.title_unresolved and re.search(r"[\u3400-\u9fff]", entry.title)
+            ),
+            _display(name),
+        )
+        responsibility = f"{display_name}：处理 {len(entry_ids)} 个已发现业务入口及其调用结果。"
+        rationale = f"依据入口标识、源码包路径和调用关系归组；证据入口：{', '.join(entry_ids)}。"
         return rationale, responsibility, objects, partners
     previous_reviews = {
         str(review.get("id")): review
@@ -993,7 +1042,14 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
         "modules": [
             {
                 "name": name,
-                "display_name": _display(name),
+                "display_name": next(
+                    (
+                        entry.title.strip()
+                        for entry in (entry_lookup[item] for item in entry_ids if item in entry_lookup)
+                        if entry.title.strip() and not entry.title_unresolved and re.search(r"[\u3400-\u9fff]", entry.title)
+                    ),
+                    _display(name),
+                ),
                 "rationale": next((
                     str(module.get("rationale"))
                     for module in previous.get("modules", [])
@@ -1041,7 +1097,7 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
     existing_directives: list[str] = []
     try:
         existing_text = overview.read_text(encoding="utf-8") if overview.is_file() else ""
-        existing_directives = re.findall(r"<!--\s*devflow:module\s+[^>]+-->", existing_text)
+        existing_directives = re.findall(r"<!--\s*devflow:(?:module|exclude)\s+[^>]+-->", existing_text)
     except (OSError, UnicodeError):
         pass
     generated_directives = [
@@ -1053,18 +1109,64 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
         for item in module_map.get("exclusions", [])
         if isinstance(item, dict) and item.get("candidate") and item.get("reason") and item.get("evidence")
     )
-    machine_lines = existing_directives or generated_directives
-    module_lines = machine_lines + [
-        f"- {module['name']}：{module['responsibility']}；入口 {len(module['entry_ids'])} 个 "
-        f"（{', '.join(f'`{entry_id}`' for entry_id in module['entry_ids'])}）；文件 `{module['file']}`"
-        for module in module_map["modules"]
-    ] or ["- 未发现候选业务入口"]
+    if existing_directives:
+        existing_exclusion_ids = {
+            match.group(1)
+            for line in existing_directives
+            for match in [re.match(r'<!--\s*devflow:exclude\s+id="([^"]+)"', line)]
+            if match
+        }
+        missing_exclusion_directives = [
+            line for line in generated_directives
+            if line.startswith("<!-- devflow:exclude ")
+            and (match := re.match(r'<!--\s*devflow:exclude\s+id="([^"]+)"', line))
+            and match.group(1) not in existing_exclusion_ids
+        ]
+        machine_lines = [*existing_directives, *missing_exclusion_directives]
+    else:
+        machine_lines = generated_directives
+    module_lines = [
+        "## 业务模块划分",
+        "",
+        "| 模块标识 | 业务模块 | 职责 | 归属业务入口 | 文档文件 |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for module in module_map["modules"]:
+        ids = [str(value) for value in module["entry_ids"]]
+        representative = ids if len(ids) <= 5 else [*ids[:3], f"入口 {len(ids)} 个"]
+        module_lines.append(
+            f"| `{module['name']}` | {module['display_name']} | {module['responsibility']} | "
+            f"{'; '.join(f'`{value}`' for value in representative)} | `{module['file']}` |"
+        )
+    if len(module_lines) == 4:
+        module_lines.append("| — | 暂无业务模块 | — | — | — |")
+    exclusion_lines = [
+        "",
+        "## 建议忽略的入口",
+        "",
+        "| 入口标识 | 来源证据 | 建议 | 原因 |",
+        "| --- | --- | --- | --- |",
+    ]
+    for item in module_map.get("exclusions", []):
+        if isinstance(item, dict):
+            evidence = "; ".join(str(value) for value in item.get("evidence", []))
+            exclusion_lines.append(
+                f"| `{item.get('candidate', '')}` | `{evidence}` | 忽略 | {item.get('reason', '')} |"
+            )
+    if len(exclusion_lines) == 5:
+        exclusion_lines.append("| — | — | 保留 | 未发现建议忽略项。 |")
     confirmation_marker = "<!-- devflow:module-confirmed -->\n" if previously_confirmed else ""
     overview.write_text(
         "# 业务流程覆盖总览\n\n"
         f"Git 版本：`{scan.git.target}`\n\n"
         f"模块划分状态：{status}\n\n"
-        "## 模块候选\n\n" + "\n".join(module_lines) + "\n\n"
+        + "\n".join(module_lines)
+        + "\n"
+        + "\n".join(exclusion_lines)
+        + "\n\n"
+        + "<!-- devflow:machine-map -->\n"
+        + "\n".join(machine_lines)
+        + "\n\n"
         "## 确认记录\n\n"
         "请在生成前确认模块边界。确认后将本节改为 `模块划分状态：已确认`，或使用 CLI 的显式确认选项。\n",
         encoding="utf-8",
@@ -1505,6 +1607,10 @@ def render_module(
     comparison: str,
     module_meta: dict[str, Any] | None = None,
 ) -> str:
+    module_meta = dict(module_meta or {})
+    for key in ("objects", "partners", "questions"):
+        if not isinstance(module_meta.get(key), list):
+            module_meta[key] = []
     dirty = "；包含未提交变更" if git.includes_uncommitted else ""
     lines = [
         f"# {_display(module)}流程设计",

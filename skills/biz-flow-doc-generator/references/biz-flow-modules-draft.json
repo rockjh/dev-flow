@@ -12,9 +12,9 @@
   "modules": [
     {
       "name": "relation-sync",
-      "display_name": "Relation Sync",
+      "display_name": "关系同步",
       "rationale": "候选：关系对象、领取状态和资源服务协作关系相近，等待人工确认边界。",
-      "file": "00-relation-sync.md",
+      "file": "00-关系同步.md",
       "responsibility": "待人工确认",
       "objects": ["Relation"],
       "partners": ["资源服务"],
@@ -23,9 +23,9 @@
     },
     {
       "name": "notification",
-      "display_name": "Notification",
+      "display_name": "失败通知",
       "rationale": "候选：消息消费和通知策略生命周期相近，等待人工确认边界。",
-      "file": "01-notification.md",
+      "file": "01-失败通知.md",
       "responsibility": "待人工确认",
       "objects": ["FailureEvent"],
       "partners": ["消息系统"],
