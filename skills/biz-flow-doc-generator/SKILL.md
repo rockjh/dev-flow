@@ -18,18 +18,24 @@ Read only the references needed for the current operation:
 
 The workflow is `init -> discover -> review the module table and suggested
 exclusions -> adjust only disputed rows when needed -> confirm once -> generate
--> check -> verify`. The discover overview is the user-facing boundary: it
-contains a Chinese business-module table (responsibility, representative
-entries/count, and stable Markdown file) followed immediately by a suggested
-exclusion table. Every full entry mapping remains in the process-local machine
-map. Stop on unsafe paths, stale source or mapping fingerprints, ambiguous
-ownership, missing evidence, redaction failure, or any failed gate. Do not
-guess a business rule, storage object, participant, branch outcome, or external
-result. A default confirmation is sufficient when the user has no adjustment;
-an adjustment must preserve unaffected entry ownership and re-analyze only the
-affected module.
+-> check -> verify`. The discover overview is the user-facing boundary. It
+contains a Chinese module table followed immediately by a suggested exclusion
+table. Every module shows its Chinese responsibility, complete readable entry
+list, count, and stable Markdown file. Every entry shows a stable ID, Chinese
+business name or technical label, adapter-normalized trigger and identifier,
+source evidence, scope status (`business`, `excluded`, or `待确认`), and an
+exclusion reason when excluded. The list is complete; long lists may use
+Markdown details blocks. Names must come from registered source/framework
+adapter evidence. Never invent business rules or names: unresolved in-scope
+entries display `待确认` and block generation, while technically excluded
+candidates may use a technical label when exclusion evidence is complete.
+The full structural machine map remains authoritative and each presentation
+name stays linked to its stable entry ID. Stop on unsafe paths, stale source or
+mapping fingerprints, ambiguous ownership, missing evidence, redaction failure,
+or any failed gate. A default confirmation is sufficient when the user has no
+adjustment; an adjustment must preserve unaffected entry ownership.
 
-The `skill_version` is `1.0.0`. Before generation, the overview must contain
+The `skill_version` is `1.1.0`. Before generation, the overview must contain
 the explicit `<!-- devflow:module-confirmed -->` marker. Markdown follows a fixed order of business title,
 trigger, function summary, `sequenceDiagram`, and the entry branch matrix.
 
@@ -53,7 +59,8 @@ in one `dispatch_batch`, await that batch, validate the merged results, and
 then write its file. Entry tasks are read-only and return the complete
 structured result (`entry_id`, `source_fingerprint`, `participants`, `calls`,
 `branches`, `persistence_actions`, `async_actions`, `external_calls`,
-`outcomes`, `unresolved`). Entry tasks never edit Markdown, source code, or the
+`outcomes`, `unresolved`, `business_name`, `trigger_summary`, `source_evidence`,
+`scope_status`, `exclusion_reason`). Entry tasks never edit Markdown, source code, or the
 module mapping. A failed or missing entry result prevents the module from being
 complete.
 

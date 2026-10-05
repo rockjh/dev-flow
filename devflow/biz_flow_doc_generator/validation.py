@@ -31,6 +31,16 @@ def validate_no_critical_unresolved(value: dict) -> list[str]:
 
 
 def validate_entry_analysis(value: object, inventory: dict) -> list[str]:
+    # Keep the low-level validator usable by legacy/custom inventory providers;
+    # the CLI's module-map gate enforces unresolved business names before
+    # generation. Providers that expose the presentation contract are checked
+    # strictly below.
+    if isinstance(value, dict) and not any(key in inventory for key in ("business_name", "trigger_summary", "source_evidence", "scope_status", "exclusion_reason")):
+        value = {
+            "business_name": "待确认", "trigger_summary": str(inventory.get("entry_id", "入口")),
+            "source_evidence": [], "scope_status": "business", "exclusion_reason": None,
+            **value,
+        }
     errors = validate_schema(BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA, value)
     if errors:
         return errors
@@ -39,6 +49,17 @@ def validate_entry_analysis(value: object, inventory: dict) -> list[str]:
     for key in ("entry_id", "source_fingerprint"):
         if value[key] != inventory[key]:
             errors.append(f"ENTRY_EVIDENCE_MISMATCH: {key}")
+    if "business_name" in inventory:
+        for key in ("business_name", "trigger_summary", "source_evidence", "scope_status", "exclusion_reason"):
+            if key not in value:
+                errors.append(f"ENTRY_PRESENTATION_FIELD_MISSING: {key}")
+            elif value[key] != redact(inventory.get(key)):
+                errors.append(f"SOURCE_EVIDENCE_CHANGED: {key}")
+        source_evidence = inventory.get("source_evidence")
+        if inventory.get("scope_status") == "excluded" and (
+            not inventory.get("exclusion_reason") or not source_evidence
+        ):
+            errors.append("EXCLUDED_ENTRY_EVIDENCE_MISSING")
     # The source analyzer owns every machine-readable field.  Entry agents may
     # add human labels for branches and persistence objects, but they may not
     # drop or rewrite participants, calls, async/external effects, or outcomes.

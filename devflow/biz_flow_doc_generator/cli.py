@@ -15,8 +15,9 @@ from pathlib import Path
 
 from ..core.artifacts import require_version_file, write_json, write_version_file, state_root
 from ..core.errors import DevflowError
+from ..core.redaction import redact
 from .discovery import scan
-from .documents import apply_module_map, write_artifacts, write_discovery, _display, _validate_mermaid
+from .documents import apply_module_map, write_artifacts, write_discovery, readable_inventory, _display, _validate_mermaid
 from .git import changed_paths, working_tree_paths
 from .models import BehaviorEvidence, EntryPoint, ErrorEvidence, GitInfo, ScanResult
 from .orchestration import create_run_manifest, fail_run, finish_run, write_module
@@ -281,7 +282,8 @@ def _apply_overview_mapping(
     document = _read_json(module_path)
     if not document:
         return ["transient module map is missing; rerun discovery"]
-    by_id = {entry.entry_id: entry for entry in result.entries}
+    candidates = list(result.all_entries or result.entries)
+    by_id = {entry.entry_id: entry for entry in candidates}
     existing_exclusions = {
         str(item.get("candidate")) for item in document.get("exclusions", [])
         if isinstance(item, dict) and item.get("candidate")
@@ -303,7 +305,11 @@ def _apply_overview_mapping(
         if any(entry_id in [value.strip() for value in raw.split(",")] for _, _, raw in directives):
             return [f"excluded entry {entry_id} must not also appear in a devflow:module directive"]
         excluded_ids.add(entry_id)
-        exclusion_values.append({"candidate": entry_id, "reason": reason, "evidence": [evidence]})
+        candidate = by_id[entry_id]
+        exclusion_values.append({
+            "candidate": entry_id, "reason": reason, "evidence": [evidence],
+            "module": candidate.module,
+        })
     assigned: dict[str, str] = {}
     modules: list[dict[str, object]] = []
     for name, filename, raw_entries in directives:
@@ -334,7 +340,7 @@ def _apply_overview_mapping(
         module_path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         overview.write_text(overview.read_text(encoding="utf-8").replace("<!-- devflow:module-confirmed -->", ""), encoding="utf-8")
         return ["module partition changed; review the proposal and explicitly confirm it again"]
-    missing = sorted(set(by_id) - set(assigned) - excluded_ids - existing_exclusions)
+    missing = sorted(set(by_id) - set(assigned) - excluded_ids)
     if missing:
         return ["entries are not assigned to a module: " + ", ".join(missing)]
     template = {str(item.get("name")): item for item in document.get("modules", []) if isinstance(item, dict)}
@@ -350,8 +356,7 @@ def _apply_overview_mapping(
         old.setdefault("questions", [])
         rebuilt.append(old)
     document["modules"] = rebuilt
-    if exclusion_values:
-        document["exclusions"] = exclusion_values
+    document["exclusions"] = exclusion_values
     document["confirmed"] = True
     # The overview confirmation marker is the explicit partition confirmation.
     # Promote only complete evidence-derived drafts; preserve any user-authored
@@ -368,90 +373,49 @@ def _apply_overview_mapping(
 
 
 def _write_overview_report(docs_root: Path, result: ScanResult, report: dict[str, object]) -> None:
+    """Render a complete readable overview from the source-owned candidate set."""
     overview = next((item for item in docs_root.glob("*.md") if not re.match(r"^\d+-", item.name)), None)
     if overview is None:
         raise ValueError("business-flow overview is missing")
     current = overview.read_text(encoding="utf-8")
+    mapping = _read_json(docs_root / "biz-flow-modules.json")
+    candidates = list(result.all_entries or result.entries)
+    exclusions = [item for item in mapping.get("exclusions", []) if isinstance(item, dict)]
+    records = {str(item.get("name")): item for item in mapping.get("modules", []) if isinstance(item, dict) and item.get("name")}
+    modules = sorted(records)
     directives = re.findall(r"<!--\s*devflow:(?:module|exclude)\s+[^>]+-->", current)
-    marker = "<!-- devflow:module-confirmed -->" if "<!-- devflow:module-confirmed -->" in current else ""
-    entries = sorted(result.entries, key=lambda item: (item.module, item.entry_id))
-    module_map = _read_json(docs_root / "biz-flow-modules.json")
-    kinds = {"url", "webhook", "websocket", "sse"}
-    lines = [
-        "# 业务流程覆盖总览", "",
-        f"Git 版本：`{result.git.target}`", "",
-        "Module partition: user confirmed（模块划分：用户已确认）", "",
-        "## Coverage Statistics（覆盖统计）", "",
-        f"- Candidate entries（候选入口）：{result.candidate_entry_count}",
-        f"- Confirmed business entries（已确认业务入口）：{len(entries)}",
-        f"- Excluded entries（已排除入口）：{len(result.exclusions)}",
-        f"- HTTP entries（HTTP 入口）：{sum(entry.kind in kinds for entry in entries)}",
-        f"- Scheduled entries（定时任务入口）：{sum(entry.kind == 'scheduled' for entry in entries)}",
-        f"- Message entries（消息入口）：{sum(entry.kind == 'message' for entry in entries)}",
-        f"- Unresolved findings（未解决发现）：{len(result.unresolved)}",
-        f"- Mermaid errors（Mermaid 错误）：{len(report.get('coverage', {}).get('markdown_diagram_mismatches', [])) if isinstance(report.get('coverage'), dict) else 0}",
-        "", "## 业务模块划分", "",
-        "| 模块标识 | 业务模块 | 职责 | 归属业务入口 | 文档文件 |",
-        "| --- | --- | --- | --- | --- |",
-    ]
-    modules = sorted({entry.module for entry in entries})
-    directive_map = {
-        name: filename
-        for name, filename, _ in re.findall(
-            r'<!--\s*devflow:module\s+name="([^"]+)"\s+file="([^"]+)"\s+entries="([^"]*)"\s*-->',
-            current,
-        )
-    }
-    module_records = {
-        str(item.get("name")): item
-        for item in module_map.get("modules", [])
-        if isinstance(item, dict) and item.get("name")
-    }
-    for module in modules:
-        record = module_records.get(module, {})
-        ids = [str(value) for value in record.get("entry_ids", [])] or [entry.entry_id for entry in entries if entry.module == module]
-        representative = ids if len(ids) <= 5 else [*ids[:3], f"入口 {len(ids)} 个"]
-        lines.append(
-            f"| {module} | {record.get('display_name', module)} | {record.get('responsibility', '按源码证据处理业务入口')} | "
-            f"{'; '.join(f'`{value}`' for value in representative)} | `{record.get('file', directive_map.get(module, ''))}` |"
-        )
-    if not modules:
-        lines.append("| — | 暂无业务模块 | — | — | — |")
-    exclusions = [item for item in module_map.get("exclusions", []) if isinstance(item, dict)]
-    lines.extend(["", "## 建议忽略的入口", "", "| 入口标识 | 来源证据 | 建议 | 原因 |", "| --- | --- | --- | --- |"])
-    lines.extend(
-        f"| {item.get('candidate', '')} | `{'; '.join(map(str, item.get('evidence', [])))}` | 忽略 | {item.get('reason', '')} |"
-        for item in exclusions
-    )
+
+    def clean(value: object) -> str:
+        return str(redact(value if value is not None else "")).replace("|", "\\|").replace("\n", " ").strip()
+
+    lines = ["# \u4e1a\u52a1\u6d41\u7a0b\u8986\u76d6\u603b\u89c8", "",
+             f"Git \u7248\u672c\uff1a`{clean(result.git.target)}`", "",
+             "\u6a21\u5757\u5212\u5206\u72b6\u6001\uff1a\u5df2\u786e\u8ba4", "",
+             *readable_inventory(result, mapping)]
+    reconciliation = report.get("entry_reconciliation") if isinstance(report, dict) else None
+    status_text = "\u901a\u8fc7" if not isinstance(reconciliation, dict) or reconciliation.get("matches", False) else "\u5931\u8d25"
+    unresolved_business = sum(e.business_name == "\u5f85\u786e\u8ba4" and e.scope_status == "business" for e in candidates)
+    unresolved_excluded = sum(e.business_name == "\u5f85\u786e\u8ba4" and e.scope_status == "excluded" for e in candidates)
+    lines.extend(["", "## \u8986\u76d6\u7edf\u8ba1", "", f"- \u5019\u9009\u5165\u53e3\uff1a{len(candidates)}", f"- \u5df2\u786e\u8ba4\u4e1a\u52a1\u5165\u53e3\uff1a{sum(e.scope_status == 'business' for e in candidates)}", f"- \u5df2\u6392\u9664\u5165\u53e3\uff1a{len(exclusions)}", f"- \u5f85\u786e\u8ba4\u4e1a\u52a1\u540d\u79f0\uff08\u4e1a\u52a1\u8303\u56f4\uff09\uff1a{unresolved_business}", f"- \u5f85\u786e\u8ba4\u4e1a\u52a1\u540d\u79f0\uff08\u6392\u9664\u5019\u9009\uff09\uff1a{unresolved_excluded}", f"- \u5165\u53e3\u6e05\u5355\u4e0e\u673a\u5668\u6620\u5c04\u5bf9\u8d26\uff1a{status_text}", "", "## \u6a21\u5757\u5217\u8868", ""])
+    lines.extend(f"- {clean(module)}: {clean(records.get(module, {}).get('responsibility', '\u6309\u6e90\u7801\u8bc1\u636e\u5904\u7406\u4e1a\u52a1\u5165\u53e3'))}\uff1afile `{clean(records.get(module, {}).get('file', ''))}`" for module in modules)
+    lines.extend(["", "## \u5165\u53e3\u660e\u7ec6", "", "| \u5165\u53e3 ID | \u4e1a\u52a1\u63cf\u8ff0 | \u5165\u53e3 | \u5f52\u5c5e | \u5165\u53e3\u7c7b\u578b | \u6e90\u7801\u4f4d\u7f6e |", "| --- | --- | --- | --- | --- | --- |"])
+    for entry in candidates:
+        lines.append(f"| `{clean(entry.entry_id)}` | {clean(entry.business_name or '\u5f85\u786e\u8ba4')} | {clean(entry.trigger_summary or entry.identifier)} | `{clean(records.get(entry.module, {}).get('file', ''))}` | {clean(entry.kind)} | `{clean(entry.file)}:{entry.line}` |")
+    lines.extend(["", "## \u6392\u9664\u9879", ""])
+    lines.extend(f"- {clean(item.get('candidate'))}\uff1a{clean(item.get('reason'))}" for item in exclusions)
     if not exclusions:
-        lines.append("| — | — | 保留 | 未发现建议忽略项。 |")
-    lines.extend(["", "## Module List（模块列表）", ""])
-    lines.extend(
-        f"- {module}: {record.get('responsibility', '按源码证据处理业务入口')}；file `{record.get('file', directive_map.get(module, ''))}`"
-        for module, record in module_records.items()
-    )
-    lines.extend(["", "## Entry Details", "", "| 入口 ID | 业务描述 | 入口 | 归属 | 入口类型 | 源码位置 |", "| --- | --- | --- | --- | --- | --- |"])
-    for entry in entries:
-        title = entry.title if entry.title and not entry.title_unresolved else "title_unresolved"
-        lines.append(
-            f"| `{entry.entry_id}` | {title} | {entry.identifier} | `{directive_map.get(entry.module, '')}` | {entry.kind} | `{entry.file}:{entry.line}` |"
-        )
-    lines.extend(["", "## Exclusions（排除项）", ""])
-    lines.extend(f"- {item}" for item in sorted(result.exclusions))
-    if not result.exclusions:
-        lines.append("- None（无）")
-    lines.extend(["", "## Acceptance（验收结果）", "", "- Module partition: confirmed（模块划分：已确认）", "- Entry ownership: unique（入口归属：唯一）", "- Markdown generation: passed（Markdown 生成：通过）", "- Mermaid validation: passed（Mermaid 校验：通过）"])
+        lines.append("- None\uff1a\u65e0\uff1a")
+    lines.extend(["", "## \u9a8c\u6536\u7ed3\u679c", "", "- \u6a21\u5757\u5212\u5206\uff1a\u5df2\u786e\u8ba4", "- \u5165\u53e3\u5f52\u5c5e\uff1a\u552f\u4e00", "- Markdown \u751f\u6210\uff1a\u901a\u8fc7", "- Mermaid \u6821\u9a8c\uff1a\u901a\u8fc7"])
     if result.unresolved:
-        lines.extend(["", "## 未解决证据", "", *[f"- {item}" for item in result.unresolved]])
+        lines.extend(["", "## \u672a\u89e3\u51b3\u8bc1\u636e", "", *[f"- {clean(item)}" for item in result.unresolved]])
     if directives:
         lines.extend(["", "<!-- devflow:machine-map -->", *directives])
-    if marker:
-        lines.append(marker)
+    if "<!-- devflow:module-confirmed -->" in current:
+        lines.append("<!-- devflow:module-confirmed -->")
     rendered = "\n".join(lines).rstrip() + "\n"
     temporary = overview.with_name(overview.name + ".tmp")
     temporary.write_text(rendered, encoding="utf-8")
     temporary.replace(overview)
-
 
 def _version_lock_path(docs_root: Path) -> Path:
     return docs_root / _VERSION_LOCK_NAME
@@ -569,30 +533,7 @@ def _discover_command_unlocked(argv: list[str]) -> int:
     _clear_confirmation_marker(docs_root)
     discovery_path, module_map_path = write_discovery(result, docs_root)
     proposal = _read_json(module_map_path) or {}
-    print("业务模块划分：")
-    print("| 模块标识 | 业务模块 | 职责 | 归属业务入口 | 文档文件 |")
-    print("| --- | --- | --- | --- | --- |")
-    for module in proposal.get("modules", []):
-        if not isinstance(module, dict):
-            continue
-        entry_ids = [str(value) for value in module.get("entry_ids", [])]
-        representative = entry_ids if len(entry_ids) <= 5 else [*entry_ids[:3], f"入口 {len(entry_ids)} 个"]
-        print(
-            f"| {module.get('name')} | {module.get('display_name', module.get('name'))} | "
-            f"{module.get('responsibility', '')} | {'; '.join(f'`{value}`' for value in representative)} | "
-            f"`{module.get('file')}` |"
-        )
-    print("建议忽略的入口：")
-    print("| 入口标识 | 来源证据 | 建议 | 原因 |")
-    print("| --- | --- | --- | --- |")
-    for exclusion in proposal.get("exclusions", []):
-        if isinstance(exclusion, dict):
-            print(
-                f"| {exclusion.get('candidate')} | `{'; '.join(map(str, exclusion.get('evidence', [])))}` | 忽略 | "
-                f"{exclusion.get('reason')} |"
-            )
-    if not proposal.get("exclusions"):
-        print("| — | — | 保留 | 未发现建议忽略项。 |")
+    print("\n".join(readable_inventory(result, proposal)))
     _remove_transient_artifacts(docs_root)
     print(
         f"discovered entries={len(result.entries)} unresolved={len(result.unresolved)} "
@@ -961,7 +902,11 @@ def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) ->
         for key in (
             "module_count", "entry_count", "module_tasks", "entry_tasks", "parallel", "degraded",
             "branch_coverage", "persistence_coverage", "critical_unresolved", "stable",
+            "module_entry_lists", "business_name_unresolved_count",
+            "excluded_business_name_unresolved_count", "excluded_entry_details",
+            "entry_reconciliation", "adapter_evidence_coverage",
         )
+        if key in report
     }
     write_json(report_path, report)
     finish_run(manifest)
@@ -1083,27 +1028,78 @@ def check_command(argv: list[str]) -> int:
             return 1
         failures: list[str] = []
         overview_text = overview.read_text(encoding="utf-8") if overview.is_file() else ""
-        for heading in ("## Coverage Statistics", "## Module List", "## Entry Details", "## Acceptance"):
+        for heading in ("## 覆盖统计", "## 模块列表", "## 入口明细", "## 验收结果"):
             if heading not in overview_text:
                 failures.append(f"overview: missing {heading}")
-        if "Module partition: user confirmed" not in overview_text:
+        if "<!-- devflow:module-confirmed -->" not in overview_text and "模块划分状态：已确认" not in overview_text:
             failures.append("overview: module partition is not confirmed")
         module_directives = re.findall(
             r'<!--\s*devflow:module\s+name="([^"]+)"\s+file="([^"]+)"\s+entries="([^"]*)"\s*-->',
             overview_text,
         )
-        excluded_ids = {
-            item for item in re.findall(r'<!--\s*devflow:exclude\s+id="([^"]+)"\s+', overview_text)
+        exclusion_records = {
+            entry_id: (reason, evidence)
+            for entry_id, reason, evidence in re.findall(
+                r'<!--\s*devflow:exclude\s+id="([^"]+)"\s+reason="([^"]+)"\s+evidence="([^"]+)"\s*-->',
+                overview_text,
+            )
         }
+        excluded_ids = set(exclusion_records)
         assigned_ids = [entry_id.strip() for _, _, raw in module_directives for entry_id in raw.split(",") if entry_id.strip()]
         if len(assigned_ids) != len(set(assigned_ids)):
             failures.append("overview: an entry is assigned to multiple modules")
         expected_ids = {entry.entry_id for entry in result.entries} - excluded_ids
+        expected_all_ids = {entry.entry_id for entry in result.entries}
         if set(assigned_ids) != expected_ids:
             failures.append("overview: module directives do not cover exactly the discovered entries")
-        table_ids = re.findall(r"^\|\s*`([^`]+)`\s*\|", overview_text, flags=re.M)
-        if set(table_ids) != expected_ids or len(table_ids) != len(set(table_ids)):
+        # The same excluded ID is intentionally shown in both the suggested
+        # exclusion table and the complete readable list.  Reconcile against
+        # the dedicated entry-details table so that presentation duplication
+        # does not look like duplicate discovery evidence.
+        entry_details = re.search(
+            r"(?ms)^##\s+入口明细\s*$\n(.*?)(?=^##\s+|\Z)",
+            overview_text,
+        )
+        table_ids = re.findall(
+            r"^\|\s*`([^`]+)`\s*\|",
+            entry_details.group(1) if entry_details else "",
+            flags=re.M,
+        )
+        if set(table_ids) != expected_all_ids or len(table_ids) != len(set(table_ids)):
             failures.append("overview: entry table does not cover each discovered entry exactly once")
+        complete_details = re.search(
+            r"(?ms)^##\s+完整入口清单\s*$\n(.*?)(?=^##\s+|\Z)",
+            overview_text,
+        )
+        readable_ids = []
+        if complete_details:
+            for line in complete_details.group(1).splitlines():
+                cells = [cell.strip().strip("`") for cell in line.strip().strip("|").split("|")]
+                if len(cells) >= 3 and cells[2] in expected_all_ids:
+                    readable_ids.append(cells[2])
+        if set(readable_ids) != expected_all_ids or len(readable_ids) != len(set(readable_ids)):
+            failures.append("overview: complete readable entry list does not cover each discovered entry exactly once")
+        readable_rows: dict[str, list[str]] = {}
+        if complete_details:
+            for line in complete_details.group(1).splitlines():
+                if not line.startswith("|") or "`" not in line:
+                    continue
+                cells = [cell.replace("\x00", "|").strip() for cell in line.strip().strip("|").replace("\\|", "\x00").split("|")]
+                if len(cells) >= 6 and cells[2].strip("`") in expected_all_ids:
+                    readable_rows[cells[2].strip("`")] = cells[:6]
+        for entry in result.entries:
+            row = readable_rows.get(entry.entry_id)
+            if row is None:
+                continue
+            if not row[0] or not row[1] or not row[3] or row[3] == "``":
+                failures.append(f"overview: entry {entry.entry_id} is missing readable name, trigger, or source evidence")
+            if entry.entry_id in excluded_ids:
+                if row[4] != "excluded" or not row[5] or not exclusion_records[entry.entry_id][0] or not exclusion_records[entry.entry_id][1]:
+                    failures.append(f"overview: excluded entry {entry.entry_id} is missing status or exclusion evidence")
+            elif row[4] == "excluded":
+                failures.append(f"overview: business entry {entry.entry_id} is marked excluded without an exclusion directive")
+            elif row[0] == "待确认":
+                failures.append(f"overview: business entry {entry.entry_id} still has an unresolved business name")
         directive_files = {filename for _, filename, _ in module_directives}
         actual_files = {path.name for path in documents}
         if directive_files != actual_files:

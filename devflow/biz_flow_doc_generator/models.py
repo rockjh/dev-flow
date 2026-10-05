@@ -150,6 +150,13 @@ class EntryPoint:
     handler_confirmed: bool = True
     title: str = ""
     title_unresolved: bool = False
+    # Presentation fields are evidence-linked and intentionally separate from
+    # the structural trigger/handler fields above.
+    business_name: str = ""
+    trigger_summary: str = ""
+    source_evidence: list[dict] = field(default_factory=list)
+    scope_status: str = "business"
+    exclusion_reason: str | None = None
     parent_entry_id: str = ""
     submit_source: str = ""
     agent_branches: list[dict] = field(default_factory=list)
@@ -174,6 +181,10 @@ class ScanResult:
     discovered_entry_count: int = -1
     discovered_binding_count: int = -1
     discovered_handler_count: int = -1
+    # Complete source discovery, including candidates later excluded from
+    # generation. ``entries`` is the active generation view after the module
+    # map is applied; this snapshot keeps the user-facing overview complete.
+    all_entries: list[EntryPoint] = field(default_factory=list)
 
     @property
     def candidate_entry_count(self) -> int:

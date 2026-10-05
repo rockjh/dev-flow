@@ -20,4 +20,10 @@ devflow biz-flow verify --project <fixture>
 对每个入口检查源码候选 `branch_id` 与 `persistence_id` 是否同时存在于结构化入口结果、Mermaid 注释和矩阵；
 缺失、改写、未知可达性或真实持久化对象名称缺失都必须阻止生成。
 
+对每个模块验证：总览入口数量等于模块入口清单数量；模块入口清单的 `entry_id` 与机器映射完全一致；
+每个入口都有 `business_name`、`trigger_summary` 和 `source_evidence`；业务入口名称为 `待确认` 时计入
+unresolved；excluded 入口必须带排除原因和源码证据；排除入口仍存在于清单中；连续两次 discover 的业务名称、
+入口顺序和模块归属保持稳定。最终报告包含每个模块的入口数量和完整清单、待确认名称数量（按 business/excluded
+统计）、已排除入口及原因、清单与机器映射对账结果，以及各入口类型适配器的证据覆盖情况。
+
 对于更新夹具，重复执行 `discover`，编辑源代码以新增/修改/删除入口，运行 `devflow biz-flow update`，然后运行 `check` 和 `verify`。分别注入一个格式错误的排除项、一个无效证据位置、一个占位步骤、一个过长业务要点和一个格式错误的 Mermaid 块；每项都必须失败，并在错误中包含入口 ID 或源位置。连续运行两次 `verify`，比较其 `stable` 结果和 Markdown 文档数量。

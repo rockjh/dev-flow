@@ -294,6 +294,9 @@ def collect_evidence(
                             unresolved.append({"code": "PERSISTENCE_OBJECT_UNRESOLVED", "critical": True, "evidence": f"{file}:{number}"})
             inventories[entry.entry_id] = {
                 "entry_id": entry.entry_id, "source_fingerprint": scan.source_fingerprint,
+                "business_name": entry.business_name, "trigger_summary": entry.trigger_summary,
+                "source_evidence": list(entry.source_evidence), "scope_status": entry.scope_status,
+                "exclusion_reason": entry.exclusion_reason,
                 "participants": list(dict.fromkeys(participants)), "calls": calls,
                 "async_actions": list(dict.fromkeys(async_actions)),
                 "external_calls": list(dict.fromkeys(external_calls)),

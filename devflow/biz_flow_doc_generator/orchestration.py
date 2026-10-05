@@ -199,6 +199,11 @@ class NativeAgentExecutor:
 
                 value = run_entry(self.backend, self.executable, prompt, cwd=self.cwd,
                                   started=started, finished=finished)
+                if isinstance(value, dict) and "business_name" in inventory:
+                    value = {
+                        **{key: inventory.get(key) for key in ("business_name", "trigger_summary", "source_evidence", "scope_status", "exclusion_reason")},
+                        **value,
+                    }
                 errors = validate_entry_analysis(value, inventory)
                 if errors or value != redact(value):
                     raise ValueError("; ".join(errors) or "AGENT_RESULT_NOT_REDACTED")
@@ -404,7 +409,8 @@ def _evidence_analysis(entry_id, inventory):
                  "exclusion_reason": "源码证据确认不传播到入口" if branch["business_relevant"] is False else ""}
                 for branch in value["source_branch_inventory"]]
     return {key: value[key] for key in ("entry_id", "source_fingerprint", "participants", "calls",
-            "async_actions", "external_calls", "outcomes", "unresolved")} | {
+            "async_actions", "external_calls", "outcomes", "unresolved", "business_name",
+            "trigger_summary", "source_evidence", "scope_status", "exclusion_reason")} | {
             "branches": branches, "persistence_actions": [
                 {**action, "operation_label": action["operation"]} for action in value["persistence_inventory"]]}
 
@@ -537,6 +543,19 @@ def create_run_manifest(scan: ScanResult, mapping: dict, *, allow_degraded=False
         for filename in files:
             FileWriteGuard("module", filename, manifest["docs_root"]).assert_allowed("module", filename)
         inventories = redact(collect_evidence(scan, branch_adapters=branch_adapters, persistence_adapters=persistence_adapters))
+        # Normalize the presentation contract once at the process boundary.
+        # Older/custom evidence adapters may omit these fields, but they must
+        # still receive the source-owned values before agent validation.
+        entry_lookup = {entry.entry_id: entry for entry in scan.entries}
+        for entry_id, inventory in inventories.items():
+            entry = entry_lookup.get(entry_id)
+            if entry is None:
+                continue
+            inventory.setdefault("business_name", entry.business_name or "待确认")
+            inventory.setdefault("trigger_summary", entry.trigger_summary or entry.identifier)
+            inventory.setdefault("source_evidence", list(entry.source_evidence) or [{"file": entry.file, "line": entry.line, "reason": "入口源码位置"}])
+            inventory.setdefault("scope_status", entry.scope_status or "business")
+            inventory.setdefault("exclusion_reason", entry.exclusion_reason)
         manifest["inventories"] = {e: inventories[e] for e in expected}
         manifest["report"]["critical_unresolved"] = sum(
             item.get("critical", True) for inv in manifest["inventories"].values() for item in inv["unresolved"])
@@ -587,6 +606,11 @@ def create_run_manifest(scan: ScanResult, mapping: dict, *, allow_degraded=False
                                           "kind": entries[e].kind, "identifier": entries[e].identifier,
                                           "handler": entries[e].handler, "caller": entries[e].caller,
                                           "input_summary": entries[e].input_summary,
+                                          "business_name": entries[e].business_name,
+                                          "trigger_summary": entries[e].trigger_summary,
+                                          "source_evidence": list(entries[e].source_evidence),
+                                          "scope_status": entries[e].scope_status,
+                                          "exclusion_reason": entries[e].exclusion_reason,
                                           "functions": list(entries[e].functions),
                                           "errors": redact([asdict(error) for error in entries[e].errors]),
                                           "behaviors": redact([asdict(behavior) for behavior in entries[e].behaviors]),
@@ -624,6 +648,12 @@ def create_run_manifest(scan: ScanResult, mapping: dict, *, allow_degraded=False
             if set(value["entry_analyses"]) != set(modules[module]["entry_ids"]):
                 raise ValueError("ENTRY_BATCH_TASK_MISMATCH")
             for e, analysis in value["entry_analyses"].items():
+                if isinstance(analysis, dict) and "business_name" in manifest["inventories"][e]:
+                    analysis.update({
+                        key: manifest["inventories"][e].get(key)
+                        for key in ("business_name", "trigger_summary", "source_evidence", "scope_status", "exclusion_reason")
+                        if key not in analysis
+                    })
                 errors = validate_entry_analysis(analysis, manifest["inventories"][e])
                 if errors:
                     raise ValueError("; ".join(errors))

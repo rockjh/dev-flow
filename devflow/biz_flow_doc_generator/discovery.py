@@ -30,6 +30,59 @@ EXTENSIONS = {
     ".c": "C", ".cc": "C++", ".cpp": "C++", ".h": "C/C++", ".hpp": "C++",
     ".sh": "Shell", ".ps1": "PowerShell", ".bat": "Batch", ".cmd": "Batch",
 }
+
+# Statically registered trigger adapters. Discovery may support many source
+# languages, but presentation is normalized only through these explicit
+# adapter records; there is no runtime plugin or framework guessing.
+TRIGGER_ADAPTERS = {
+    "url": "http",
+    "webhook": "webhook",
+    "websocket": "websocket",
+    "sse": "sse",
+    "rpc": "rpc",
+    "message": "message",
+    "scheduled": "scheduled",
+    "event": "event",
+    "cli": "cli",
+    "file": "file",
+    "batch": "batch",
+    "worker": "worker",
+}
+
+
+def _trigger_summary(entry: EntryPoint) -> str:
+    labels = {
+        "url": "HTTP", "webhook": "Webhook", "websocket": "WebSocket", "sse": "SSE",
+        "rpc": "RPC", "message": "消息", "scheduled": "定时任务", "event": "事件",
+        "cli": "命令行", "file": "文件", "batch": "批处理", "worker": "异步任务",
+    }
+    adapter = TRIGGER_ADAPTERS.get(entry.kind)
+    return f"{labels.get(entry.kind, entry.kind)}：{entry.identifier}" if adapter else f"{entry.kind}：{entry.identifier}"
+
+
+def _business_name(entry: EntryPoint) -> str:
+    if entry.title and not entry.title_unresolved and re.search(r"[\u3400-\u9fff]", entry.title):
+        return entry.title.strip()[:120]
+    # A route or handler identifier is trigger evidence, not business meaning.
+    # Keep an in-scope entry unresolved until an adapter supplied a readable
+    # label (comment, annotation, docstring or registration metadata).
+    return "待确认"
+
+
+def _exclusion_reason(entry: EntryPoint) -> str | None:
+    identifier = entry.identifier.casefold()
+    relative = entry.file.replace("\\", "/").casefold()
+    filename = Path(relative).stem
+    parts = set(Path(relative).parts)
+    if re.search(r"(?:^|[/ ])(?:health|actuator|metrics|static|swagger|openapi)(?:[/ ]|$)", identifier):
+        return "健康检查、框架管理或静态资源入口，不承载业务处理。"
+    if {"test", "tests", "src/test", "src/tests"} & parts or re.search(r"(?:test|tests|it|architecturetest)$", filename):
+        return "测试或架构校验入口，不是运行时业务触发器。"
+    if re.search(r"(?:^|[/])(?:config|configuration|settings|bootstrap)(?:[/]|$)", relative) or re.search(r"(?:config|configuration|settings)$", filename):
+        return "基础设施配置入口，不直接产生业务结果。"
+    if re.search(r"(?:dao|repository|persistence|persistenceadapter|dataaccess)$", filename) or re.search(r"(?:^|[/])(?:dao|repository|persistence|infrastructure)(?:[/]|$)", relative):
+        return "DAO、仓储或基础设施适配器是被调用的数据访问实现，不是独立业务触发器。"
+    return None
 CONFIG_NAMES = {
     "application.yml", "application.yaml", "application.properties", "bootstrap.yml", "bootstrap.yaml",
     "build.gradle", "build.gradle.kts", "package.json", "pom.xml", "pyproject.toml", "routes.rb",
@@ -61,10 +114,19 @@ IGNORED_EXTERNAL_CALLS = {
 def _comment_label(text: str, line: int) -> str:
     """Return the nearest contiguous source comment before an entry."""
     lines = text.splitlines()
-    index = max(0, line - 2)
+    index = min(len(lines) - 1, max(0, line - 1))
     comments: list[str] = []
     while index >= 0:
-        value = lines[index].strip()
+        # ``Path.read_text(encoding="utf-8")`` preserves a UTF-8 BOM.  Treat
+        # it as transport metadata so a comment on the first source line can
+        # still provide adapter-backed business-name evidence.
+        value = lines[index].strip().lstrip("\ufeff")
+        if index == line - 1:
+            inline = re.search(r"@(?:business|domain|module)\s*[:=]\s*(.*?)(?=\s+@|$)", value, re.I)
+            if inline:
+                comments.append(inline.group(1).strip())
+            index -= 1
+            continue
         if not value:
             if comments:
                 break
@@ -88,6 +150,20 @@ def _comment_label(text: str, line: int) -> str:
             continue
         break
     return " ".join(reversed(comments)).strip()
+
+
+def _label_evidence(text: str, line: int, label: str) -> list[dict[str, object]]:
+    """Locate the source lines that supplied a readable adapter label."""
+    if not label:
+        return []
+    lines = text.splitlines()
+    # The registration line is 1-based. Walk the small annotation/comment
+    # window used by _comment_label and retain exact source locations.
+    found: list[dict[str, object]] = []
+    for number in range(max(1, line - 8), min(len(lines), line) + 1):
+        if label in lines[number - 1]:
+            found.append({"line": number, "reason": "入口适配器提供的中文注释、注解或注册名称"})
+    return found
 
 
 def _module_name(relative: Path, identifier: str, text: str = "", line: int = 0) -> str:
@@ -1281,8 +1357,8 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
                     has_async=bool(bodies and re.search(r"\b(async|await|thread|executor|queue|publish|send)\b", "\n".join(bodies), re.I)),
                     binding_confirmed=True,
                     handler_confirmed=handler_confirmed,
-                    title=_comment_label(text, line + 1),
-                    title_unresolved=not bool(_comment_label(text, line + 1)),
+                    title=_comment_label(text, line),
+                    title_unresolved=not bool(_comment_label(text, line)),
                 ))
         # Treat explicitly submitted background functions as first-class
         # business entrances. They must receive their own ownership and
@@ -1359,6 +1435,42 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
         # Keep one deterministic record per registration/source handler.  The
         # same entry is often found through both an annotation and a platform
         # registry, while its stable id must survive repeated scans.
+        # Presentation metadata is computed from the same adapter evidence as
+        # the structural fields, so every consumer can render a complete list
+        # without inspecting a private machine map.
+        for entry in entries:
+            entry.trigger_summary = _trigger_summary(entry)
+            entry.exclusion_reason = _exclusion_reason(entry)
+            entry.business_name = _business_name(entry)
+            # Excluded candidates may retain a descriptive technical label;
+            # this label never satisfies the business-name gate.
+            if entry.exclusion_reason and entry.business_name == "待确认":
+                labels = {
+                    "url": "HTTP 技术入口", "webhook": "Webhook 技术入口",
+                    "message": "消息技术入口", "scheduled": "定时任务技术入口",
+                    "event": "事件技术入口", "cli": "命令行技术入口",
+                    "file": "文件技术入口", "worker": "异步任务技术入口",
+                }
+                entry.business_name = f"{labels.get(entry.kind, '技术入口')}：{entry.identifier}"
+            evidence = [{
+                "file": entry.file,
+                "line": entry.line,
+                "reason": "入口适配器注册、触发标识和处理器源码位置",
+            }]
+            evidence.extend({"file": entry.file, **item} for item in _label_evidence(
+                source_texts.get(entry.file, ""), entry.line, entry.title if entry.title and not entry.title_unresolved else ""
+            ))
+            entry.source_evidence = list(dict.fromkeys(
+                (item["file"], item["line"], item["reason"]) for item in evidence
+            ))
+            entry.source_evidence = [
+                {"file": file, "line": line, "reason": reason}
+                for file, line, reason in entry.source_evidence
+            ]
+            entry.scope_status = "excluded" if entry.exclusion_reason else "business"
+            if entry.scope_status == "business" and entry.business_name == "待确认":
+                unresolved.append(f"{entry.entry_id}: business name evidence is unresolved")
+
         unique_entries: dict[tuple[str, str, str, str], EntryPoint] = {}
         for entry in entries:
             key = (entry.kind, entry.identifier, entry.file, entry.handler)
@@ -1383,4 +1495,5 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
                 entry.binding_confirmed and entry.identifier != "代码中未确认" for entry in entries
             ),
             discovered_handler_count=len({entry.handler for entry in entries if entry.handler_confirmed and entry.handler != "代码中未确认"}),
+            all_entries=list(entries),
         )

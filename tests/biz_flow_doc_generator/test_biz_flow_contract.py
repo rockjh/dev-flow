@@ -26,6 +26,7 @@ class BizFlowContractTests(unittest.TestCase):
         (root / "app.py").write_text(
             "from fastapi import FastAPI\n"
             "app = FastAPI()\n"
+            "# 查询资源\n"
             "@app.get('/resources')\n"
             "def list_resources():\n"
             "    raise BusinessError('RESOURCE_NOT_FOUND', 'missing')\n",
@@ -351,6 +352,7 @@ class BizFlowContractTests(unittest.TestCase):
                 "        raise BusinessError('CAUGHT_ERROR', 'token=TOPSECRET')\n"
                 "    except BusinessError:\n"
                 "        return []\n"
+                "# 查询资源\n"
                 "@app.get('/resources')\n"
                 "def list_resources():\n"
                 "    load()\n"

@@ -1672,9 +1672,19 @@ BIZ_FLOW_UNRESOLVED_SCHEMA = _object({
     "evidence": {"type": "string", "minLength": 1},
     "reason": {"type": "string"},
 }, required=("code", "critical", "evidence"))
+BIZ_FLOW_SOURCE_EVIDENCE_SCHEMA = _array(_object({
+    "file": {"type": "string", "minLength": 1},
+    "line": {"type": "integer", "minimum": 1},
+    "reason": {"type": "string", "minLength": 1},
+}, required=("file", "line", "reason")))
 BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA = _object({
     "entry_id": {"type": "string", "minLength": 1},
     "source_fingerprint": {"type": "string", "minLength": 1},
+    "business_name": {"type": "string", "minLength": 1},
+    "trigger_summary": {"type": "string", "minLength": 1},
+    "source_evidence": BIZ_FLOW_SOURCE_EVIDENCE_SCHEMA,
+    "scope_status": {"enum": ["business", "excluded", "待确认"]},
+    "exclusion_reason": {"type": ["string", "null"]},
     "participants": _array({"type": "string", "minLength": 1}, minimum=1),
     "calls": _array({"type": "string", "minLength": 1}),
     "branches": _array(_object({**BIZ_FLOW_BRANCH_SCHEMA["properties"],
@@ -1689,7 +1699,7 @@ BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA = _object({
     "external_calls": _array({"type": "string", "minLength": 1}),
     "outcomes": _array({"type": "string", "minLength": 1}, minimum=1),
     "unresolved": _array(BIZ_FLOW_UNRESOLVED_SCHEMA),
-})
+    }, required=("entry_id", "source_fingerprint", "business_name", "trigger_summary", "source_evidence", "scope_status", "exclusion_reason", "participants", "calls", "branches", "persistence_actions", "async_actions", "external_calls", "outcomes", "unresolved"))
 BIZ_FLOW_RUN_MANIFEST_SCHEMA = _object({
     "schema_version": {"const": BIZ_FLOW_SCHEMA_VERSION},
     "run_id": {"type": "string", "minLength": 1},
@@ -1730,13 +1740,17 @@ BIZ_FLOW_RUN_MANIFEST_SCHEMA = _object({
     })),
     "inventories": {"type": "object", "additionalProperties": _object({
         "entry_id": {"type": "string"}, "source_fingerprint": {"type": "string"},
+        "business_name": {"type": "string"}, "trigger_summary": {"type": "string"},
+        "source_evidence": BIZ_FLOW_SOURCE_EVIDENCE_SCHEMA,
+        "scope_status": {"enum": ["business", "excluded", "待确认"]},
+        "exclusion_reason": {"type": ["string", "null"]},
         "participants": _array({"type": "string"}), "calls": _array({"type": "string"}),
         "async_actions": _array({"type": "string"}), "external_calls": _array({"type": "string"}),
         "outcomes": _array({"type": "string"}),
         "source_branch_inventory": _array(BIZ_FLOW_BRANCH_SCHEMA),
         "persistence_inventory": _array(BIZ_FLOW_PERSISTENCE_SCHEMA),
         "unresolved": _array(BIZ_FLOW_UNRESOLVED_SCHEMA),
-    })},
+    }, required=("entry_id", "source_fingerprint", "business_name", "trigger_summary", "source_evidence", "scope_status", "exclusion_reason", "participants", "calls", "async_actions", "external_calls", "outcomes", "source_branch_inventory", "persistence_inventory", "unresolved"))},
     "entry_analyses": {"type": "object", "additionalProperties": BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA},
     "module_results": {"type": "object", "additionalProperties": _object({
         "module_id": {"type": "string", "minLength": 1},
@@ -1755,7 +1769,19 @@ BIZ_FLOW_RUN_MANIFEST_SCHEMA = _object({
         "persistence_coverage": {"type": "number", "minimum": 0, "maximum": 1},
         "critical_unresolved": {"type": "integer", "minimum": 0},
         "stable": {"type": "boolean"},
-    }),
+        # Final generation reports carry the complete readable-entry audit.
+        # These fields are optional while a run is still in progress so the
+        # initial manifest remains a valid progress record.
+        "module_entry_lists": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}},
+        "business_name_unresolved_count": {"type": "integer", "minimum": 0},
+        "excluded_business_name_unresolved_count": {"type": "integer", "minimum": 0},
+        "excluded_entry_details": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+        "entry_reconciliation": {"type": "object", "additionalProperties": True},
+        "adapter_evidence_coverage": {"type": "object", "additionalProperties": True},
+    }, required=(
+        "module_count", "entry_count", "module_tasks", "entry_tasks", "parallel", "degraded",
+        "branch_coverage", "persistence_coverage", "critical_unresolved", "stable",
+    )),
     "errors": _array({"type": "string"}),
 }, (
     "schema_version", "run_id", "source_fingerprint", "mapping_hash", "project_root", "docs_root",
@@ -1802,6 +1828,10 @@ BIZ_FLOW_DISCOVERY_SCHEMA: dict[str, Any] = _object(
         "entries": _array(_object({
             "id": NONEMPTY_STRING, "type": NONEMPTY_STRING, "identifier": NONEMPTY_STRING,
             "handler": NONEMPTY_STRING, "source": NONEMPTY_STRING, "suggested_module": NONEMPTY_STRING,
+            "business_name": NONEMPTY_STRING, "trigger_summary": NONEMPTY_STRING,
+            "source_evidence": _array(_object({"file": NONEMPTY_STRING, "line": {"type": "integer", "minimum": 1}, "reason": NONEMPTY_STRING}, ("file", "line", "reason")), minimum=1),
+            "scope_status": {"enum": ["business", "excluded", "待确认"]},
+            "exclusion_reason": {"type": ["string", "null"]},
             "non_business_candidate": {"type": "boolean"}, "core_capabilities": STRING_LIST,
             "errors": _array(BIZ_FLOW_ERROR_SCHEMA),
         })),
@@ -1843,7 +1873,8 @@ BIZ_FLOW_MODULE_MAP_SCHEMA: dict[str, Any] = _object(
         })),
         "exclusions": _array(_object({
             "candidate": NONEMPTY_STRING, "reason": NONEMPTY_STRING, "evidence": NONEMPTY_STRING_LIST,
-        })),
+            "module": NONEMPTY_STRING,
+        }, required=("candidate", "reason", "evidence"))),
         "modules": _array(_object({
             "name": NONEMPTY_STRING, "display_name": NONEMPTY_STRING, "rationale": NONEMPTY_STRING,
             "file": NONEMPTY_STRING, "responsibility": NONEMPTY_STRING, "objects": STRING_LIST,
@@ -1874,6 +1905,10 @@ BIZ_FLOW_INDEX_SCHEMA: dict[str, Any] = _object(
         "entries": _array(_object({
             "id": NONEMPTY_STRING, "type": NONEMPTY_STRING, "identifier": NONEMPTY_STRING,
             "handler": NONEMPTY_STRING, "module": NONEMPTY_STRING, "source": NONEMPTY_STRING,
+            "business_name": NONEMPTY_STRING, "trigger_summary": NONEMPTY_STRING,
+            "source_evidence": _array(_object({"file": NONEMPTY_STRING, "line": {"type": "integer", "minimum": 1}, "reason": NONEMPTY_STRING}, ("file", "line", "reason")), minimum=1),
+            "scope_status": {"enum": ["business", "excluded", "待确认"]},
+            "exclusion_reason": {"type": ["string", "null"]},
             "caller": NONEMPTY_STRING, "input_summary": NONEMPTY_STRING, "core_capabilities": STRING_LIST,
             "error_codes": STRING_LIST,
             "errors": _array(BIZ_FLOW_ERROR_SCHEMA),
@@ -1922,6 +1957,12 @@ BIZ_FLOW_REPORT_SCHEMA: dict[str, Any] = _object(
         "comparison_error": {"type": ["string", "null"]},
         "exclusions": STRING_LIST,
         "unresolved": STRING_LIST,
+        "module_entry_lists": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}},
+        "business_name_unresolved_count": {"type": "integer", "minimum": 0},
+        "excluded_business_name_unresolved_count": {"type": "integer", "minimum": 0},
+        "excluded_entry_details": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+        "entry_reconciliation": {"type": "object", "additionalProperties": True},
+        "adapter_evidence_coverage": {"type": "object", "additionalProperties": True},
         "coverage": _object({
             "code_entry_count": {"type": "integer", "minimum": 0},
             "documented_entry_count": {"type": "integer", "minimum": 0},

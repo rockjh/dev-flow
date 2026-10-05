@@ -6,8 +6,9 @@ interface:
     devflow/biz-flow-doc-generator。扫描整个项目（whole project），包括平台注册、常量/配置中的 topic、跨行
     Java 方法、doServe、doExecute、异步工作器、调度器、导入、事件、Webhook 和
     CLI 入口；忽略 .idea、日志、缓存、构建输出、生成目录和 vendor 路径。去重入口
-    与 core_capabilities，首次 discover 必须展示中文业务模块划分表（职责、代表性入口/总数、
-    稳定 Markdown 文件）及紧随其后的建议忽略入口表（入口 ID、相对源码证据和原因）。
+    与 core_capabilities，首次 discover 必须展示中文业务模块划分表（职责、完整可读入口清单、入口数量、
+    稳定 Markdown 文件）及紧随其后的建议忽略入口表（入口 ID、相对源码证据和原因）。每个入口展示
+    business_name、trigger_summary、source_evidence、scope_status 和 exclusion_reason；不得只展示代表性入口。
     不确定的归属保留为待确认；默认一次确认即可，用户只调整有异议的行，其他归属保持不变。
     确认后，每个
     Markdown 模块使用一个写入角色，每个入口使用一个只读分析角色（read-only entry）；返回覆盖所有分支、
@@ -24,7 +25,7 @@ interface:
     生成后具有模块 Markdown、覆盖总览和 `biz-flow-doc-generator-version.json`，且 discover 报告
     `unresolved=0`。Python 示例关键步骤使用静态可追踪写法（显式路由、`if key in TABLE` 与
     `TABLE[key]`、显式字段读写和列表切片赋值），不要使用 `dict.get`、`setdefault`、动态属性、
-    容器别名或动态注册。skill_version 为 1.0.0，只读写 docs/biz-flow/biz-flow-doc-generator-version.json。
+    容器别名或动态注册。skill_version 为 1.1.0，只读写 docs/biz-flow/biz-flow-doc-generator-version.json。
     主代理只负责扫描、入口识别、模块候选、确认、创建模块任务、汇总和最终校验；禁止直接分析入口、
     编写模块 Markdown、代替失败代理或猜测规则。每个模块代理必须一次性批量启动本模块全部只读入口代理，
     等待批次完成后才可写自己的文件；入口代理只读一个入口并返回 entry_id、source_fingerprint、participants、

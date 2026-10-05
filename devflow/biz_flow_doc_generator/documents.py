@@ -169,6 +169,12 @@ def _entry_title(entry: EntryPoint) -> str:
         "file": "文件入口",
         "batch": "批处理任务",
     }
+    if entry.business_name and entry.business_name != "待确认":
+        # Keep protocol identifiers in the trigger line; headings remain
+        # human-readable Chinese labels for the generated module document.
+        if entry.business_name.startswith(("HTTP 入口：", "Webhook 入口：", "WebSocket 入口：", "消息入口：", "定时任务：", "事件入口：", "命令行入口：", "文件入口：", "异步任务入口：")):
+            return entry.business_name.split("：", 1)[0]
+        return entry.business_name[:80]
     if entry.title and not entry.title_unresolved:
         return entry.title[:80]
     # A generated document must still have a business-shaped heading when the
@@ -255,12 +261,18 @@ def _cache_entry(entry: EntryPoint) -> dict[str, Any]:
         "handler_confirmed": entry.handler_confirmed,
         "title": entry.title,
         "title_unresolved": entry.title_unresolved,
+        "business_name": entry.business_name,
+        "trigger_summary": entry.trigger_summary,
+        "source_evidence": list(entry.source_evidence),
+        "scope_status": entry.scope_status,
+        "exclusion_reason": entry.exclusion_reason,
         "parent_entry_id": entry.parent_entry_id,
         "submit_source": entry.submit_source,
     }
 
 
 def _cache_payload(scan: ScanResult) -> dict[str, Any]:
+    candidates = list(scan.all_entries or scan.entries)
     return {
         "schema_version": int(BIZ_FLOW_SCHEMA_VERSION),
         "source_fingerprint": scan.source_fingerprint,
@@ -282,7 +294,7 @@ def _cache_payload(scan: ScanResult) -> dict[str, Any]:
         "candidate_entry_count": scan.candidate_entry_count,
         "confirmed_binding_count": scan.confirmed_binding_count,
         "confirmed_handler_count": scan.confirmed_handler_count,
-        "entries": {entry.entry_id: _cache_entry(entry) for entry in scan.entries},
+        "entries": {entry.entry_id: _cache_entry(entry) for entry in candidates},
     }
 
 
@@ -425,6 +437,77 @@ def _non_business_reason(entry: EntryPoint) -> str | None:
 
 def _non_business_candidate(entry: EntryPoint) -> bool:
     return _non_business_reason(entry) is not None
+
+
+def readable_inventory(scan: ScanResult, mapping: dict) -> list[str]:
+    """Render the same complete, evidence-backed inventory at every CLI stage."""
+    entries = {entry.entry_id: entry for entry in (scan.all_entries or scan.entries)}
+    modules = sorted(mapping.get("modules", []), key=lambda item: item["name"])
+    exclusions = {item["candidate"]: item for item in mapping.get("exclusions", [])}
+    owners = {entry_id: module["name"] for module in modules for entry_id in module["entry_ids"]}
+    groups = {
+        module["name"]: sorted(
+            entry_id for entry_id, entry in entries.items()
+            if owners.get(entry_id) == module["name"]
+            or (entry_id in exclusions and exclusions[entry_id].get("module", entry.module) == module["name"])
+        )
+        for module in modules
+    }
+
+    def clean(value: object) -> str:
+        return str(redact(value or "")).replace("|", "\\|").replace("\n", " ").strip()
+
+    def entry_row(entry_id: str) -> str:
+        entry = entries[entry_id]
+        exclusion = exclusions.get(entry_id)
+        evidence = "; ".join(
+            f"{item.get('file', entry.file)}:{item.get('line', entry.line)}"
+            for item in entry.source_evidence if isinstance(item, dict)
+        )
+        evidence = evidence or f"{entry.file}:{entry.line}"
+        status = "excluded" if exclusion else entry.scope_status
+        reason = exclusion["reason"] if exclusion else (entry.exclusion_reason or "")
+        return (
+            f"| {clean(entry.business_name or '待确认')} | {clean(entry.trigger_summary)} | `{clean(entry_id)}` | "
+            f"`{clean(evidence)}` | {status} | {clean(reason)} |"
+        )
+
+    lines = ["## 业务模块划分", "", "| 业务模块 | 职责 | 入口数 | 入口清单 | 文档 |",
+             "| --- | --- | ---: | --- | --- |"]
+    for module in modules:
+        ids = groups[module["name"]]
+        lines.append(
+            f"| {clean(module['display_name'])} | {clean(module['responsibility'])} | {len(ids)} | "
+            f"[展开查看](#{_slug(module['name'])}-入口) | `{clean(module['file'])}` |"
+        )
+    lines.extend(["", "## 建议忽略的入口", "", "| 入口 ID | 源码位置 | 建议 | 原因 |", "| --- | --- | --- | --- |"])
+    for entry_id, item in sorted(exclusions.items()):
+        lines.append(f"| `{clean(entry_id)}` | `{clean('; '.join(item['evidence']))}` | 排除 | {clean(item['reason'])} |")
+    if not exclusions:
+        lines.append("| — | — | 保留 | 未发现建议忽略项。 |")
+    lines.extend(["", "## 完整入口清单", ""])
+    rendered = set()
+    for module in modules:
+        ids = groups[module["name"]]
+        lines.extend([f'<details id="{_slug(module["name"])}-入口">',
+                      f"<summary>{clean(module['display_name'])}入口（{len(ids)} 个）</summary>", "",
+                      "| 业务名称 | 触发方式 | 入口 ID | 源码位置 | 范围状态 | 排除原因 |",
+                      "| --- | --- | --- | --- | --- | --- |", *[entry_row(entry_id) for entry_id in ids],
+                      "", "</details>", ""])
+        rendered.update(ids)
+    remaining = sorted(set(entries) - rendered)
+    if remaining:
+        lines.extend(['<details id="技术候选入口">', f"<summary>技术候选入口（{len(remaining)} 个）</summary>", "",
+                      "| 业务名称 | 触发方式 | 入口 ID | 源码位置 | 范围状态 | 排除原因 |",
+                      "| --- | --- | --- | --- | --- | --- |", *[entry_row(entry_id) for entry_id in remaining],
+                      "", "</details>", ""])
+    unresolved = [entry for entry in entries.values() if entry.entry_id not in exclusions and entry.business_name in {"", "待确认"}]
+    if unresolved:
+        lines.extend(["## 待确认名称", "", *[
+            f"- `{clean(entry.entry_id)}`：入口适配器未提供可确认的中文行为名称；请补齐触发、处理器或注册证据。"
+            for entry in unresolved
+        ], ""])
+    return lines
 
 
 def _source_line(value: str) -> int:
@@ -883,8 +966,9 @@ def _review_from_dict(value: object, fallback: EntryPoint) -> EntryReview | None
 
 def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
     docs_root.mkdir(parents=True, exist_ok=True)
+    candidates = list(scan.all_entries or scan.entries)
     suggestions: dict[str, list[str]] = {}
-    for entry in scan.entries:
+    for entry in candidates:
         parts = Path(entry.file).parts
         prefix = next((part for part in parts if part.lower() not in {"src", "main", "java", "kotlin", "python", "app", "api", "controller", "controllers", "service", "services"}), entry.module)
         suggestions.setdefault(prefix, []).append(entry.entry_id)
@@ -907,12 +991,17 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
                 "identifier": entry.identifier,
                 "handler": entry.handler,
                 "source": f"{entry.file}:{entry.line}",
+                "business_name": entry.business_name or "待确认",
+                "trigger_summary": entry.trigger_summary or entry.identifier,
+                "source_evidence": list(entry.source_evidence) or [{"file": entry.file, "line": entry.line, "reason": "入口源码位置"}],
+                "scope_status": entry.scope_status or "business",
+                "exclusion_reason": entry.exclusion_reason,
                 "suggested_module": entry.module,
                 "non_business_candidate": _non_business_candidate(entry),
                 "core_capabilities": entry.functions,
                 "errors": [_error_dict(error) for error in entry.errors],
             }
-            for entry in scan.entries
+            for entry in candidates
         ],
         "candidate_entry_count": scan.candidate_entry_count,
         "confirmed_binding_count": scan.confirmed_binding_count,
@@ -939,23 +1028,26 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
         if isinstance(module, dict)
         for entry_id in module.get("entry_ids", [])
     }
-    known_candidates = {entry.entry_id for entry in scan.entries}
+    known_candidates = {entry.entry_id for entry in candidates}
     previous_exclusions = {
         str(item.get("candidate")): item
         for item in previous.get("exclusions", [])
         if isinstance(item, dict) and str(item.get("candidate", "")) in known_candidates
     }
-    for entry in scan.entries:
-        reason = _non_business_reason(entry)
+    for entry in candidates:
+        reason = entry.exclusion_reason or _non_business_reason(entry)
         if reason and entry.entry_id not in previous_exclusions:
             previous_exclusions[entry.entry_id] = {
                 "candidate": entry.entry_id,
                 "reason": reason,
-                "evidence": [f"{entry.file}:{entry.line}"],
+                "evidence": [f"{item.get('file', entry.file)}:{item.get('line', entry.line)}" for item in entry.source_evidence] or [f"{entry.file}:{entry.line}"],
+                "module": entry.module,
             }
+        elif entry.entry_id in previous_exclusions:
+            previous_exclusions[entry.entry_id].setdefault("module", entry.module)
     excluded_ids = set(previous_exclusions)
     groups: dict[str, list[str]] = {}
-    for entry in scan.entries:
+    for entry in candidates:
         if entry.entry_id in excluded_ids:
             continue
         groups.setdefault(old_owners.get(entry.entry_id, entry.module), []).append(entry.entry_id)
@@ -968,7 +1060,7 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
         if entry_id in excluded_ids:
             continue
         groups.setdefault(old_owners.get(entry_id, "公共能力"), []).append(entry_id)
-    current_ids = ({entry.entry_id for entry in scan.entries} | additional_ids) - excluded_ids
+    current_ids = ({entry.entry_id for entry in candidates} | additional_ids) - excluded_ids
     unchanged = (
         bool(previous)
         and previous.get("source_fingerprint") == scan.source_fingerprint
@@ -979,7 +1071,7 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
         for module in previous.get("modules", [])
         if isinstance(module, dict) and module.get("name")
     }
-    entry_lookup = {entry.entry_id: entry for entry in scan.entries}
+    entry_lookup = {entry.entry_id: entry for entry in candidates}
 
     def draft_module_facts(name: str, entry_ids: list[str]) -> tuple[str, str, list[str], list[str]]:
         group = [entry_lookup[item] for item in entry_ids if item in entry_lookup]
@@ -1031,7 +1123,7 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
         "confirmed": bool(previous.get("confirmed")) and unchanged,
         "entry_reviews": [
             review_for(entry)
-            for entry in scan.entries
+            for entry in candidates
             if entry.entry_id not in excluded_ids
         ],
         "migrations": previous.get("migrations", []),
@@ -1125,44 +1217,13 @@ def write_discovery(scan: ScanResult, docs_root: Path) -> tuple[Path, Path]:
         machine_lines = [*existing_directives, *missing_exclusion_directives]
     else:
         machine_lines = generated_directives
-    module_lines = [
-        "## 业务模块划分",
-        "",
-        "| 模块标识 | 业务模块 | 职责 | 归属业务入口 | 文档文件 |",
-        "| --- | --- | --- | --- | --- |",
-    ]
-    for module in module_map["modules"]:
-        ids = [str(value) for value in module["entry_ids"]]
-        representative = ids if len(ids) <= 5 else [*ids[:3], f"入口 {len(ids)} 个"]
-        module_lines.append(
-            f"| `{module['name']}` | {module['display_name']} | {module['responsibility']} | "
-            f"{'; '.join(f'`{value}`' for value in representative)} | `{module['file']}` |"
-        )
-    if len(module_lines) == 4:
-        module_lines.append("| — | 暂无业务模块 | — | — | — |")
-    exclusion_lines = [
-        "",
-        "## 建议忽略的入口",
-        "",
-        "| 入口标识 | 来源证据 | 建议 | 原因 |",
-        "| --- | --- | --- | --- |",
-    ]
-    for item in module_map.get("exclusions", []):
-        if isinstance(item, dict):
-            evidence = "; ".join(str(value) for value in item.get("evidence", []))
-            exclusion_lines.append(
-                f"| `{item.get('candidate', '')}` | `{evidence}` | 忽略 | {item.get('reason', '')} |"
-            )
-    if len(exclusion_lines) == 5:
-        exclusion_lines.append("| — | — | 保留 | 未发现建议忽略项。 |")
+    inventory_lines = readable_inventory(scan, module_map)
     confirmation_marker = "<!-- devflow:module-confirmed -->\n" if previously_confirmed else ""
     overview.write_text(
         "# 业务流程覆盖总览\n\n"
         f"Git 版本：`{scan.git.target}`\n\n"
         f"模块划分状态：{status}\n\n"
-        + "\n".join(module_lines)
-        + "\n"
-        + "\n".join(exclusion_lines)
+        + "\n".join(inventory_lines)
         + "\n\n"
         + "<!-- devflow:machine-map -->\n"
         + "\n".join(machine_lines)
@@ -1272,7 +1333,8 @@ def apply_module_map(scan: ScanResult, path: Path) -> list[str]:
         return critical_resolution_errors
     scan.unresolved = [finding for finding in scan.unresolved if finding not in resolutions]
 
-    entry_by_id = {entry.entry_id: entry for entry in scan.entries}
+    candidates = list(scan.all_entries or scan.entries)
+    entry_by_id = {entry.entry_id: entry for entry in candidates}
     override_ids = [
         str(item.get("id")) for item in document.get("entry_overrides", []) if isinstance(item, dict)
     ]
@@ -1434,7 +1496,7 @@ def apply_module_map(scan: ScanResult, path: Path) -> list[str]:
             return [f"entry review id does not match entry id: {review.review_id} != {entry.entry_id}"]
         entry.review = review
     excluded_ids: set[str] = set()
-    known_candidates = {entry.entry_id for entry in scan.entries}
+    known_candidates = {entry.entry_id for entry in candidates}
     exclusion_candidates = [
         str(item.get("candidate")) for item in document.get("exclusions", []) if isinstance(item, dict)
     ]
@@ -1451,8 +1513,31 @@ def apply_module_map(scan: ScanResult, path: Path) -> list[str]:
             errors.append(f"exclusion {exclusion['candidate']} has evidence outside scanned source")
         else:
             excluded_ids.add(str(exclusion["candidate"]))
-    if excluded_ids:
-        scan.entries = [entry for entry in scan.entries if entry.entry_id not in excluded_ids]
+    # Business entries must carry a readable adapter-backed name and at least
+    # one source location. Technical candidates may be excluded with their
+    # technical label and exclusion evidence.
+    for entry in candidates:
+        if entry.scope_status == "excluded" and entry.entry_id not in excluded_ids:
+            errors.append(f"excluded entry {entry.entry_id} must include a confirmed exclusion directive")
+            continue
+        if entry.entry_id in excluded_ids:
+            continue
+        if entry.scope_status == "待确认" or entry.business_name in {"", "待确认"} or not entry.source_evidence:
+            errors.append(f"unresolved business entry name evidence: {entry.entry_id}")
+    for entry_id in excluded_ids:
+        candidate = next((item for item in document.get("exclusions", []) if isinstance(item, dict) and str(item.get("candidate")) == entry_id), {})
+        if not candidate.get("reason") or not candidate.get("evidence"):
+            errors.append(f"excluded entry {entry_id} requires exclusion reason and source evidence")
+    for entry in candidates:
+        if entry.entry_id in excluded_ids:
+            item = next((value for value in document.get("exclusions", []) if isinstance(value, dict) and str(value.get("candidate")) == entry.entry_id), {})
+            entry.scope_status = "excluded"
+            entry.exclusion_reason = str(item.get("reason") or entry.exclusion_reason or "已确认排除")
+        elif entry.scope_status == "excluded":
+            entry.scope_status = "business"
+            entry.exclusion_reason = None
+    scan.all_entries = candidates
+    scan.entries = [entry for entry in candidates if entry.entry_id not in excluded_ids]
     scan.exclusions = [
         f"{item['candidate']}：{item['reason']}（证据：{', '.join(str(value) for value in item['evidence'])}）"
         for item in document.get("exclusions", [])
@@ -1575,6 +1660,11 @@ def build_index(
                 "handler": entry.handler,
                 "module": entry.module,
                 "source": f"{entry.file}:{entry.line}",
+                "business_name": entry.business_name or "待确认",
+                "trigger_summary": entry.trigger_summary or entry.identifier,
+                "source_evidence": list(entry.source_evidence) or [{"file": entry.file, "line": entry.line, "reason": "入口源码位置"}],
+                "scope_status": entry.scope_status or "business",
+                "exclusion_reason": entry.exclusion_reason,
                 "caller": entry.caller,
                 "input_summary": entry.input_summary,
                 "core_capabilities": entry.functions,
@@ -2117,10 +2207,16 @@ def write_artifacts(
         }
     _require_contract(BIZ_FLOW_DEPENDENCY_GRAPH_SCHEMA, dependency_graph, "biz-flow dependency graph")
     write_json(docs_root / "biz-flow-dependency-graph.json", dependency_graph)
+    candidates = list(scan.all_entries or scan.entries)
     reported_entries = [entry for entry in scan.entries if not module_filter or entry.module == module_filter]
+    reported_candidates = [entry for entry in candidates if not module_filter or entry.module == module_filter]
     reported_modules = sorted({entry.module for entry in reported_entries})
     reported_ids = {entry.entry_id for entry in reported_entries}
     report_coverage = coverage(scan, index, docs_root, module_filter)
+    report_exclusions = [
+        item for item in mapping.get("exclusions", [])
+        if isinstance(item, dict) and (not module_filter or str(item.get("module")) == module_filter)
+    ]
     confirmed_review_ids = {
         str(item.get("id"))
         for item in index.get("entries", [])
@@ -2141,6 +2237,10 @@ def write_artifacts(
              or item["review"].get("status") != "confirmed"
              or not item["review"].get("confirmed_by"))
     ])
+    overview_business_ids = [entry.entry_id for entry in reported_candidates if entry.scope_status == "business"]
+    module_markdown_ids = [entry.entry_id for entry in reported_entries]
+    machine_map_ids = [entry.entry_id for entry in reported_candidates]
+    excluded_ids = [entry.entry_id for entry in reported_candidates if entry.scope_status == "excluded"]
     report = {
         "schema_version": int(BIZ_FLOW_SCHEMA_VERSION),
         "source_fingerprint": scan.source_fingerprint,
@@ -2157,11 +2257,11 @@ def write_artifacts(
         "other_entry_count": sum(entry.kind not in {"url", "webhook", "websocket", "sse", "scheduled", "message"} for entry in reported_entries),
         "active_error_code_count": len({code for entry in reported_entries for code in entry.error_codes() if code != "代码中未确认"}),
         "entry_count": len(reported_entries),
-        "candidate_entry_count": scan.candidate_entry_count,
+        "candidate_entry_count": len(reported_candidates),
         "confirmed_binding_count": scan.confirmed_binding_count,
         "confirmed_handler_count": scan.confirmed_handler_count,
         "completed_entry_count": max(0, completed_entry_count),
-        "excluded_entry_count": len(scan.exclusions),
+        "excluded_entry_count": sum(entry.scope_status == "excluded" for entry in reported_candidates),
         "pending_review_count": pending_review_count,
         "added_entries": [value for value in changed.get("added_entries", []) if value in reported_ids],
         "updated_entries": [value for value in changed.get("updated_entries", []) if value in reported_ids],
@@ -2172,6 +2272,43 @@ def write_artifacts(
         "comparison_error": changed.get("comparison_error"),
         "exclusions": scan.exclusions,
         "unresolved": scan.unresolved,
+        "module_entry_lists": {
+            module: [entry.entry_id for entry in reported_entries if entry.module == module]
+            for module in reported_modules
+        },
+        "business_name_unresolved_count": sum(
+            entry.business_name == "待确认" and entry.scope_status == "business"
+            for entry in reported_entries
+        ),
+        "excluded_business_name_unresolved_count": sum(
+            entry.business_name == "待确认" and entry.scope_status == "excluded"
+            for entry in reported_candidates
+        ),
+        "excluded_entry_details": [
+            item for item in report_exclusions
+        ],
+        "entry_reconciliation": {
+            "overview_business_entries": len(overview_business_ids),
+            "overview_business_ids": overview_business_ids,
+            "module_markdown_entries": len(module_markdown_ids),
+            "module_markdown_ids": module_markdown_ids,
+            "machine_map_entries": len(machine_map_ids),
+            "machine_map_ids": machine_map_ids,
+            "excluded_entries_in_overview": len(excluded_ids),
+            "excluded_ids": excluded_ids,
+            "matches": (
+                overview_business_ids == module_markdown_ids
+                and set(machine_map_ids) == set(module_markdown_ids) | set(excluded_ids)
+                and len(machine_map_ids) == len(set(machine_map_ids))
+            ),
+        },
+        "adapter_evidence_coverage": {
+            kind: {
+                "total": sum(entry.kind == kind for entry in reported_candidates),
+                "with_evidence": sum(entry.kind == kind and bool(entry.source_evidence) for entry in reported_candidates),
+            }
+            for kind in sorted({entry.kind for entry in reported_candidates})
+        },
         "coverage": report_coverage,
         "index_path": str(index_path),
     }

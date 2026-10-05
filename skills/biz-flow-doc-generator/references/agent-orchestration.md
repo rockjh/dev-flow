@@ -11,6 +11,11 @@
 ```json
 {
   "entry_id": "...",
+  "business_name": "查询 AC 信息",
+  "trigger_summary": "GET /v0/admin/esim/ac-infos",
+  "scope_status": "business",
+  "exclusion_reason": null,
+  "source_evidence": [{"file": "src/AcInfoController.java", "line": 42, "reason": "路由和处理器注册证据"}],
   "source_fingerprint": "...",
   "participants": [],
   "calls": [],
@@ -22,6 +27,11 @@
   "unresolved": []
 }
 ```
+
+`business_name` 只能描述入口行为，不得补写源码未出现的业务规则。`scope_status=business`
+且名称为 `待确认` 或 `source_evidence` 为空时，该入口属于 unresolved，禁止 generate。
+`scope_status=excluded` 的技术候选必须有 `exclusion_reason` 和 `source_evidence`；满足这两个条件后，
+不因缺少业务名称阻止 generate。
 
 ## 证据和覆盖
 

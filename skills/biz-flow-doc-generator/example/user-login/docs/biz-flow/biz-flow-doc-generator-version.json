@@ -1,6 +1,6 @@
 {
   "skill": "devflow/biz-flow-doc-generator",
-  "skill_version": "1.0.0",
+  "skill_version": "1.1.0",
   "artifact_root": "docs/biz-flow",
   "source": {"git_commit": "0108f604458362c57267810b53ba0fcbd3da43b4"}
 }

@@ -13,6 +13,7 @@ from .redaction import redact
 
 
 SKILL_VERSION = "1.0.0"
+DOMAIN_SKILL_VERSIONS = {"biz-flow": "1.1.0", "bru-api": "1.0.0", "e2e": "1.0.0"}
 VERSION_FILES = {
     "biz-flow": "docs/biz-flow/biz-flow-doc-generator-version.json",
     "bru-api": "qa/contracts/bru-api-test-generator-version.json",
@@ -32,7 +33,7 @@ def version_file(project_root: Path, domain: str) -> Path:
 
 
 def version_metadata(domain: str) -> dict[str, str]:
-    return {"skill": SKILL_NAMES[domain], "skill_version": SKILL_VERSION, "artifact_root": ARTIFACT_ROOTS[domain]}
+    return {"skill": SKILL_NAMES[domain], "skill_version": DOMAIN_SKILL_VERSIONS[domain], "artifact_root": ARTIFACT_ROOTS[domain]}
 
 
 def state_root() -> Path:
