@@ -15,6 +15,25 @@ from typing import Callable
 from .git import source_view
 from .models import BehaviorEvidence, EntryPoint, ErrorEvidence, FunctionInfo, ScanResult
 
+_LOCAL_SYNTAX_NAMES = {"if", "else", "catch", "try", "for", "while", "input", "return"}
+
+
+def _package_name(relative: str, text: str) -> str:
+    match = re.search(r"^\s*package\s+([\w.]+)", text, re.M)
+    if match:
+        return match.group(1)
+    parts = Path(relative).with_suffix("").parts
+    return ".".join(part for part in parts if part not in {"src", "main", "java", "kotlin", "python"})
+
+
+def _capability_id(language: str, relative: str, function: FunctionInfo, text: str = "", registration: str = "") -> str:
+    owner = function.owner or Path(relative).stem
+    package = _package_name(relative, text)
+    qualified_owner = f"{package}.{owner}" if package else owner
+    signature = function.signature or function.name
+    value = f"{language.lower()}:{qualified_owner}#{signature}"
+    return f"{value}@{registration}" if registration else value
+
 
 EXCLUDED_DIRS = {
     ".git", ".idea", ".venv", "venv", "env", ".tox", ".nox", "node_modules", "dist", "build", "target",
@@ -934,6 +953,28 @@ def _platform_message_entries(text: str, relative: str, functions: list[Function
     return result
 
 
+def _enrich_signatures(functions: list[FunctionInfo], language: str) -> None:
+    """Attach stable, source-derived method signatures for capability IDs."""
+    for function in functions:
+        head = function.body.splitlines()[0] if function.body else ""
+        match = re.search(rf"\b{re.escape(function.name)}\s*\(([^)]*)\)", head)
+        params = (match.group(1).strip() if match else "")
+        if language == "Python":
+            names = []
+            for item in params.split(",") if params else []:
+                item = item.strip().split("=", 1)[0].strip()
+                if not item or item in {"self", "cls", "/", "*"}:
+                    continue
+                names.append(item.split(":", 1)[1].strip() if ":" in item else "Any")
+            params = ",".join(names)
+        else:
+            params = re.sub(r"\s+", " ", params)
+            params = ",".join(part.strip().split()[-1] if False else part.strip() for part in params.split(",") if part.strip())
+        function.signature = f"{function.name}({params})"
+        return_match = re.search(r"\)\s*(?:->\s*([\w.<>\[\]]+)|:\s*([\w.<>\[\]]+))", head)
+        function.return_type = next((value for value in (return_match.groups() if return_match else ()) if value), "")
+
+
 def _platform_job_entries(text: str, functions: list[FunctionInfo]) -> list[tuple[str, str, int, str]]:
     """Find XXL-JOB handlers registered through annotations or platform bases."""
     class_job_match = re.search(r"\b(?:extends|implements)\s+[A-Za-z_\w$]*(?:Job|JobHandler|XxlJob)\b", text, re.I)
@@ -1149,6 +1190,7 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
             source_lines[relative] = len(text.splitlines())
             source_texts[relative] = text
             funcs = _functions(text, language, relative) if language != "Configuration" else []
+            _enrich_signatures(funcs, language)
             name_counts: dict[str, int] = {}
             for item in funcs:
                 name_counts[item.name] = name_counts.get(item.name, 0) + 1
@@ -1239,7 +1281,15 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
                             # unrelated side effects and error codes into this entry.
                             continue
                         for candidate_file, function in candidates:
-                            functions.append(f"{candidate_file}:{function.name}" if candidate_file != relative else function.name)
+                            capability = _capability_id(
+                                language,
+                                candidate_file,
+                                function,
+                                source_texts.get(candidate_file, ""),
+                                identifier,
+                            )
+                            if function.name.casefold() not in _LOCAL_SYNTAX_NAMES:
+                                functions.append(capability)
                             bodies.append(function.body)
                             for error in function.errors:
                                 if key in async_nodes:
@@ -1396,7 +1446,12 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
                     module_rationale=entry.module_rationale,
                     caller="线程池/异步调度器",
                     input_summary=f"后台任务 {worker_name}",
-                    functions=[f"{worker_file}:{worker_name}"],
+                    functions=[_capability_id(
+                        EXTENSIONS.get(Path(worker_file).suffix.lower(), "Unknown"),
+                        worker_file,
+                        worker,
+                        source_texts.get(worker_file, ""),
+                    )],
                     errors=list(worker.errors),
                     behaviors=_declaration_behaviors(worker, worker_file, source_texts.get(worker_file, "")) + _behaviors(worker, worker_file),
                     has_loop=bool(re.search(r"\b(for|while|foreach)\b", worker_body)),
@@ -1426,7 +1481,12 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
                     entry_id=worker_id, kind="worker", identifier=worker_name,
                     handler=worker_name, file=target_file, line=worker.start,
                     module=module, source=target_file, caller="代码中未确认",
-                    input_summary=f"后台任务 {worker_name}", functions=[f"{target_file}:{worker_name}"],
+                    input_summary=f"后台任务 {worker_name}", functions=[_capability_id(
+                        EXTENSIONS.get(Path(target_file).suffix.lower(), "Unknown"),
+                        target_file,
+                        worker,
+                        source_texts.get(target_file, ""),
+                    )],
                     errors=list(worker.errors), behaviors=_behaviors(worker, target_file), has_async=True,
                     parent_entry_id="", submit_source=f"{worker_file}:{submit_line}",
                     title=_comment_label(source_texts.get(target_file, ""), worker.start),
@@ -1479,6 +1539,31 @@ def scan(project_root: Path, target: str | None = None) -> ScanResult:
                 unique_entries[key] = entry
         entries = list(unique_entries.values())
         entries.sort(key=lambda item: (item.module, item.kind, item.identifier, item.file, item.line))
+        # Capability preflight: IDs are qualified symbols, so same-named
+        # methods in different classes remain distinct while an exact ID at a
+        # second source location is a generation-blocking conflict.
+        capability_locations: dict[str, list[dict[str, object]]] = {}
+        for entry in entries:
+            for capability in entry.functions:
+                if capability.casefold() in _LOCAL_SYNTAX_NAMES:
+                    unresolved.append(json.dumps({"code": "GENERIC_LOCAL_CAPABILITY", "capability_id": capability,
+                                                  "entry_id": entry.entry_id}, ensure_ascii=False, sort_keys=True))
+                    continue
+                capability_locations.setdefault(capability, []).append({
+                    "entry_id": entry.entry_id,
+                    "entry_identifier": entry.identifier,
+                    "declaring_class": capability.split("#", 1)[0].split(":", 1)[-1],
+                    "method_signature": capability.split("#", 1)[-1].split("@", 1)[0],
+                    "source": f"{entry.file}:{entry.line}",
+                    "adapter": entry.kind,
+                })
+        for capability, locations in capability_locations.items():
+            sources = {(item["source"], item["entry_id"]) for item in locations}
+            if len({item["source"] for item in locations}) > 1:
+                unresolved.append(json.dumps({"code": "CAPABILITY_ID_CONFLICT", "capability_id": capability,
+                                              "locations": locations,
+                                              "suggestion": "为注册入口或声明实现补充唯一绑定"},
+                                             ensure_ascii=False, sort_keys=True))
         source_fingerprint = _fingerprint_files(root, files, unresolved.append)
         return ScanResult(
             root=project_root.resolve(),

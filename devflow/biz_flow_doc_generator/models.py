@@ -123,6 +123,8 @@ class FunctionInfo:
     errors: list[ErrorEvidence] = field(default_factory=list)
     owner: str = ""
     qualified_calls: list[tuple[str, str]] = field(default_factory=list)
+    signature: str = ""
+    return_type: str = ""
 
 
 @dataclass(slots=True)

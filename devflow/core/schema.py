@@ -8,7 +8,7 @@ from typing import Any
 
 
 BRU_API_SCHEMA_VERSION = "6.2"
-BIZ_FLOW_SCHEMA_VERSION = "3"
+BIZ_FLOW_SCHEMA_VERSION = "4"
 E2E_GATE_SCHEMA_VERSION = "10"
 E2E_RUNTIME_CLASSIFICATIONS = (
     "protocol_available",
@@ -1816,7 +1816,7 @@ BIZ_FLOW_REVIEW_SCHEMA = _object({
 
 BIZ_FLOW_DISCOVERY_SCHEMA: dict[str, Any] = _object(
     {
-        "schema_version": {"const": 3},
+        "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
         "source_fingerprint": NONEMPTY_STRING,
         "effective_git": _object({
             "commit": NONEMPTY_STRING, "branch": NONEMPTY_STRING, "workspace_dirty": {"type": "boolean"},
@@ -1847,7 +1847,7 @@ BIZ_FLOW_DISCOVERY_SCHEMA: dict[str, Any] = _object(
 
 BIZ_FLOW_MODULE_MAP_SCHEMA: dict[str, Any] = _object(
     {
-        "schema_version": {"const": 3},
+        "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
         "source_fingerprint": NONEMPTY_STRING,
         "effective_git": NONEMPTY_STRING,
         "confirmed": {"type": "boolean"},
@@ -1885,7 +1885,7 @@ BIZ_FLOW_MODULE_MAP_SCHEMA: dict[str, Any] = _object(
 
 BIZ_FLOW_INDEX_SCHEMA: dict[str, Any] = _object(
     {
-        "schema_version": {"const": 3},
+        "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
         "source_fingerprint": NONEMPTY_STRING,
         "effective_git": _object({
             "commit": NONEMPTY_STRING,
@@ -1927,7 +1927,7 @@ BIZ_FLOW_INDEX_SCHEMA: dict[str, Any] = _object(
 
 BIZ_FLOW_REPORT_SCHEMA: dict[str, Any] = _object(
     {
-        "schema_version": {"const": 3},
+        "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
         "source_fingerprint": NONEMPTY_STRING,
         "effective_git": BIZ_FLOW_INDEX_SCHEMA["properties"]["effective_git"],
         "project": NONEMPTY_STRING,
@@ -1994,7 +1994,7 @@ BIZ_FLOW_REPORT_SCHEMA: dict[str, Any] = _object(
 # Auxiliary artifacts are deliberately small contracts rather than opaque JSON
 # blobs.  They let ``check`` detect stale or truncated supporting evidence too.
 BIZ_FLOW_OWNERSHIP_SCHEMA: dict[str, Any] = _object({
-    "schema_version": {"const": 3},
+    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
     "source_fingerprint": NONEMPTY_STRING,
     "confirmed": {"type": "boolean"},
     "entries": _array(_object({
@@ -2003,13 +2003,13 @@ BIZ_FLOW_OWNERSHIP_SCHEMA: dict[str, Any] = _object({
 })
 
 BIZ_FLOW_MIGRATIONS_SCHEMA: dict[str, Any] = _object({
-    "schema_version": {"const": 3},
+    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
     "source_fingerprint": NONEMPTY_STRING,
     "migrations": BIZ_FLOW_MODULE_MAP_SCHEMA["properties"]["migrations"],
 })
 
 BIZ_FLOW_COMPARISON_SCHEMA: dict[str, Any] = _object({
-    "schema_version": {"const": 3},
+    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
     "source_fingerprint": NONEMPTY_STRING,
     "comparison": NONEMPTY_STRING,
     "entry_alignment": _object({
@@ -2031,7 +2031,7 @@ BIZ_FLOW_COMPARISON_SCHEMA: dict[str, Any] = _object({
 })
 
 BIZ_FLOW_EVIDENCE_CACHE_SCHEMA: dict[str, Any] = _object({
-    "schema_version": {"const": 3},
+    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
     "source_fingerprint": NONEMPTY_STRING,
     "root": NONEMPTY_STRING,
     "git": {"type": "object", "additionalProperties": True},
@@ -2048,14 +2048,14 @@ BIZ_FLOW_EVIDENCE_CACHE_SCHEMA: dict[str, Any] = _object({
 })
 
 BIZ_FLOW_DEPENDENCY_GRAPH_SCHEMA: dict[str, Any] = _object({
-    "schema_version": {"const": 3},
+    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
     "source_fingerprint": NONEMPTY_STRING,
     "nodes": _array(_object({"entry": NONEMPTY_STRING, "functions": STRING_LIST})),
     "shared_sources": STRING_LIST,
 })
 
 BIZ_FLOW_PROGRESS_SCHEMA: dict[str, Any] = _object({
-    "schema_version": {"const": 3},
+    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
     "run_id": NONEMPTY_STRING,
     "run_handle": NONEMPTY_STRING,
     "phase": NONEMPTY_STRING,
@@ -2069,13 +2069,13 @@ BIZ_FLOW_PROGRESS_SCHEMA: dict[str, Any] = _object({
     "cache_entries": {"type": "integer", "minimum": 0},
 })
 
-BIZ_FLOW_DISCOVERY_SCHEMA["schema_version"] = BIZ_FLOW_SCHEMA_VERSION
+BIZ_FLOW_DISCOVERY_SCHEMA["schema_version"] = int(BIZ_FLOW_SCHEMA_VERSION)
 BIZ_FLOW_DISCOVERY_SCHEMA["contract"] = "biz-flow.discovery"
-BIZ_FLOW_MODULE_MAP_SCHEMA["schema_version"] = BIZ_FLOW_SCHEMA_VERSION
+BIZ_FLOW_MODULE_MAP_SCHEMA["schema_version"] = int(BIZ_FLOW_SCHEMA_VERSION)
 BIZ_FLOW_MODULE_MAP_SCHEMA["contract"] = "biz-flow.module-map"
-BIZ_FLOW_INDEX_SCHEMA["schema_version"] = BIZ_FLOW_SCHEMA_VERSION
+BIZ_FLOW_INDEX_SCHEMA["schema_version"] = int(BIZ_FLOW_SCHEMA_VERSION)
 BIZ_FLOW_INDEX_SCHEMA["contract"] = "biz-flow.index"
-BIZ_FLOW_REPORT_SCHEMA["schema_version"] = BIZ_FLOW_SCHEMA_VERSION
+BIZ_FLOW_REPORT_SCHEMA["schema_version"] = int(BIZ_FLOW_SCHEMA_VERSION)
 BIZ_FLOW_REPORT_SCHEMA["contract"] = "biz-flow.report"
 for _schema in (
     BIZ_FLOW_OWNERSHIP_SCHEMA,

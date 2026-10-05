@@ -239,6 +239,16 @@ def collect_evidence(
             # Discovery may retain bare helper names for compatibility. Resolve
             # them only when exactly one source definition exists.
             locations = {location for location in entry.functions if ":" in location} | {f"{entry.file}:{entry.handler}"}
+            # Qualified capability IDs are presentation/identity values. The
+            # evidence parser still needs its canonical ``file:function``
+            # locator, so resolve the method suffix within the entry source.
+            qualified_locations = set()
+            for location in locations:
+                if "#" in location and ":" in location:
+                    match = re.search(r"#([A-Za-z_]\w*)\([^)]*\)", location)
+                    if match:
+                        qualified_locations.add(f"{entry.file}:{match.group(1)}")
+            locations = (locations - {item for item in locations if "#" in item}) | qualified_locations
             for bare in {location for location in entry.functions if ":" not in location}:
                 candidates = [
                     (file, function.name)
