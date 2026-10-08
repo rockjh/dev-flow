@@ -3,7 +3,7 @@
 本 Skill 的唯一权威版本文件是 `analysis/e2e-test-generator-version.json`。文件固定包含：
 
     {
-      "skill": "devflow/e2e-test-generator",
+      "skill": "e2e-test-generator",
       "skill_version": "1.0.0",
       "artifact_root": "analysis",
       "version": 1,

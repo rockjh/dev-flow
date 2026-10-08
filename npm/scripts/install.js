@@ -41,10 +41,13 @@ function install() {
   if (result.error || result.status !== 0) throw result.error || new Error(`pipx install failed with exit code ${result.status}`);
 
   const skillHome = process.env.DEVFLOW_SKILL_HOME || join(homedir(), ".agents", "skills");
-  const destination = join(skillHome, "devflow");
-  rmSync(destination, { recursive: true, force: true });
-  mkdirSync(destination, { recursive: true });
-  cpSync(join(root, "skills", "devflow"), destination, { recursive: true, force: true });
+  const skillSource = join(root, "skills");
+  mkdirSync(skillHome, { recursive: true });
+  for (const name of readdirSync(skillSource)) {
+    const destination = join(skillHome, name);
+    rmSync(destination, { recursive: true, force: true });
+    cpSync(join(skillSource, name), destination, { recursive: true, force: true });
+  }
 
   const doctor = spawnSync(resolveDevflow(), ["doctor", "--json"], { stdio: "inherit" });
   if (doctor.error || doctor.status !== 0) throw doctor.error || new Error(`devflow doctor failed with exit code ${doctor.status}`);

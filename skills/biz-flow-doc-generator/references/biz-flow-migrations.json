@@ -1,7 +1,0 @@
-{
-  "schema_version": 4,
-  "source_fingerprint": "example-source-fingerprint",
-  "migrations": [
-    {"from": "resource", "to": "relation-sync", "reason": "按关系生命周期拆分"}
-  ]
-}

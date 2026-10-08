@@ -1,5 +1,5 @@
 {
-  "skill": "devflow/bru-api-test-generator",
+  "skill": "bru-api-test-generator",
   "skill_version": "1.0.0",
   "artifact_root": "qa/contracts",
   "version": 1,

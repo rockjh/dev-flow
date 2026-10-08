@@ -45,12 +45,14 @@ def main() -> int:
         raise RuntimeError(f"expected one devflow wheel, found {len(wheels)}")
     with zipfile.ZipFile(wheels[0]) as archive:
         names = set(archive.namelist())
+        if any(not name.startswith(("toolkit/", f"devflow-{python_version}.dist-info/")) for name in names):
+            raise RuntimeError("wheel contains unexpected packages")
         if any(Path(name).name == "_engine.py" for name in names):
             raise RuntimeError("wheel contains the removed E2E legacy engine")
         entry_points = archive.read(
             f"devflow-{python_version}.dist-info/entry_points.txt"
         ).decode("utf-8").strip()
-        if entry_points != "[console_scripts]\ndevflow = devflow.cli:console_main":
+        if entry_points != "[console_scripts]\ndevflow = toolkit.cli:console_main":
             raise RuntimeError(f"unexpected wheel entry points: {entry_points}")
     npm_dist = NPM / "dist"
     if npm_dist.exists():
@@ -60,18 +62,18 @@ def main() -> int:
     target_skills = NPM / "skills"
     if target_skills.exists():
         shutil.rmtree(target_skills)
-    skill_payload = target_skills / "devflow"
+    target_skills.mkdir(parents=True, exist_ok=True)
     for relative in INSTALLABLE_SKILLS:
         source = ROOT / "skills" / relative
         if not source.is_dir():
             raise RuntimeError(f"missing installable Skill: {source}")
         shutil.copytree(
             source,
-            skill_payload / relative,
+            target_skills / relative,
             ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
         )
-    payload = sorted(path.relative_to(target_skills).parts[0] for path in target_skills.iterdir())
-    if payload != ["devflow"]:
+    payload = sorted(path.name for path in target_skills.iterdir())
+    if payload != sorted(INSTALLABLE_SKILLS):
         raise RuntimeError(f"unexpected npm Skill payload: {payload}")
     npm = "npm.cmd" if sys.platform == "win32" else "npm"
     subprocess.run([npm, "pack", "--ignore-scripts"], cwd=NPM, check=True)

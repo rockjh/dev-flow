@@ -2,8 +2,8 @@ interface:
   display_name: "bru-api-test-generator"
   short_description: "\u57fa\u4e8e biz-flow \u4ea7\u7269\u751f\u6210 API \u6d4b\u8bd5"
   default_prompt: >-
-    使用已安装的 devflow CLI (installed devflow CLI)，只路由到 devflow/bru-api-test-generator，并确认
-    devflow/biz-flow-doc-generator 已完成。只读取 docs/biz-flow/ 的已确认 Markdown、锁和源码证据，
+    使用已安装的 devflow CLI (installed devflow CLI)，只路由到 bru-api-test-generator，并确认
+    biz-flow-doc-generator 已完成。只读取 docs/biz-flow/ 的已确认 Markdown、锁和源码证据，
     不重新维护业务设计；skill_version 为 1.0.0，只读写 qa/contracts/bru-api-test-generator-version.json，
     并将 qa-lock.yaml 仅作为 QA 状态锁；只生成 API 测试资产、中文 Bruno 请求、配置、锁和报告。
     保留核心架构、安全、脱敏和所有权规则；stop when 证据缺失、目标不安全或校验失败，

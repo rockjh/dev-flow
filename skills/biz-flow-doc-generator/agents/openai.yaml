@@ -1,37 +1,48 @@
 interface:
   display_name: "biz-flow-doc-generator"
-  short_description: "生成经过确认且有源代码证据支持的业务流程 Markdown"
+  short_description: "全量归纳业务入口，再并行分析生成有源码证据的业务时序图和覆盖报告"
   default_prompt: >-
-    使用已安装的 devflow CLI（installed devflow CLI），并且只将 biz-flow 请求路由到
-    devflow/biz-flow-doc-generator。扫描整个项目（whole project），包括平台注册、常量/配置中的 topic、跨行
-    Java 方法、doServe、doExecute、异步工作器、调度器、导入、事件、Webhook 和
-    CLI 入口；忽略 .idea、日志、缓存、构建输出、生成目录和 vendor 路径。去重入口
-    与 core_capabilities，首次 discover 必须展示中文业务模块划分表（职责、完整可读入口清单、入口数量、
-    稳定 Markdown 文件）及紧随其后的建议忽略入口表（入口 ID、相对源码证据和原因）。每个入口展示
-    business_name、trigger_summary、source_evidence、scope_status 和 exclusion_reason；不得只展示代表性入口。
-    不确定的归属保留为待确认；默认一次确认即可，用户只调整有异议的行，其他归属保持不变。
-    确认后，每个
-    Markdown 模块使用一个写入角色，每个入口使用一个只读分析角色（read-only entry）；返回覆盖所有分支、
-    循环、异步、持久化、外部调用、结果和未解决问题的结构化证据。按固定的业务标题、
-    触发器、功能、sequenceDiagram、autonumber Mermaid 顺序生成文档，参与者和分支
-    必须有源代码依据。多个入口必须拆成多个入口章节和时序图，每个入口章节独立维护
-    分支矩阵；矩阵至少包含分支条件、数据读取与比较、数据写入与副作用、响应结果。
-    持久化参与者必须写出证据中的真实资源名和中文业务名；关系型资源使用真实表名（中文业务名），
-    文档集合、KV 命名空间、搜索索引、对象存储和文件资源使用各自真实对象名，不能用“数据库”“资源”或“持久化对象”泛化。
-    分支矩阵不放源代码函数依据，
-    也不在业务文档中生成单独的源代码证据章节。保留作用域 schema、锁、归属、安全、脱敏和产物规则；证据缺失、
-    归属不明确、目标不安全或校验门禁失败时停止。新 example 必须达到 `example/user-login`
-    的可发布形态：README 命令顺序为 init、discover、确认、generate、check、verify，
-    生成后具有模块 Markdown、覆盖总览和 `biz-flow-doc-generator-version.json`，且 discover 报告
-    `unresolved=0`。Python 示例关键步骤使用静态可追踪写法（显式路由、`if key in TABLE` 与
-    `TABLE[key]`、显式字段读写和列表切片赋值），不要使用 `dict.get`、`setdefault`、动态属性、
-    容器别名或动态注册。skill_version 为 1.1.0，只读写 docs/biz-flow/biz-flow-doc-generator-version.json。
-    主代理只负责扫描、入口识别、模块候选、确认、创建模块任务、汇总和最终校验；禁止直接分析入口、
-    编写模块 Markdown、代替失败代理或猜测规则。每个模块代理必须一次性批量启动本模块全部只读入口代理，
-    等待批次完成后才可写自己的文件；入口代理只读一个入口并返回 entry_id、source_fingerprint、participants、
-    calls、branches、persistence_actions、async_actions、external_calls、outcomes、unresolved，禁止写文件或修改映射。
-    Python 必须从源码生成候选 branch_id 和 persistence_id，并比较入口结果、Mermaid 注释、分支矩阵和覆盖结果；
-    unknown 可达业务分支或缺少真实存储对象时停止。执行器优先使用 DEVFLOW_AGENT_EXECUTOR，然后自动探测静态内置 Codex 和 Claude 适配器；
-    适配器隔离各自 CLI 参数并转换统一 JSONL，不自动写环境变量或 shell 配置。没有真实子代理运行时默认返回 DELEGATION_UNAVAILABLE；只有用户明确
-    允许 --allow-degraded 才可串行，并保留 degraded=true、parallel=false。运行 check 和 verify，返回已脱敏的
-    权威（redacted authoritative）报告或产物路径、退出状态及稳定性结果；所有面向人的标题、描述、Markdown 和报告正文必须使用中文；stop when 证据缺失、归属不明确、目标不安全或校验门禁失败。
+    Use $biz-flow-doc-generator with the installed devflow CLI, routing only
+    through devflow biz-flow with an explicit --project. Follow SKILL.md and
+    references/analysis-policy.md in two stages. First scan the whole project for
+    registered business entries, including supported doExecute/doServe receivers;
+    registration evidence is required, and thread pools or internal helpers are not
+    separate entries. Run discover and check --stage entries without an agent executor
+    or deep call-chain analysis. Reconcile every candidate as included, evidence-backed
+    excluded, or unresolved. Group by the project's broad business domains: one domain,
+    one Markdown file, with all scenarios and channels retained in entry chapters;
+    cross-domain entries belong only to the domain of their primary business result.
+    Name files naturally with business objects and their core responsibility,
+    relationship or lifecycle; existing project business-document names guide style,
+    not a hardcoded naming dictionary. Use functional families for broad domains,
+    avoid concatenated action verbs and do not enforce “处理”, “业务” or “流程”
+    suffixes. Describe actual business capabilities using Swagger @Tag.description,
+    @Operation.summary/description and source comments, independently of filename summaries.
+    Merge related interfaces, including list/detail and CRUD, while retaining distinct
+    actions such as opening and closing a plan. Allow semicolons and multiple sentences;
+    remove client/HTML metadata and limit shared descriptions to module-owned entries.
+    Do not prefix a filename summary with “负责” or enumerate every endpoint. Keep the complete entry list
+    separately. Show the complete three-column module overview, exclusion counts/reasons
+    and entry-identification uncertainties directly in the conversation. Resolve
+    source-checkable facts before asking for classification once; honor existing
+    authorization without asking again. After authorization run generate --confirm
+    under references/agent-orchestration.md with bounded parallel read-only entry
+    agents and one writer per module. Preserve core_capabilities as fully qualified
+    declaring package/class, method and parameter-type identities with declaration
+    evidence, never bare doExecute/doServe names or caller locations. Ordered review.steps
+    drives source-backed call/return order, nested branches, storage, external effects,
+    async boundaries and outcomes. Use business-language sequenceDiagram with autonumber;
+    entry sections follow business title, trigger, function summary, diagram and branch
+    matrix. review is an optional second-stage audit and cannot block the first-stage
+    inventory. Preserve Git commit, dirty state, source/mapping fingerprints, incremental
+    changes, locks, ownership and redaction. Markdown and the sole version file
+    docs/biz-flow/biz-flow-doc-generator-version.json are durable project assets;
+    skill_version is 2.0.0, and manifests remain outside the project. Follow
+    references/requirements-matrix.md, references/verification.md and
+    references/version-management.md; run check and two consecutive verify calls,
+    advancing the source baseline only after acceptance. Never fabricate parallelism
+    or silently degrade when no executor is available. For affected entries or modules,
+    stop when evidence is missing, ownership is ambiguous, paths are unsafe or gates
+    fail; retain completed work without claiming overall success. Respond in Chinese
+    with the complete overview, redacted authoritative manifest/report paths, exit
+    status, coverage, per-entry unresolved counts and stability.

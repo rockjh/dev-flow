@@ -2,7 +2,7 @@
 
 生成项目不包含门禁引擎、检查脚本、Python 运行脚本或共享运行时副本。根目录下可选的 `run-e2e.bat` 和 `run-e2e.sh` 启动器仅将参数转发给已安装的 `devflow e2e run`，不包含门禁逻辑。只能执行已安装的命令：
 
-场景和公共业务模块从 `devflow.e2e_runtime` 导入证据、预检、轮询和恢复辅助函数；禁止在 `common/` 下重新实现这些辅助函数。
+场景和公共业务模块从 `toolkit.e2e_test_generator.runtime` 导入证据、预检、轮询和恢复辅助函数；禁止在 `common/` 下重新实现这些辅助函数。
 
 ```text
 devflow e2e init --project .
@@ -17,6 +17,6 @@ devflow e2e run --project . --static-only
 
 `devflow e2e run` 会移除继承的 pytest 插件和选项注入，不经过 shell 调用子进程，并将脱敏权威报告写入 `artifacts/e2e-run.json`。除非明确指定 `--full`，控制台只输出有界摘要和报告指针。
 
-项目的 `analysis/e2e-test-generator-version.json` 将执行绑定到 `devflow/e2e-test-generator` 的
+项目的 `analysis/e2e-test-generator-version.json` 将执行绑定到 `e2e-test-generator` 的
 `skill_version`，并保留独立的端到端门禁 schema 版本。锁缺失、skill 元数据不匹配或业务指纹过期属于
 前置条件失败；绝不使用复制的旧代码作为回退。

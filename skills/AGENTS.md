@@ -14,8 +14,7 @@
   references/            # optional, but every referenced file must exist
 ```
 
-`SKILL.md` frontmatter 必须包含稳定的 `name`，与完整的
-`devflow/<skill-name>` 路径一致，并包含简短准确的 `description`。
+`SKILL.md` frontmatter 必须包含稳定的 `name`，与目录名 `<skill-name>` 一致，并包含简短准确的 `description`。
 正文必须说明命令路由、输入/项目边界、必需工作流、校验门禁以及返回的权威报告或工件。
 
 `agents/openai.yaml` 必须包含一个 `interface`，并提供项目要求的
@@ -36,7 +35,7 @@
 
 Skill 变更必须保留现有领域的业务语义。如果变更影响项目根目录、生成文件、锁、架构、脱敏或退出行为，必须同步更新 CLI 契约和测试。绝不能削弱安全或所有权门禁来让提示词看似成功。
 
-`skills/` 下的规范树是唯一事实来源。npm 树是 `npm/skills/devflow/` 下的生成输出，必须通过 `scripts/release.py` 刷新；不要只手工编辑 npm 副本。发布前确认每个规范 Skill 都有一个匹配的 npm 副本，且不存在旧版 Skill 目录。
+`skills/` 下的规范树是唯一事实来源。npm 树是 `npm/skills/` 下的生成输出，必须通过 `scripts/release.py` 刷新；不要只手工编辑 npm 副本。发布前确认每个规范 Skill 都有一个匹配的 npm 副本，且不存在旧版 Skill 目录。
 
 ## 验收检查
 

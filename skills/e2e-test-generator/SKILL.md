@@ -1,11 +1,11 @@
 ---
-name: devflow/e2e-test-generator
+name: e2e-test-generator
 description: DevFlow 端到端测试领域技能。
 ---
 
 The authoritative version file is `analysis/e2e-test-generator-version.json` and its `skill_version` is `1.0.0`. This skill owns only its E2E artifacts.
 
-使用已安装的 `devflow` CLI，并仅路由到明确映射的 `devflow/e2e-test-generator` 领域。版本文件为
+使用已安装的 `devflow` CLI，并仅路由到明确映射的 `e2e-test-generator` 领域。版本文件为
 `analysis/e2e-test-generator-version.json`，其中 `skill_version` 为 `1.0.0`、`artifact_root` 为
 `analysis`；文件中的 `document_baseline.git_commit`、设计、协议、源码、支持配置、场景和清理指纹
 都是本 Skill 自己的业务输入锁。保留领域级 schema、锁、脱敏、所有权和工件规则。生成的场景名称、title、description、summary、Markdown 和报告正文必须使用中文；机器字段、ID、路径、协议和代码标识保持原样。

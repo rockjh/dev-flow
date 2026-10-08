@@ -1,6 +1,6 @@
 {
   "name": "dev-flow",
-  "version": "8.0.0",
+  "version": "8.1.0",
   "description": "devflow Python 运行时和 Skill 的 npm 安装器",
   "license": "UNLICENSED",
   "bin": {

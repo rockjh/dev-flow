@@ -1,4 +1,4 @@
 interface:
   display_name: "e2e-test-generator"
   short_description: "生成和验证端到端测试场景与产物"
-  default_prompt: "使用已安装的 devflow CLI（installed devflow CLI），仅将端到端请求路由到 devflow/e2e-test-generator。skill_version 为 1.0.0，只读写 analysis/e2e-test-generator-version.json 及自身 E2E 产物；只阅读所选端到端工作流必需的参考文档。生成的场景名称、title、description、summary、Markdown 和报告正文必须使用中文；机器字段、ID、路径、协议和代码标识保持原样。保留领域级 schema、锁、所有权、安全、脱敏和工件规则；stop when 证据缺失、目标不安全或含糊、或验证门禁失败；返回 redacted authoritative 报告或工件路径及退出状态。"
+  default_prompt: "使用已安装的 devflow CLI（installed devflow CLI），仅将端到端请求路由到 e2e-test-generator。skill_version 为 1.0.0，只读写 analysis/e2e-test-generator-version.json 及自身 E2E 产物；只阅读所选端到端工作流必需的参考文档。生成的场景名称、title、description、summary、Markdown 和报告正文必须使用中文；机器字段、ID、路径、协议和代码标识保持原样。保留领域级 schema、锁、所有权、安全、脱敏和工件规则；stop when 证据缺失、目标不安全或含糊、或验证门禁失败；返回 redacted authoritative 报告或工件路径及退出状态。"

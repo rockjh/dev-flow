@@ -1,29 +1,42 @@
-# 可重复验证
+# 两阶段可重复验证
 
-修改 Skill 或领域实现后，从仓库根目录运行以下命令：
+修改 Skill/实现后先执行相关测试，再执行仓库规定的完整 pytest、compileall、git diff --check。发布由 scripts/release.py 更新 npm 载荷，验证规范树一致及隔离 npm -> pipx -> Skill -> doctor，最后在实际安装上测试。
+
+## 第一阶段
 
 ```text
-python -m pytest -q
-python -m compileall -q devflow tests
-git diff --check
 devflow biz-flow init --project <fixture>
 devflow biz-flow discover --project <fixture>
-devflow biz-flow generate --project <fixture>
+devflow biz-flow check --project <fixture> --stage entries
+```
+
+在无代理可用环境也必须完成入口目录。检查只有真实注册业务入口，线程池/普通辅助方法无独立入口身份；同 HTTP 的 Controller/Application 去重，独立消费者和恢复任务保留。覆盖适用注册类型；不支持/动态范围报告缺口，不能虚报无遗漏。
+
+核对全部候选 = 业务 + 排除 + 待识别；业务 ID 集合 = 总览 = 各模块清单，单一归属。每入口有名称、trigger、源证据，排除有原因。所有模块按项目一级业务域建立业务化 Markdown 骨架，同域的配置、查询、回调、恢复及不同渠道在同一文件，跨域入口只归属主结果域；保留各入口业务链路差异，无占位图。对话/CLI 与总览完整三列内容一致。文件名以业务域和主要功能的一句业务化概括让读者大致知道文件内容，不能只写域名或缩写、堆叠技术标识、罗列全量入口动作或按功能拆域；业务描述独立于文件名，参考 Swagger 分组说明、接口摘要和业务注释归纳主要能力；同类接口合并，允许分号和多句，不用“负责 + 文件名摘要”或逐接口清单替代。完整入口清单另表保留，不能把简洁概括当成遗漏入口。排除及识别疑点按类别数量原因显示。
+
+发现产物不得携带深调用链、分支、持久化审核未决。连续两次 discover 保持 ID、排序、归属稳定；用户局部修改不影响其他模块。不支持的入口注册和名称/归属未决仍阻止目录定稿。
+
+协调者根据完整入口清单复核文件名是否自然表达业务对象及核心职责、关系或生命周期，描述是否有 Swagger 或源码说明依据、保留主要功能对象并合并同类接口；确认多句内容未被截断、client/HTML 元数据已清理、共享 Controller 的其他域能力未混入。参考项目业务文档时只提取命名风格，不能硬编码其模块名；长域应概括功能族，不能强加“处理”“业务”“流程”等后缀或堆全量功能动词。仅有动作串或“日志查询”等过泛名称时，依据源码业务标签通过现有分类调整路径纠正，保持业务域 ID 和全部入口归属不变，不把可由源码解决的命名问题推给用户。命名摘要负责概括，无遗漏由完整入口清单验收，不新增命名确认机制。
+
+## 第二阶段
+
+取得一次分类授权后：
+
+```text
+devflow biz-flow generate --project <fixture> --confirm
 devflow biz-flow check --project <fixture>
+devflow biz-flow verify --project <fixture>
 devflow biz-flow verify --project <fixture>
 ```
 
-没有真实子代理执行器时，`generate` 默认必须失败并返回
-`DELEGATION_UNAVAILABLE`。只有测试明确允许降级时才使用
-`devflow biz-flow generate --project <fixture> --allow-degraded`，并确认共享状态目录中的 run manifest
-记录 `degraded=true`、`parallel=false`、完整的 coordinator/module/entry 任务树和单写者事件。
-对每个入口检查源码候选 `branch_id` 与 `persistence_id` 是否同时存在于结构化入口结果、Mermaid 注释和矩阵；
-缺失、改写、未知可达性或真实持久化对象名称缺失都必须阻止生成。
+`review --project <fixture>` 可在本阶段选择使用，不得强制放在分类确认之前。正常测试使用真实可用代理，检查有界并发、只读源码、真实 started/join、每入口独立结果与模块单写者。确认所有关键分支、错误映射、异步返回/后台执行、状态变化、真实存储及外部动作；B/P ID 在结果、Mermaid 注释、矩阵、manifest 一致。多个图合并覆盖，不把无关源码解析当成行为未决。独立对照实际源码与有序 review.steps，核对调用/返回顺序、控制块嵌套、跨方箭头及成功/失败路径；分支清单平铺或无条件尾部成功即使覆盖率为100%仍不合格。B/P须在精确source绑定步骤，else不能孤立，控制块须闭合。
 
-对每个模块验证：总览入口数量等于模块入口清单数量；模块入口清单的 `entry_id` 与机器映射完全一致；
-每个入口都有 `business_name`、`trigger_summary` 和 `source_evidence`；业务入口名称为 `待确认` 时计入
-unresolved；excluded 入口必须带排除原因和源码证据；排除入口仍存在于清单中；连续两次 discover 的业务名称、
-入口顺序和模块归属保持稳定。最终报告包含每个模块的入口数量和完整清单、待确认名称数量（按 business/excluded
-统计）、已排除入口及原因、清单与机器映射对账结果，以及各入口类型适配器的证据覆盖情况。
+无代理时 generate 必须失败为 DELEGATION_UNAVAILABLE，且第一阶段清单继续可用。只有显式授权降级的测试才加 --allow-degraded，并验证 degraded=true、parallel=false，不能把降级通过当成真实并行验证。单入口的真实任务也不能伪报多个子代理。
 
-对于更新夹具，重复执行 `discover`，编辑源代码以新增/修改/删除入口，运行 `devflow biz-flow update`，然后运行 `check` 和 `verify`。分别注入一个格式错误的排除项、一个无效证据位置、一个占位步骤、一个过长业务要点和一个格式错误的 Mermaid 块；每项都必须失败，并在错误中包含入口 ID 或源位置。连续运行两次 `verify`，比较其 `stable` 结果和 Markdown 文档数量。
+注入无效源位置、未知结果相关分支、缺少真实存储对象、占位步骤、失效 fingerprint、重复写入者、错误 Mermaid，相关入口/模块必须失败且不推进基线；其他完整模块可保留，不声称整体完成。渲染器存在则实际渲染；缺少渲染器明确结构验证范围。
+
+## 增量、版本和交付
+
+在 Git 夹具新增/修改/删除入口，修改共享调用或配置后运行 update，再 check 和两次 verify。验证新增归属需确认、受影响入口重分析、删除章节同步清理、未变内容保留；无法读取旧 commit 报告全量回退。核对 commit、dirty、fingerprint 和唯一版本 JSON，任何失败保持原 source.git_commit。
+
+最终对话直接输出完整三列模块表及排除/疑点类别，不用链接替代；同时返回已脱敏外部 manifest、退出状态、各入口类型覆盖、逐入口未决、两次稳定性。实际目标项目的扫描及流程文档证据是验收依据，夹具通过不能代替实际项目验证。

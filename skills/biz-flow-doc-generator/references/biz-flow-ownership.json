@@ -1,9 +1,0 @@
-{
-  "schema_version": 4,
-  "source_fingerprint": "example-source-fingerprint",
-  "confirmed": true,
-  "entries": [
-    {"id": "url:POST /relations/sync", "module": "relation-sync", "file": "00-关系同步.md"},
-    {"id": "message:relation-failed", "module": "notification", "file": "01-失败通知.md"}
-  ]
-}

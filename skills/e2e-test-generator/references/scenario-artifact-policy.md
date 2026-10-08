@@ -41,7 +41,7 @@ from pathlib import Path
 
 import pytest
 
-from devflow.e2e_runtime import preflight, record_business_entry
+from toolkit.e2e_test_generator.runtime import preflight, record_business_entry
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
