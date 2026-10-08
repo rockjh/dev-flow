@@ -25,19 +25,19 @@ interface:
     separately. Show the complete three-column module overview, exclusion counts/reasons
     and entry-identification uncertainties directly in the conversation. Resolve
     source-checkable facts before asking for classification once; honor existing
-    authorization without asking again. After authorization run generate --confirm
-    under references/agent-orchestration.md with bounded parallel read-only entry
+    authorization without asking again. After authorization run prepare --confirm,
+    then collect under references/agent-orchestration.md with native host entry
     agents and one writer per module. Preserve core_capabilities as fully qualified
     declaring package/class, method and parameter-type identities with declaration
     evidence, never bare doExecute/doServe names or caller locations. Ordered review.steps
     drives source-backed call/return order, nested branches, storage, external effects,
     async boundaries and outcomes. Use business-language sequenceDiagram with autonumber;
     entry sections follow business title, trigger, function summary, diagram and branch
-    matrix. review is an optional second-stage audit and cannot block the first-stage
+    matrix. Old review/generate/update executor paths are unsupported and cannot block the first-stage
     inventory. Preserve Git commit, dirty state, source/mapping fingerprints, incremental
     changes, locks, ownership and redaction. Markdown and the sole version file
     docs/biz-flow/biz-flow-doc-generator-version.json are durable project assets;
-    skill_version is 2.0.0, and manifests remain outside the project. Follow
+    skill_version is 3.0.0, and manifests remain outside the project. Follow
     references/requirements-matrix.md, references/verification.md and
     references/version-management.md; run check and two consecutive verify calls,
     advancing the source baseline only after acceptance. Never fabricate parallelism

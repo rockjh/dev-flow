@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import sys
+import uuid
 from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -17,12 +18,14 @@ from pathlib import Path
 from ..core.artifacts import require_version_file, write_json, write_version_file, state_root
 from ..core.errors import DevflowError
 from ..core.redaction import redact
+from ..core.schema import BIZ_FLOW_SCHEMA_VERSION, BIZ_FLOW_HANDOFF_SCHEMA, validate_schema
 from .discovery import scan
-from .documents import apply_module_map, write_artifacts, write_discovery, write_entry_directory, readable_inventory, module_overview, registration_overview, exclusion_categories, _split_entry_ids, _display, _validate_mermaid, _is_chinese_module_filename
+from .documents import apply_module_map, write_artifacts, write_discovery, write_entry_directory, readable_inventory, module_overview, registration_overview, exclusion_categories, _split_entry_ids, _display, _validate_mermaid, _is_chinese_module_filename, render_module, _review_from_dict
+from .evidence import collect_evidence
 from .git import changed_paths, working_tree_paths
 from .models import BehaviorEvidence, EntryPoint, ErrorEvidence, GitInfo, ScanResult
 from .orchestration import create_run_manifest, fail_run, finish_run, write_module
-from .validation import validate_run, validate_markdown_structure, parse_diagram_ids, parse_matrix_ids
+from .validation import validate_run, validate_markdown_structure, parse_diagram_ids, parse_matrix_ids, validate_entry_analysis, digest
 
 
 _PROTECTED_NAMES = {"prod", "prd", "live", "production"}
@@ -182,7 +185,6 @@ def init_command(argv: list[str]) -> int:
 def _init_command_unlocked(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="devflow biz-flow init")
     _project(parser)
-    parser.add_argument("--upgrade", action="store_true", help="Explicitly upgrade skill metadata while preserving the accepted Git baseline")
     args = parser.parse_args(argv)
     root = args.project.resolve()
     if not (root / ".git").exists() and not (root / ".git").is_file():
@@ -202,11 +204,8 @@ def _init_command_unlocked(argv: list[str]) -> int:
                               and previous.get("artifact_root") == "docs/biz-flow"
                               and isinstance(source, dict) and "git_commit" in source
                               and (commit is None or isinstance(commit, str) and re.fullmatch(r"[0-9a-fA-F]{40}", commit)))
-            if not args.upgrade or not valid_previous:
-                print(f"ERROR: invalid biz-flow version lock: {lock}; use init --upgrade for an existing skill version", file=sys.stderr)
-                return 8
-            write_version_file(root, "biz-flow", {"source": {"git_commit": commit}})
-            _clear_confirmation_marker(docs_root)
+            print(f"ERROR: unsupported biz-flow version lock: {lock}; archive the old project and run init again", file=sys.stderr)
+            return 8
     else:
         write_version_file(root, "biz-flow", {"source": {"git_commit": None}})
     print(f"initialized biz-flow project={root} docs_root={docs_root}")
@@ -560,7 +559,7 @@ def _conversation_overview(result: ScanResult, proposal: dict[str, object], docs
     if not categories:
         lines.append("| 无 | 0 | 未发现静态待复核记录。 |")
     lines.extend(["", f"待源码复核：{len(result.unresolved)} 项静态未解析记录，不需要用户逐条解答。",
-                  "第一阶段只核对入口注册、业务归属和完整性，不分析业务调用链。确认分类后运行 generate --confirm，并在第二阶段并行分析入口、生成时序图，再运行 check 和 verify；review 为可选的第二阶段只读审核。",
+                  "第一阶段只核对入口注册、业务归属和完整性，不分析业务调用链。确认分类后运行 prepare，再由宿主会话选择原生子代理或明确授权串行分析，随后 collect、check 和 verify。",
                   "完整入口、忽略项明细和逐条待复核证据保留在总览 Markdown；本次对话必须展示上述表格，不能仅回复文件链接。",
                   "", f"总览文件：{docs_root / '业务流程覆盖总览.md'}"])
     return "\n".join(lines)
@@ -1133,6 +1132,65 @@ def _check_entry_directory(project: Path, docs_root: Path, target: str | None) -
     return 1 if errors else 0
 
 
+def _modern_manifest(project: Path) -> tuple[Path | None, dict[str, object] | None]:
+    for path in sorted((state_root() / "biz-flow").glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+        try:
+            value = _read_json(path)
+        except Exception:
+            continue
+        if value.get("protocol_version") == "3.0" and value.get("project_root") == str(project):
+            return path, value
+    return None, None
+
+
+def _validate_modern_manifest(project: Path, docs_root: Path, manifest: dict[str, object]) -> list[str]:
+    errors: list[str] = []
+    if manifest.get("schema_version") != int(BIZ_FLOW_SCHEMA_VERSION):
+        errors.append("UNSUPPORTED_PROTOCOL_SCHEMA")
+    if manifest.get("status") not in {"collected", "verified", "accepted"}:
+        errors.append("RUN_NOT_COLLECTED")
+    try:
+        result = scan(project, entry_only=True)
+    except Exception as exc:
+        return [f"SOURCE_SCAN_FAILED: {exc}"]
+    if result.source_fingerprint != manifest.get("source_fingerprint"):
+        errors.append("SOURCE_FINGERPRINT_MISMATCH")
+    expected = {str(task.get("entry_id")) for task in manifest.get("tasks", []) if isinstance(task, dict)}
+    results = manifest.get("results", {})
+    if not isinstance(results, dict) or set(results) != expected:
+        errors.append("RESULT_COVERAGE_MISMATCH")
+    for entry_id in expected:
+        if isinstance(results, dict) and entry_id in results:
+            if manifest.get("result_hashes", {}).get(entry_id) != digest(results[entry_id]):
+                errors.append(f"RESULT_HASH_MISMATCH: {entry_id}")
+            errors.extend(f"{entry_id}: {error}" for error in validate_entry_analysis(results[entry_id], manifest.get("inventories", {}).get(entry_id, {})))
+    mode = manifest.get("mode")
+    if mode == "serial":
+        if manifest.get("degraded") is not True or manifest.get("parallel") is not False or manifest.get("completed_child_agents") != 0:
+            errors.append("SERIAL_EXECUTION_FLAGS_INVALID")
+    elif mode == "native":
+        if manifest.get("degraded") is True:
+            errors.append("NATIVE_EXECUTION_DEGRADED")
+    else:
+        errors.append("EXECUTION_MODE_MISSING")
+    if manifest.get("purpose") == "generate":
+        docs = manifest.get("document_hashes", {})
+        if not isinstance(docs, dict) or not docs:
+            errors.append("DOCUMENT_HASHES_MISSING")
+        for filename, expected_hash in (docs.items() if isinstance(docs, dict) else ()):
+            path = docs_root / str(filename)
+            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash:
+                errors.append(f"DOCUMENT_HASH_MISMATCH: {filename}")
+        mapping = _read_json(docs_root / "biz-flow-modules.json")
+        for module in mapping.get("modules", []) if isinstance(mapping, dict) else ():
+            filename = str(module.get("file", ""))
+            path = docs_root / filename
+            analyses = {entry_id: results[entry_id] for entry_id in module.get("entry_ids", []) if isinstance(results, dict) and entry_id in results}
+            if path.is_file():
+                errors.extend(f"{module.get('name')}: {error}" for error in validate_markdown_structure(path.read_text(encoding="utf-8"), analyses))
+    return sorted(dict.fromkeys(errors))
+
+
 def check_command(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="devflow biz-flow check")
     _project(parser)
@@ -1142,6 +1200,11 @@ def check_command(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     if args.stage == "entries":
         return _check_entry_directory(args.project.resolve(), _docs_root(args.project.resolve(), args.docs_root), args.commit)
+    _, modern_manifest = _modern_manifest(args.project.resolve())
+    if modern_manifest is not None:
+        modern_errors = _validate_modern_manifest(args.project.resolve(), _docs_root(args.project.resolve(), args.docs_root), modern_manifest)
+        print(json.dumps({"run_id": modern_manifest.get("run_id"), "status": modern_manifest.get("status"), "errors": modern_errors}, ensure_ascii=False))
+        return 1 if modern_errors else 0
     try:
         # 行为证据已由指纹绑定的执行清单验收；复核注册清单与源码快照即可。
         result = scan(args.project.resolve(), args.commit, entry_only=True)
@@ -1348,6 +1411,31 @@ def verify_command(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     project = args.project.resolve()
     docs_root = _docs_root(project, args.docs_root)
+    modern = sorted((state_root() / "biz-flow").glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    for candidate in modern:
+        try:
+            current = _read_json(candidate)
+        except Exception:
+            continue
+        if current.get("protocol_version") != "3.0" or current.get("project_root") != str(project) or current.get("status") not in {"collected", "verified"}:
+            continue
+        errors = _validate_modern_manifest(project, docs_root, current)
+        if errors:
+            print("ERROR: modern biz-flow verification failed: " + "; ".join(errors), file=sys.stderr)
+            return 1
+        stable_payload = {"results": current.get("results", {}), "documents": current.get("document_hashes", {})}
+        stable_digest = digest(stable_payload)
+        if current.get("verify_digest") == stable_digest:
+            current["verification_runs"] = int(current.get("verification_runs", 0)) + 1
+        else:
+            current["verify_digest"] = stable_digest
+            current["verification_runs"] = 1
+        current["status"] = "verified"
+        write_json(candidate, current)
+        print(json.dumps({"run_id": current.get("run_id"), "status": "verified",
+                          "verification_runs": current["verification_runs"],
+                          "stable": current["verification_runs"] >= 2}, ensure_ascii=False))
+        return 0
 
     def snapshot() -> dict[str, str]:
         return {
@@ -1387,15 +1475,233 @@ def verify_command(argv: list[str]) -> int:
     return 0
 
 
+def _unsupported_legacy_command(name: str, argv: list[str]) -> int:
+    """The 3.x protocol deliberately has no compatibility execution path."""
+    if any(value == "--allow-degraded" for value in argv) or name in {"generate", "update", "review"}:
+        print(f"ERROR: biz-flow {name} was removed; use prepare/collect/accept", file=sys.stderr)
+        return 8
+    print(f"ERROR: unsupported biz-flow command: {name}", file=sys.stderr)
+    return 8
+
+
+def _new_run_path(run_id: str) -> Path:
+    return state_root() / "biz-flow" / f"{run_id}.json"
+
+
+def prepare_command(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="devflow biz-flow prepare")
+    _project(parser)
+    parser.add_argument("--module")
+    parser.add_argument("--purpose", choices=("generate", "audit"), default="generate")
+    parser.add_argument("--confirm", action="store_true")
+    args = parser.parse_args(argv)
+    project, docs_root = args.project.resolve(), _docs_root(args.project.resolve(), args.docs_root)
+    if os.environ.get("DEVFLOW_AGENT_EXECUTOR", "").strip():
+        print("ERROR: DEVFLOW_AGENT_EXECUTOR was removed from biz-flow", file=sys.stderr)
+        return 8
+    if not args.confirm:
+        print("ERROR: prepare requires explicit classification confirmation", file=sys.stderr)
+        return 8
+    try:
+        result = scan(project, entry_only=True)
+        mapping_path = docs_root / "biz-flow-modules.json"
+        if not mapping_path.is_file():
+            write_discovery(result, docs_root)
+        if args.confirm:
+            _confirm_overview(docs_root)
+            mapping_errors = _apply_overview_mapping(docs_root, mapping_path, result)
+            if mapping_errors:
+                raise ValueError("; ".join(mapping_errors))
+        mapping = _read_json(mapping_path)
+        if not mapping or mapping.get("confirmed") is not True:
+            raise ValueError("module classification is not confirmed")
+        entries = [entry for module in mapping.get("modules", [])
+                   if not args.module or module.get("name") == args.module
+                   for entry in module.get("entry_ids", [])]
+        if args.module and not entries:
+            raise ValueError(f"business module does not exist: {args.module}")
+        run_id = uuid.uuid4().hex
+        mapping_hash = hashlib.sha256(mapping_path.read_bytes()).hexdigest()
+        by_id = {entry.entry_id: entry for entry in result.entries}
+        inventories = redact(collect_evidence(result))
+        tasks = []
+        for entry_id in entries:
+            entry = by_id.get(entry_id)
+            if entry is None:
+                raise ValueError(f"mapping references unknown entry: {entry_id}")
+            tasks.append({"task_id": f"entry:{entry_id}", "entry_id": entry_id,
+                          "module_id": next((m.get("name") for m in mapping.get("modules", []) if entry_id in m.get("entry_ids", [])), None),
+                          "registration_evidence": list(entry.source_evidence),
+                          "reachable_analysis": ["calls", "branches", "persistence", "external_calls", "async", "outcomes"],
+                          "unresolved_questions": [], "permissions": {"read_only_source": True},
+                          "result_schema": "biz-flow.entry-analysis", "status": "pending"})
+        manifest = {"protocol_version": "3.0", "schema_version": int(BIZ_FLOW_SCHEMA_VERSION),
+                    "run_id": run_id, "project_root": str(project), "docs_root": str(docs_root),
+                    "source_fingerprint": result.source_fingerprint, "mapping_hash": mapping_hash,
+                    "purpose": args.purpose, "module_filter": args.module, "mode": None, "parallel": False, "degraded": False,
+                    "status": "prepared", "host_capability": "unknown", "tasks": tasks, "completed_child_agents": 0,
+                    "inventories": {entry_id: inventories[entry_id] for entry_id in entries if entry_id in inventories},
+                    "serial_authorization": None, "execution": {"native_attempts": [], "evidence": []},
+                    "results": {}, "verification_runs": 0, "errors": []}
+        schema_errors = validate_schema(BIZ_FLOW_HANDOFF_SCHEMA, manifest)
+        if schema_errors:
+            raise ValueError("HANDOFF_SCHEMA_INVALID: " + "; ".join(schema_errors))
+        path = _new_run_path(run_id)
+        write_json(path, manifest)
+        package = {"protocol_version": "3.0", "run_id": run_id, "project_root": str(project),
+                   "source_fingerprint": result.source_fingerprint, "mapping_hash": mapping_hash,
+                   "tasks": tasks, "inventories": {entry_id: inventories[entry_id] for entry_id in entries if entry_id in inventories},
+                   "result_schema": "biz-flow.entry-analysis", "permissions": {"read_only_source": True}}
+        package_path = state_root() / "biz-flow" / f"{run_id}.tasks.json"
+        write_json(package_path, package)
+        print(json.dumps({"run_id": run_id, "status": manifest["status"],
+                          "task_package": str(package_path), "reason": "native host capability must be selected by the session"}, ensure_ascii=False))
+        return 0
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        print(f"ERROR: prepare failed: {exc}", file=sys.stderr)
+        return 8
+
+
+def collect_command(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="devflow biz-flow collect")
+    _project(parser)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--results", type=Path, required=True)
+    args = parser.parse_args(argv)
+    path = _new_run_path(args.run_id)
+    try:
+        manifest = _read_json(path)
+        if manifest.get("status") not in {"prepared", "awaiting_serial_choice", "collected"}:
+            raise ValueError("RUN_NOT_COLLECTABLE")
+        submitted = json.loads(args.results.read_text(encoding="utf-8"))
+        if not isinstance(submitted, dict) or submitted.get("run_id") != args.run_id:
+            raise ValueError("RESULT_RUN_MISMATCH")
+        if submitted.get("source_fingerprint") != manifest.get("source_fingerprint") or submitted.get("mapping_hash") != manifest.get("mapping_hash"):
+            raise ValueError("STALE_FINGERPRINT")
+        current = scan(args.project.resolve(), entry_only=True)
+        if current.source_fingerprint != manifest.get("source_fingerprint"):
+            raise ValueError("SOURCE_CHANGED_AFTER_PREPARE")
+        mode = submitted.get("mode")
+        if mode not in {"native", "serial"}:
+            raise ValueError("INVALID_MODE")
+        if mode == "serial" and not submitted.get("serial_authorization"):
+            raise ValueError("SERIAL_AUTHORIZATION_REQUIRED")
+        submitted_results = submitted.get("results")
+        if not isinstance(submitted_results, dict):
+            raise ValueError("RESULTS_MISSING")
+        expected_ids = {str(task.get("entry_id")) for task in manifest.get("tasks", [])}
+        if set(submitted_results) != expected_ids:
+            missing = sorted(expected_ids - set(submitted_results))
+            extra = sorted(set(submitted_results) - expected_ids)
+            raise ValueError(f"RESULT_COVERAGE_MISMATCH missing={missing} extra={extra}")
+        inventories = manifest.get("inventories", {})
+        for entry_id in sorted(expected_ids):
+            errors = validate_entry_analysis(submitted_results[entry_id], inventories.get(entry_id, {}))
+            if errors:
+                raise ValueError(f"ENTRY_RESULT_INVALID {entry_id}: {'; '.join(errors)}")
+        execution = submitted.get("execution")
+        if not isinstance(execution, dict):
+            raise ValueError("EXECUTION_RECORD_MISSING")
+        if mode == "serial":
+            authorization = submitted.get("serial_authorization")
+            if not isinstance(authorization, dict) or not authorization.get("choice_reference") or set(authorization.get("scope", [])) != expected_ids:
+                raise ValueError("SERIAL_AUTHORIZATION_INVALID")
+            if int(submitted.get("completed_child_agents", 0)) != 0:
+                raise ValueError("SERIAL_CHILD_COUNT_INVALID")
+        else:
+            receipts = execution.get("receipts")
+            if not isinstance(receipts, list) or {str(item.get("task_id")) for item in receipts if isinstance(item, dict)} != {f"entry:{entry_id}" for entry_id in expected_ids}:
+                raise ValueError("NATIVE_EXECUTION_RECEIPTS_INCOMPLETE")
+            for receipt in receipts:
+                if not isinstance(receipt, dict) or not receipt.get("child_agent_id") or receipt.get("status") != "success":
+                    raise ValueError("NATIVE_EXECUTION_EVIDENCE_INVALID")
+        manifest["mode"] = mode
+        manifest["degraded"] = mode == "serial"
+        manifest["parallel"] = bool(submitted.get("parallel", False)) if mode == "native" else False
+        manifest["results"] = redact(submitted_results)
+        manifest["result_hashes"] = {entry_id: digest(value) for entry_id, value in manifest["results"].items()}
+        manifest["execution"] = execution
+        manifest["serial_authorization"] = submitted.get("serial_authorization")
+        manifest["completed_child_agents"] = 0 if mode == "serial" else int(submitted.get("completed_child_agents", 0))
+        if manifest["purpose"] == "generate":
+            markdown_snapshot = _markdown_snapshot(Path(manifest["docs_root"]))
+            mapping = _read_json(Path(manifest["docs_root"]) / "biz-flow-modules.json")
+            result = scan(args.project.resolve(), entry_only=True)
+            for entry in result.entries:
+                analysis = submitted_results.get(entry.entry_id)
+                if isinstance(analysis, dict):
+                    entry.agent_branches = list(analysis.get("branches", []))
+                    entry.agent_persistence = list(analysis.get("persistence_actions", []))
+                    if isinstance(analysis.get("review"), dict):
+                        entry.review = _review_from_dict(analysis["review"], entry)
+            module_contents = {}
+            for module in mapping.get("modules", []):
+                module_id = str(module.get("name"))
+                entries = [entry for entry in result.entries if entry.module == module_id and entry.entry_id in expected_ids]
+                if not entries:
+                    continue
+                module_contents[module_id] = redact(render_module(module_id, entries, result.git, result, module_meta=module))
+            try:
+                _, _, report = write_artifacts(result, Path(manifest["docs_root"]), module_filter=manifest.get("module_filter"), module_contents=module_contents)
+                _write_overview_report(Path(manifest["docs_root"]), result, report)
+            except Exception:
+                _restore_markdown_snapshot(Path(manifest["docs_root"]), markdown_snapshot)
+                _remove_transient_artifacts(Path(manifest["docs_root"]))
+                raise
+            manifest["document_hashes"] = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                                            for path in Path(manifest["docs_root"]).glob("*.md")}
+            _remove_transient_artifacts(Path(manifest["docs_root"]))
+        manifest["status"] = "collected"
+        write_json(path, manifest)
+        print(json.dumps({"run_id": args.run_id, "status": "collected", "manifest": str(path)}, ensure_ascii=False))
+        return 0
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        try:
+            if path.is_file():
+                failed = _read_json(path)
+                failed["status"] = "failed"
+                failed.setdefault("errors", []).append(str(exc))
+                write_json(path, failed)
+        except Exception:
+            pass
+        print(f"ERROR: collect failed: {exc}", file=sys.stderr)
+        return 8
+
+
+def accept_command(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="devflow biz-flow accept")
+    _project(parser)
+    parser.add_argument("--run-id", required=True)
+    args = parser.parse_args(argv)
+    path = _new_run_path(args.run_id)
+    try:
+        manifest = _read_json(path)
+        if manifest.get("status") not in {"collected", "verified"}:
+            raise ValueError("run is not collected")
+        if int(manifest.get("verification_runs", 0)) < 2:
+            raise ValueError("two stable verify runs are required before accept")
+        _write_recorded_commit(Path(manifest["docs_root"]), scan(args.project.resolve(), entry_only=True).git.target)
+        manifest["status"] = "accepted"
+        write_json(path, manifest)
+        print(json.dumps({"run_id": args.run_id, "status": "accepted", "manifest": str(path)}, ensure_ascii=False))
+        return 0
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+        print(f"ERROR: accept failed: {exc}", file=sys.stderr)
+        return 8
+
+
 def main(argv: list[str] | None = None) -> int:
     commands = {
         "init": init_command,
         "discover": discover_command,
-        "review": review_command,
-        "generate": generate_command,
-        "update": lambda args: generate_command(args, incremental=True),
+        "prepare": prepare_command,
+        "collect": collect_command,
+        "accept": accept_command,
         "check": check_command,
         "verify": verify_command,
+        "review": lambda args: _unsupported_legacy_command("review", args),
+        "generate": lambda args: _unsupported_legacy_command("generate", args),
+        "update": lambda args: _unsupported_legacy_command("update", args),
     }
     parser = argparse.ArgumentParser(prog="devflow biz-flow")
     parser.add_argument("command", nargs="?", choices=tuple(commands))

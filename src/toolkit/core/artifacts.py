@@ -13,7 +13,7 @@ from .redaction import redact
 
 
 SKILL_VERSION = "1.0.0"
-DOMAIN_SKILL_VERSIONS = {"biz-flow": "2.0.0", "bru-api": "1.0.0", "e2e": "1.0.0"}
+DOMAIN_SKILL_VERSIONS = {"biz-flow": "3.0.0", "bru-api": "1.0.0", "e2e": "1.0.0"}
 VERSION_FILES = {
     "biz-flow": "docs/biz-flow/biz-flow-doc-generator-version.json",
     "bru-api": "qa/contracts/bru-api-test-generator-version.json",

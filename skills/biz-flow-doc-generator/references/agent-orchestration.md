@@ -50,16 +50,10 @@ review 的 trigger、purpose、input、outcome、failure 为每项不超过 50 �
 
 每个要求覆盖的 ID 同时出现在结构化结果、Mermaid `%% devflow:branch id="..."` 或 `%% devflow:persistence id="..."` 注释、对应矩阵及 manifest。无数据库动作不要求数据库参与方。复杂入口可拆多图，覆盖合并计算。内部辅助实现疑点不影响业务表达时保留非关键记录，不把无关源码解析当成入口失败。
 
-## 执行器与 JSONL
+## 宿主交接、失败和局部完成
 
-选择顺序固定：`DEVFLOW_AGENT_EXECUTOR`，再静态内置 Codex/Claude 适配器。探测只读版本、帮助和能力，不写 shell 配置或环境变量、不发业务请求、不创建业务数据。适配器隔离各 CLI 参数并转换同一 JSONL 协议。每入口启动受限临时只读子进程，按上限并行；只有真实启动并返回才记录 `real_child_agents`，禁止伪造能力或生命周期。
+`prepare` 只导出脱敏任务包，不探测品牌 CLI、不读取 `DEVFLOW_AGENT_EXECUTOR`。宿主会话判断是否有原生子代理能力；无法委派时必须让用户在串行分析和停止之间明确选择。原生结果保存真实工具引用、child_agent_id、task_id、开始/结束及回收状态；串行结果保存用户选择引用和授权范围，子代理数为 0。
 
-显式执行器输入一行 JSON：`run_id`、`batch_id`、`parent_task_id`、完整 `tasks`；输出一行包含 `parallel`、`capabilities`、`events`、`results` 的 JSON。能力要求 `real_child_agents`、`read_only_source`、`brokered_module_writes` 为 true，正常委派 parallel=true。每结果包含 task_id、status（success/failed）及 result/error。events 包含真实 started、完成（入口 success、模块 ready）和 join_batch；运行时补记 dispatch_batch 并编号。单入口时如实记录任务数量，不能把零代理或串行降级伪称并行。
+`collect` 重新校验运行身份、源码和映射指纹、逐入口覆盖、结果 schema、证据完整性及执行记录。任何失败都保留入口目录并将运行置为 failed，不自动降级。成功生成模式复用同一业务分析校验、Mermaid 渲染和模块唯一写入；`audit` 只保存审核结果，不写最终文档。
 
-非空 `writes` 被拒绝：执行器不能直接写项目，运行时模块单写者负责提交。manifest 记录执行器、探测、并发/批次、能力、parallel、degraded、逐入口状态、归属和写入事件。
-
-## 可选审核、失败和局部完成
-
-`review` 是第二阶段可选只读源审核，使用同一已确认入口范围，保存审核结果/manifest；不写最终模块流程、不确认归属、不推进版本。第一阶段及分类确认不得依赖它。
-
-没有可用执行器时第二阶段返回 `DELEGATION_UNAVAILABLE`，保留第一阶段目录。仅用户显式允许 `--allow-degraded` 才串行，记录 degraded=true、parallel=false，仍满足全部证据与覆盖门禁。失败入口不标完成；其模块保留待处理状态。其他已完整验证模块可保留，但任一要求入口缺失、关键未决、fingerprint 不符、父子关系错误或写入者不唯一时整体失败，不能推进接受基线。
+`check` 和每次 `verify` 都基于当前运行；只有相同结果和文档哈希连续通过两次 verify，`accept` 才能推进源码基线。旧 review、generate、update、外部执行器和 allow-degraded 路径均不属于 3.0 协议。

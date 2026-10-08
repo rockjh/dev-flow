@@ -121,39 +121,9 @@ BUILTIN_AGENT_ADAPTERS = tuple(NativeAgentAdapter(adapter) for adapter in BUILTI
 
 
 def discover_agent_executor(run_id: str) -> tuple[AgentExecutor | None, dict[str, Any]]:
-    """Choose an explicit host override or one of the static built-ins."""
-    configured = os.environ.get("DEVFLOW_AGENT_EXECUTOR", "").strip()
-    if configured:
-        candidate = SubprocessAgentExecutor(configured, run_id, executor_type="configured", adapter_name="configured")
-        capabilities = candidate.probe()
-        return (candidate if capabilities else None), {
-            "type": "configured", "adapter": "configured", "probed": True,
-            "capabilities": capabilities or {},
-        }
-    for adapter in BUILTIN_AGENT_ADAPTERS:
-        try:
-            probe = adapter.probe()
-            if probe is False:
-                continue
-            capabilities = {
-                str(key): value for key, value in (probe.items() if isinstance(probe, dict) else ())
-                if isinstance(value, bool)
-            }
-            # 子进程能力只能在实际启动后确认；探测阶段只验证安全边界。
-            required = {"read_only_source", "brokered_module_writes"}
-            if any(capabilities.get(key) is False for key in required):
-                continue
-            executor = adapter.create_executor(run_id)
-            return executor, {
-                "type": str(getattr(adapter, "name", "registered")),
-                "adapter": str(getattr(adapter, "name", "registered")),
-                "probed": True,
-                "capabilities": capabilities,
-            }
-        except (OSError, RuntimeError, ValueError, TypeError):
-            continue
+    if os.environ.get("DEVFLOW_AGENT_EXECUTOR", "").strip():
+        raise DelegationUnavailable("DEVFLOW_AGENT_EXECUTOR was removed from biz-flow")
     return None, {"type": "unavailable", "adapter": "", "probed": True, "capabilities": {}}
-
 
 class NativeAgentExecutor:
     """Own entry processes and receipts; module tasks render through the broker."""

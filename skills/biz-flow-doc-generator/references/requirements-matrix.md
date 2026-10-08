@@ -16,7 +16,7 @@
 | 2 问题范围 | 排除候选与无关源码不计行为未决；关键未决阻断受影响入口，整体不假成功 | 按阶段/入口的 unresolved、模块状态 |
 | 2 图与结构 | 每入口业务标题、触发、功能、sequenceDiagram/autonumber、分支矩阵；alt/else、loop、opt 和异步有据；有序步骤及真实参与方保持调用/返回顺序、控制嵌套及各路径响应，无统一假成功 | 最终 Markdown、source-bound steps、check及源码时序复核 |
 | 2 存储与覆盖 | 真实对象及中文标签；B/P ID 在结果、图注释、矩阵、manifest 一致；无存储不强加参与方 | 静态候选与代理覆盖集合 |
-| 2 可选 review | 非确认前前置，范围仅确认入口，只读审核不推进基线 | review 记录及版本对比 |
+| 2 prepare/collect | prepare 导出任务包，collect 校验运行身份、入口结果和执行证据；audit 不写最终文档 | 脱敏任务包、结果 manifest、文档哈希 |
 | 2 执行器失败 | 无后端报 DELEGATION_UNAVAILABLE；显式允许才降级并如实标记 | 能力探测、parallel/degraded、退出码 |
 | 共同 安全与版本 | 安全路径、锁、单一归属、脱敏、sole JSON、外部 manifest；commit+dirty+fingerprint 真实 | 核心验证、版本及运行报告 |
 | 共同 增量稳定 | 新增/变化/删除及共享依赖影响准确；未变内容稳定；check 后连续两次 verify stable=true 才推进基线 | Git 比较、覆盖、两次 verify |

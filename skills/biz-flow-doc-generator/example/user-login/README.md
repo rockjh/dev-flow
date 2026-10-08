@@ -30,15 +30,15 @@ devflow biz-flow init --project .
 devflow biz-flow discover --project .
 devflow biz-flow check --project . --stage entries
 # 查看并确认 docs/biz-flow/业务流程覆盖总览.md。
-devflow biz-flow generate --project . --confirm
+devflow biz-flow prepare --project . --confirm
 # 当前环境没有真实子代理时，只有得到用户明确许可才使用串行降级：
-# devflow biz-flow generate --project . --allow-degraded
+# devflow biz-flow prepare --project . (removed; choose serial mode in the host session)
 devflow biz-flow check --project .
 devflow biz-flow verify --project .
 devflow biz-flow verify --project .
 ```
 
-已有旧版锁时，先执行 `devflow biz-flow init --project . --upgrade` 显式升级，原 Git 基线会保留，旧确认会撤销。第一阶段仅建立入口目录，不要求代理；第二阶段可选择 `review` 进行只读审核，它不是分类确认前的必需步骤。
+已有旧版锁时归档旧项目并重新 `init`。第一阶段仅建立入口目录；确认后执行 `prepare`，由宿主选择原生子代理或明确授权串行分析，再执行 `collect`、`check`、两次 `verify` 和 `accept`。
 
 Markdown 业务模块文档是可读产物。证据始终关联文档列出的源代码位置，
 不会用笼统的“数据库”或“外部服务”参与者推断分支。

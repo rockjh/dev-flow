@@ -23,15 +23,15 @@ devflow biz-flow check --project <fixture> --stage entries
 取得一次分类授权后：
 
 ```text
-devflow biz-flow generate --project <fixture> --confirm
+devflow biz-flow prepare --project <fixture> --confirm
 devflow biz-flow check --project <fixture>
 devflow biz-flow verify --project <fixture>
 devflow biz-flow verify --project <fixture>
 ```
 
-`review --project <fixture>` 可在本阶段选择使用，不得强制放在分类确认之前。正常测试使用真实可用代理，检查有界并发、只读源码、真实 started/join、每入口独立结果与模块单写者。确认所有关键分支、错误映射、异步返回/后台执行、状态变化、真实存储及外部动作；B/P ID 在结果、Mermaid 注释、矩阵、manifest 一致。多个图合并覆盖，不把无关源码解析当成行为未决。独立对照实际源码与有序 review.steps，核对调用/返回顺序、控制块嵌套、跨方箭头及成功/失败路径；分支清单平铺或无条件尾部成功即使覆盖率为100%仍不合格。B/P须在精确source绑定步骤，else不能孤立，控制块须闭合。
+prepare/collect 阶段使用宿主原生子代理或明确授权的串行会话；检查只读源码、每入口独立结果、执行回收记录和模块单写者。确认所有关键分支、错误映射、异步返回/后台执行、状态变化、真实存储及外部动作；B/P ID 在结果、Mermaid 注释、矩阵、manifest 一致。独立对照实际源码与有序 review.steps，核对调用/返回顺序、控制块嵌套、跨方箭头及成功/失败路径。
 
-无代理时 generate 必须失败为 DELEGATION_UNAVAILABLE，且第一阶段清单继续可用。只有显式授权降级的测试才加 --allow-degraded，并验证 degraded=true、parallel=false，不能把降级通过当成真实并行验证。单入口的真实任务也不能伪报多个子代理。
+无原生能力时必须展示串行/停止选择；未选择时停在入口目录。串行结果必须有用户授权引用、degraded=true、parallel=false、completed_child_agents=0，不能伪报并行或子代理。
 
 注入无效源位置、未知结果相关分支、缺少真实存储对象、占位步骤、失效 fingerprint、重复写入者、错误 Mermaid，相关入口/模块必须失败且不推进基线；其他完整模块可保留，不声称整体完成。渲染器存在则实际渲染；缺少渲染器明确结构验证范围。
 

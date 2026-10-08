@@ -1,6 +1,6 @@
 ---
 name: biz-flow-doc-generator
-description: Inventory registered business entries by business module, then generate source-backed sequence diagrams with parallel read-only agents.
+description: Inventory registered business entries, then collect source-backed sequence diagrams through native host sub-agents or explicitly authorized serial analysis.
 ---
 
 Use the installed `devflow` executable and route only through `devflow biz-flow`.
@@ -8,7 +8,7 @@ Set the explicit project root with `--project`. Durable project assets are Markd
 under `<project>/docs/biz-flow` and the sole version file
 `docs/biz-flow/biz-flow-doc-generator-version.json`. Execution manifests live outside
 the project under `~/.local/state/devflow/artifacts/biz-flow/`. The `skill_version`
-is `2.0.0`. Preserve scope, locks, ownership, redaction and source fingerprints.
+is `3.0.0`. Preserve scope, locks, ownership, redaction and source fingerprints.
 
 Read [analysis-policy.md](references/analysis-policy.md) for discovery and business
 presentation; read [agent-orchestration.md](references/agent-orchestration.md) only
@@ -17,10 +17,10 @@ for analysis/delegation. Before acceptance or version changes read
 [verification.md](references/verification.md) and
 [version-management.md](references/version-management.md).
 
-## 第一步：完整业务入口目录
+## 绗竴姝ワ細瀹屾暣涓氬姟鍏ュ彛鐩綍
 
-Run `init` when needed; for an existing older valid version lock use explicit
-`init --upgrade` to preserve the accepted Git baseline and invalidate old confirmation.
+Run `init` when needed. Older version locks are unsupported; archive the old
+project and initialize a new 3.0.0 project.
 Then run `discover` and `check --stage entries`. The entry
 directory gate must pass independently before classification confirmation. Scan the whole project for registered
 business triggers, including supported platform receivers such as `doExecute` and
@@ -48,21 +48,21 @@ shown in the sequence diagram. Domain names come from project evidence and user
 classification, not a fixed domain dictionary. Module filenames use natural business
 objects plus their core responsibility, relationship or lifecycle, so readers can
 infer the main contents. Group related functions into meaningful families for a broad
-domain; do not concatenate all action verbs or enforce suffixes such as “处理”,
-“业务” or “流程”. Existing project business-document names may guide style, but
+domain; do not concatenate all action verbs or enforce suffixes such as 鈥滃鐞嗏€?
+鈥滀笟鍔♀€?or 鈥滄祦绋嬧€? Existing project business-document names may guide style, but
 must not become a project-specific naming dictionary. Do not use a bare domain/acronym
 or split a domain by function. Business descriptions are independent of filenames:
 use Swagger `@Tag.description` and `@Operation.summary/description`, then source
 comments for non-HTTP triggers, to summarize the actual business objects and main
 capabilities. Merge related interfaces such as list/detail queries and CRUD;
 retain distinct actions such as opening and closing a plan. Semicolons and multiple
-sentences are allowed. Do not prefix a filename summary with “负责”, enumerate
+sentences are allowed. Do not prefix a filename summary with 鈥滆礋璐ｂ€? enumerate
 every endpoint or include client/HTML metadata. Limit shared controller descriptions
 to entries owned by the module; keep the complete inventory separately.
 See analysis-policy for naming and identity rules.
 
 Before requesting classification confirmation or ending the turn, directly show
-the CLI's entire three-column table (`业务模块文件名`, `业务描述`, `入口数量`),
+the CLI's entire three-column table (`涓氬姟妯″潡鏂囦欢鍚峘, `涓氬姟鎻忚堪`, `鍏ュ彛鏁伴噺`),
 exclusion categories with counts/reasons, and entry-identification uncertainties
 with counts and handling plans. Links or totals cannot replace these tables.
 The overview preserves every candidate's ID, trigger, source and disposition;
@@ -74,16 +74,15 @@ disputed rows and preserve other ownership. Confirmation is recorded with
 `<!-- devflow:module-confirmed -->` and bound to the source/mapping fingerprint.
 Deep behavior findings do not block inventory delivery or require user classification.
 
-## 第二步：并行业务分析与时序图
+## 绗簩姝ワ細骞惰涓氬姟鍒嗘瀽涓庢椂搴忓浘
 
-After classification is authorized, run `generate --project <project> --confirm`.
+After classification is authorized, run `prepare --project <project> --confirm`.
 Analyze only confirmed business entries and their reachable behavior. The CLI
 creates bounded parallel, read-only entry tasks, merges their evidence and commits
 each module through its unique writer. Coordination owns the inventory and final
 gates; it must not fabricate agent results, substitute guessed behavior for failed
-agents or let multiple tasks edit one module. `review` is an optional read-only
-second-stage source audit, not a prerequisite before classification confirmation;
-it neither confirms ownership nor advances the accepted source baseline.
+agents or let multiple tasks edit one module. The removed review/generate/update
+paths are not compatibility aliases and cannot advance the source baseline.
 
 Keep each reachable `core_capabilities` identity as its complete declaring identity:
 fully qualified package/class (including enclosing classes), method and parameter
@@ -112,12 +111,7 @@ rules or replace unknown storage objects with generic participants. Follow user'
 explicit diagram requirements; Markdown sequence diagrams do not implicitly authorize
 Feishu publication or replacing editable boards with SVG.
 
-Use the executor protocol in agent-orchestration. Probe `DEVFLOW_AGENT_EXECUTOR`,
-then static built-in Codex/Claude adapters without changing environment or shell
-configuration. No usable executor yields `DELEGATION_UNAVAILABLE` in step two;
-step-one inventories remain valid. Only an explicit user request for
-`--allow-degraded` permits serial analysis, recorded as `degraded=true` and
-`parallel=false`; all evidence gates still apply. Never counterfeit parallelism.
+Do not probe brand CLIs or `DEVFLOW_AGENT_EXECUTOR`; that configuration is removed. prepare only creates a redacted task package. The current host session decides whether native sub-agents are available. If unavailable, ask exactly once whether the current Agent may perform serial read-only analysis or stop with the entry directory. Serial mode requires explicit user choice and is recorded as mode=serial, degraded=true, parallel=false, and zero child agents. Native execution uses host tool records; never fabricate child-agent evidence.
 
 Run `check` and two consecutive `verify` calls. Preserve Git commit plus dirty
 state, source fingerprints and incremental added/changed/deleted entry reporting;

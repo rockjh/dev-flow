@@ -235,26 +235,16 @@ COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
             "pytest_args": "restricted-string[]",
         }
     },
-    "biz-flow.init": {"options": {"--project": "path", "--docs-root": "path", "--upgrade": "boolean"}},
+    "biz-flow.init": {"options": {"--project": "path", "--docs-root": "path"}},
     "biz-flow.discover": {
         "options": {"--project": "path", "--docs-root": "path", "--commit": "string"}
-    },
-    "biz-flow.review": {
-        "options": {"--project": "path", "--docs-root": "path", "--commit": "string"}
-    },
-    "biz-flow.generate": {
-        "options": {
-            "--project": "path", "--docs-root": "path", "--module": "string", "--commit": "string", "--confirm": "boolean", "--allow-degraded": "boolean",
-        }
-    },
-    "biz-flow.update": {
-        "options": {
-            "--project": "path", "--docs-root": "path", "--module": "string", "--commit": "string", "--confirm": "boolean", "--allow-degraded": "boolean",
-        }
     },
     "biz-flow.check": {
         "options": {"--project": "path", "--docs-root": "path", "--module": "string", "--commit": "string", "--stage": "string"}
     },
+    "biz-flow.prepare": {"options": {"--project": "path", "--docs-root": "path", "--module": "string", "--purpose": "string", "--confirm": "boolean"}},
+    "biz-flow.collect": {"options": {"--project": "path", "--docs-root": "path", "--run-id": "string", "--results": "path"}},
+    "biz-flow.accept": {"options": {"--project": "path", "--docs-root": "path", "--run-id": "string"}},
 }
 
 
@@ -1814,6 +1804,19 @@ BIZ_FLOW_RUN_MANIFEST_SCHEMA = _object({
     "entry_analyses", "module_results", "document_hashes", "report", "errors",
 ))
 
+# 3.x host handoff contract. Legacy run manifests remain separate and are
+# rejected by the new prepare/collect lifecycle.
+BIZ_FLOW_HANDOFF_SCHEMA = _object({
+    "protocol_version": {"const": "3.0"},
+    "run_id": NONEMPTY_STRING, "project_root": NONEMPTY_STRING,
+    "source_fingerprint": NONEMPTY_STRING, "mapping_hash": NONEMPTY_STRING,
+    "mode": {"enum": ["native", "serial", None]},
+    "status": {"enum": ["prepared", "awaiting_serial_choice", "analyzing", "collected", "accepted", "failed", "cancelled"]},
+    "parallel": {"type": "boolean"}, "degraded": {"type": "boolean"},
+    "completed_child_agents": {"type": "integer", "minimum": 0},
+    "tasks": _array(_object({"task_id": NONEMPTY_STRING, "entry_id": NONEMPTY_STRING, "module_id": NONEMPTY_STRING}, ("task_id", "entry_id", "module_id"), additional=True)),
+}, ("protocol_version", "run_id", "project_root", "source_fingerprint", "mapping_hash", "mode", "status", "parallel", "degraded", "completed_child_agents", "tasks"), additional=True)
+
 BIZ_FLOW_ERROR_SCHEMA = _object({
     "code": NONEMPTY_STRING,
     "condition": NONEMPTY_STRING,
@@ -2116,6 +2119,7 @@ CONTRACT_SCHEMAS = {
     "bru-api.version-lock": BRU_API_VERSION_LOCK_SCHEMA,
     "biz-flow.discovery": BIZ_FLOW_DISCOVERY_SCHEMA,
     "biz-flow.run-manifest": BIZ_FLOW_RUN_MANIFEST_SCHEMA,
+    "biz-flow.handoff": BIZ_FLOW_HANDOFF_SCHEMA,
     "biz-flow.entry-analysis": BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA,
     "biz-flow.module-map": BIZ_FLOW_MODULE_MAP_SCHEMA,
     "biz-flow.index": BIZ_FLOW_INDEX_SCHEMA,

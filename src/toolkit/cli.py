@@ -118,7 +118,7 @@ def _artifact_path(domain: str, command: str, arguments: list[str], stdout: str)
             "design-rules.yaml" if command == "generate" else "discovery.json"
         )
         return str(path) if path.is_file() else ""
-    if domain == "biz-flow" and command in {"discover", "review", "generate", "update"}:
+    if domain == "biz-flow" and command in {"discover", "prepare", "collect", "accept", "review", "generate", "update"}:
         project = _option_path(arguments, "--project", ".")
         docs_root = _project_relative_path(arguments, "--docs-root", project, "docs/biz-flow")
         if command == "review":
@@ -177,7 +177,7 @@ def _run_domain(domain: str, arguments: list[str], *, full: bool) -> tuple[dict[
         error.details_path = artifact
         return failure(f"{domain}.{command}", error), int(error.exit_code)
     data = _summary(output, diagnostics, full=full)
-    if domain == "biz-flow" and command in {"discover", "review", "generate", "update"}:
+    if domain == "biz-flow" and command in {"discover", "prepare", "collect", "accept", "review", "generate", "update"}:
         overview = _biz_flow_overview(output)
         if overview:
             data["overview"] = overview
