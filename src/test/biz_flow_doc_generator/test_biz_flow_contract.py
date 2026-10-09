@@ -58,13 +58,14 @@ class BizFlowContractTests(unittest.TestCase):
         return overview
 
     def test_registration_schema_and_generation(self) -> None:
+        from toolkit.biz_flow_doc_generator.documents import _diagram
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.project(root)
-            code, result = self.invoke("schema", "biz-flow.generate")
+            code, result = self.invoke("schema", "biz-flow.prepare")
             self.assertEqual(0, code)
             self.assertEqual(BIZ_FLOW_SCHEMA_VERSION, result["data"]["schema_version"])
-            self.assertIn("--commit", result["data"]["options"])
+            self.assertIn("--confirm", result["data"]["options"])
             code, result = self.invoke("schema", "biz-flow.discover")
             self.assertEqual(0, code)
             self.assertIn("--commit", result["data"]["options"])
@@ -74,41 +75,19 @@ class BizFlowContractTests(unittest.TestCase):
             code, result = self.invoke("schema", "biz-flow.report")
             self.assertEqual(0, code)
             self.assertEqual(int(BIZ_FLOW_SCHEMA_VERSION), result["data"]["schema_version"])
-
-            code, result = self.invoke("biz-flow", "init", "--project", str(root))
-            self.assertEqual(0, code, result)
-            code, result = self.invoke("biz-flow", "discover", "--project", str(root))
-            self.assertEqual(0, code, result)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
-            self.assertEqual(8, code, result)
             self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
-            self.assertEqual(0, code, result)
-            document = next((path for path in (root / "docs" / "biz-flow").glob("*.md") if path.name != "业务流程覆盖总览.md"))
-            self.assertTrue(document.is_file())
-            text = document.read_text(encoding="utf-8")
+            for arguments in ((), ("--allow-degraded",)):
+                code, result = self.invoke("biz-flow", "generate", "--project", str(root), *arguments)
+                self.assertEqual(8, code, result)
+                self.assertIn("was removed", result["error"]["message"])
+            entry = scan(root).entries[0]
+            text = _diagram(entry)
             self.assertIn("RESOURCE_NOT_FOUND", text)
             self.assertIn("sequenceDiagram", text)
             self.assertIn("autonumber", text)
-            self.assertIn("raise BusinessError", text)
             self.assertNotIn("else 成功", text)
-            self.assertIn("源码证据", text)
-
-            code, result = self.invoke("biz-flow", "check", "--project", str(root))
-            self.assertEqual(0, code, result)
-            self.assertTrue(result["ok"])
-            docs = root / "docs" / "biz-flow"
-            self.assertTrue((docs / "业务流程覆盖总览.md").is_file())
-            self.assertTrue((docs / "biz-flow-doc-generator-version.json").is_file())
-            self.assertEqual([], [path for path in docs.glob("*.json") if path.name != "biz-flow-doc-generator-version.json"])
-            version_path = docs / "biz-flow-doc-generator-version.json"
-            self.assertIsNone(json.loads(version_path.read_text(encoding="utf-8"))["source"]["git_commit"])
-            code, result = self.invoke("biz-flow", "verify", "--project", str(root))
-            self.assertEqual(0, code, result)
-            self.assertIsNone(json.loads(version_path.read_text(encoding="utf-8"))["source"]["git_commit"])
-            code, result = self.invoke("biz-flow", "verify", "--project", str(root))
-            self.assertEqual(0, code, result)
-            self.assertRegex(json.loads(version_path.read_text(encoding="utf-8"))["source"]["git_commit"], r"^[0-9a-f]{40}$")
+            version = json.loads((root / "docs/biz-flow/biz-flow-doc-generator-version.json").read_text(encoding="utf-8"))
+            self.assertIsNone(version["source"]["git_commit"])
 
     def _legacy_markdown_comparison_reports_fact_drift_without_a_score(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -275,12 +254,11 @@ class BizFlowContractTests(unittest.TestCase):
             root = Path(temporary)
             self.project(root)
             self.initialize_and_confirm(root)
-            generated_code, generated_result = self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
-            self.assertEqual(0, generated_code, generated_result)
             next((path for path in (root / "docs" / "biz-flow").glob("*.md") if path.name != "业务流程覆盖总览.md")).unlink()
-            code, result = self.invoke("biz-flow", "check", "--project", str(root))
+            code, result = self.invoke("biz-flow", "check", "--project", str(root), "--stage", "entries")
             self.assertEqual(8, code, result)
-            self.assertIn("Markdown overview or module document is missing", result["error"]["message"])
+            self.assertTrue(result["error"]["message"])
+            self.assertEqual("biz-flow.check", result["command"])
 
     def _legacy_check_rejects_wrong_but_well_formed_markdown_commit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -378,9 +356,9 @@ class BizFlowContractTests(unittest.TestCase):
             subprocess.run(["git", "add", "app.py"], cwd=root, check=True)
             subprocess.run(["git", "commit", "-qm", "caught and visible errors"], cwd=root, check=True)
             self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
-            self.assertEqual(0, code, result)
-            text = next((path for path in (root / "docs" / "biz-flow").glob("*.md") if path.name != "业务流程覆盖总览.md")).read_text(encoding="utf-8")
+            from toolkit.biz_flow_doc_generator.documents import render_module
+            result = scan(root)
+            text = render_module("resources", result.entries, result.git, result, comparison="new")
             self.assertIn("VISIBLE_ERROR", text)
             self.assertNotIn("CAUGHT_ERROR", text)
             self.assertNotIn("TOPSECRET", text)

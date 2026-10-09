@@ -17,4 +17,26 @@ def diagnose() -> tuple[dict[str, Any], bool]:
         "bruno": {"ok": shutil.which("bru") is not None, "required_for": "bru-api.run"},
     }
     required = ("python", "PyYAML", "pytest", "git")
+    import ast
+    from ..sequence_diagram_generator.adapters._tree import parser_for
+    fixtures = {
+        "java": b"class A { int f(){ return 1; } }",
+        "javascript": b"function f(){ return 1; }",
+        "typescript": b"function f(x:number):number { return x; }",
+        "go": b"package main\nfunc f() int { return 1 }",
+        "rust": b"fn f()->i32 { 1 }",
+    }
+    try:
+        ast.parse("async def f(x):\n    if x:\n        return x\n")
+        checks["sequence.python"] = {"ok": True, "required_for": "sequence-diagram-generator"}
+    except SyntaxError:
+        checks["sequence.python"] = {"ok": False, "required_for": "sequence-diagram-generator"}
+    for language, source in fixtures.items():
+        try:
+            root = parser_for(language).parse(source).root_node
+            checks[f"sequence.{language}"] = {"ok": not root.has_error, "required_for": "sequence-diagram-generator"}
+        except Exception as exc:
+            checks[f"sequence.{language}"] = {"ok": False, "required_for": "sequence-diagram-generator", "diagnostic": str(exc)}
+    checks["mermaid"] = {"ok": shutil.which("mmdc") is not None, "required_for": "sequence-diagram-generator.render"}
+    checks["feishu"] = {"ok": shutil.which("lark-cli") is not None, "required_for": "sequence-diagram-generator.publish (host authentication and double export also required)"}
     return {"checks": checks}, all(checks[name]["ok"] for name in required)

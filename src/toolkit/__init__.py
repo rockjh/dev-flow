@@ -1,3 +1,3 @@
 """Shared runtime for the devflow development skills."""
 
-__version__ = "8.1.0"
+__version__ = "8.2.0"

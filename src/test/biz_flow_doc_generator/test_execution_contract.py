@@ -22,23 +22,17 @@ from toolkit.biz_flow_doc_generator.validation import validate_entry_analysis
 from toolkit.core.agents import ClaudeAdapter, CodexAdapter
 
 
-def test_builtin_probe_does_not_require_child_capability_before_execution(monkeypatch) -> None:
+def test_removed_builtin_probe_never_discovers_or_starts_an_executor(monkeypatch) -> None:
     class Adapter:
-        name = "test"
-
         def probe(self):
-            return {"read_only_source": True, "brokered_module_writes": True}
-
+            raise AssertionError("removed hidden executor probe must not run")
         def create_executor(self, run_id):
-            return object()
-
-    monkeypatch.setattr(
-        "toolkit.biz_flow_doc_generator.orchestration.BUILTIN_AGENT_ADAPTERS",
-        (Adapter(),),
-    )
+            raise AssertionError("removed hidden executor must not start")
+    monkeypatch.setattr("toolkit.biz_flow_doc_generator.orchestration.BUILTIN_AGENT_ADAPTERS", (Adapter(),))
     executor, info = discover_agent_executor("run")
-    assert executor is not None
-    assert info["capabilities"] == {"read_only_source": True, "brokered_module_writes": True}
+    assert executor is None
+    assert info["type"] == "unavailable"
+    assert info["capabilities"] == {}
 
 
 def _scan() -> ScanResult:

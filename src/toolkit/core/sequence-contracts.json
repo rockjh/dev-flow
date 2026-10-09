@@ -1,0 +1,2887 @@
+{
+  "sequence-diagram-generator.project-context": {
+    "contract": "sequence-diagram-generator.project-context",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "assets": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "identity": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project",
+        "assets",
+        "state",
+        "identity",
+        "domain"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.source-file": {
+    "contract": "sequence-diagram-generator.source-file",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "digest",
+        "language",
+        "size"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.source-snapshot": {
+    "contract": "sequence-diagram-generator.source-snapshot",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.source-file"
+          }
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "git_commit": {
+          "type": "string"
+        },
+        "git_dirty": {
+          "type": "boolean"
+        },
+        "config_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "files",
+        "fingerprint",
+        "git_commit",
+        "git_dirty",
+        "config_digest"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.requirement-input": {
+    "contract": "sequence-diagram-generator.requirement-input",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "source_anchor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value",
+        "source_anchor"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.requirement-segment": {
+    "contract": "sequence-diagram-generator.requirement-segment",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "segment_id": {
+          "type": "string"
+        },
+        "anchor": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "segment_id",
+        "anchor",
+        "text",
+        "digest"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.requirement-snapshot": {
+    "contract": "sequence-diagram-generator.requirement-snapshot",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "locator": {
+          "type": "string"
+        },
+        "anchor": {
+          "type": "string"
+        },
+        "read_at": {
+          "type": "string"
+        },
+        "raw_digest": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.requirement-segment"
+          }
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "locator",
+        "anchor",
+        "read_at",
+        "raw_digest",
+        "digest",
+        "text",
+        "segments",
+        "status"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.adapter-capabilities": {
+    "contract": "sequence-diagram-generator.adapter-capabilities",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "language": {
+          "type": "string"
+        },
+        "parser": {
+          "type": "string"
+        },
+        "parser_version": {
+          "type": "string"
+        },
+        "grammar_version": {
+          "type": "string"
+        },
+        "syntax": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "registrations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "boundaries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "verified_fixtures": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "language",
+        "parser",
+        "parser_version",
+        "grammar_version",
+        "syntax",
+        "registrations",
+        "boundaries",
+        "verified_fixtures"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.evidence": {
+    "contract": "sequence-diagram-generator.evidence",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "evidence_id": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "anchor": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "symbol_id": {
+          "type": "string"
+        },
+        "boundary": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "origin",
+        "path",
+        "anchor",
+        "digest",
+        "symbol_id",
+        "boundary",
+        "text"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.source-symbol": {
+    "contract": "sequence-diagram-generator.source-symbol",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "symbol_id": {
+          "type": "string"
+        },
+        "qualified_name": {
+          "type": "string"
+        },
+        "signature": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "start_line": {
+          "type": "integer"
+        },
+        "end_line": {
+          "type": "integer"
+        },
+        "selection_type": {
+          "type": "string"
+        },
+        "registration_evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.evidence"
+          }
+        }
+      },
+      "required": [
+        "symbol_id",
+        "qualified_name",
+        "signature",
+        "language",
+        "path",
+        "start_line",
+        "end_line",
+        "selection_type",
+        "registration_evidence"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.analysis-scope": {
+    "contract": "sequence-diagram-generator.analysis-scope",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "$ref": "sequence-diagram-generator.source-symbol"
+        },
+        "entry_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol",
+        "entry_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.call-context": {
+    "contract": "sequence-diagram-generator.call-context",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "context_id": {
+          "type": "string"
+        },
+        "call_site_id": {
+          "type": "string"
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "recursive": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "context_id",
+        "call_site_id",
+        "path",
+        "recursive"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.control-node": {
+    "contract": "sequence-diagram-generator.control-node",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "control_id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "exit_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "predecessors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "successors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "condition": {
+          "type": "string"
+        },
+        "merge_id": {
+          "type": "string"
+        },
+        "termination": {
+          "type": "string"
+        },
+        "context_id": {
+          "type": "string"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "transfer_boundary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "control_id",
+        "kind",
+        "parent_id",
+        "exit_ids",
+        "predecessors",
+        "successors",
+        "condition",
+        "merge_id",
+        "termination",
+        "context_id",
+        "evidence_ids",
+        "transfer_boundary"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.flow-step": {
+    "contract": "sequence-diagram-generator.flow-step",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "step_id": {
+          "type": "string"
+        },
+        "context_id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "sender": {
+          "type": "string"
+        },
+        "receiver": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "control_exit": {
+          "type": "string"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "completion": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_id",
+        "context_id",
+        "kind",
+        "sender",
+        "receiver",
+        "label",
+        "control_exit",
+        "evidence_ids",
+        "dependencies",
+        "completion"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.external-operation": {
+    "contract": "sequence-diagram-generator.external-operation",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string"
+        },
+        "call_site_id": {
+          "type": "string"
+        },
+        "receiver": {
+          "type": "string"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resolution": {
+          "type": "string",
+          "enum": [
+            "project",
+            "boundary",
+            "summary",
+            "unknown"
+          ]
+        },
+        "boundary": {
+          "type": "string"
+        },
+        "side_effect": {
+          "type": "string"
+        },
+        "completion": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_id",
+        "call_site_id",
+        "receiver",
+        "evidence_ids",
+        "resolution",
+        "boundary",
+        "side_effect",
+        "completion"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.coverage-gap": {
+    "contract": "sequence-diagram-generator.coverage-gap",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "reason_code": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "anchor": {
+          "type": "string"
+        },
+        "scope_id": {
+          "type": "string"
+        },
+        "exit_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "critical": {
+          "type": "boolean"
+        },
+        "basis": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason_code",
+        "path",
+        "anchor",
+        "scope_id",
+        "exit_ids",
+        "critical",
+        "basis"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.sequence-step": {
+    "contract": "sequence-diagram-generator.sequence-step",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "step_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.sequence-arm": {
+    "contract": "sequence-diagram-generator.sequence-arm",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "exit_id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "sequence-diagram-generator.sequence-step"
+              },
+              {
+                "$ref": "sequence-diagram-generator.sequence-block"
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "exit_id",
+        "label",
+        "items"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.sequence-block": {
+    "contract": "sequence-diagram-generator.sequence-block",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "block_id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "sequence",
+            "alt",
+            "opt",
+            "loop",
+            "par"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "arms": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.sequence-arm"
+          }
+        }
+      },
+      "required": [
+        "block_id",
+        "kind",
+        "label",
+        "arms"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.source-order": {
+    "contract": "sequence-diagram-generator.source-order",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "block_id": {
+          "type": "string"
+        },
+        "exit_id": {
+          "type": "string"
+        },
+        "item_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "block_id",
+        "exit_id",
+        "item_ids",
+        "label"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.control-flow-edge": {
+    "contract": "sequence-diagram-generator.control-flow-edge",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "type": "string"
+        },
+        "target_id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "context_id": {
+          "type": "string"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "source_id",
+        "target_id",
+        "kind",
+        "context_id",
+        "evidence_ids"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.scope-analysis": {
+    "contract": "sequence-diagram-generator.scope-analysis",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "sequence-diagram-generator.analysis-scope"
+        },
+        "symbols": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.source-symbol"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.evidence"
+          }
+        },
+        "contexts": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.call-context"
+          }
+        },
+        "controls": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.control-node"
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.flow-step"
+          }
+        },
+        "external": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.external-operation"
+          }
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.coverage-gap"
+          }
+        },
+        "sequence": {
+          "$ref": "sequence-diagram-generator.sequence-block"
+        },
+        "ordering": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.source-order"
+          }
+        },
+        "control_flow": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.control-flow-edge"
+          }
+        }
+      },
+      "required": [
+        "scope",
+        "symbols",
+        "evidence",
+        "contexts",
+        "controls",
+        "steps",
+        "external",
+        "gaps",
+        "sequence",
+        "ordering",
+        "control_flow"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.flow-model": {
+    "contract": "sequence-diagram-generator.flow-model",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "scopes": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.scope-analysis"
+          }
+        },
+        "source_fingerprint": {
+          "type": "string"
+        },
+        "adapter_fingerprint": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "scopes",
+        "source_fingerprint",
+        "adapter_fingerprint"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.discovery-catalog": {
+    "contract": "sequence-diagram-generator.discovery-catalog",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "symbols": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.source-symbol"
+          }
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.coverage-gap"
+          }
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.adapter-capabilities"
+          }
+        }
+      },
+      "required": [
+        "symbols",
+        "gaps",
+        "capabilities"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.requirement": {
+    "contract": "sequence-diagram-generator.requirement",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "requirement_id": {
+          "type": "string"
+        },
+        "segment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "implemented",
+            "partially_implemented",
+            "requirement_only",
+            "conflict",
+            "unresolved",
+            "not_applicable"
+          ]
+        },
+        "implementation_assessment": {
+          "type": "string",
+          "enum": [
+            "checked",
+            "checked_not_found",
+            "not_evaluated"
+          ]
+        },
+        "difference": {
+          "type": "string"
+        },
+        "unresolved_reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requirement_id",
+        "segment_ids",
+        "text",
+        "status",
+        "implementation_assessment",
+        "difference",
+        "unresolved_reason"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.requirement-link": {
+    "contract": "sequence-diagram-generator.requirement-link",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "requirement_id": {
+          "type": "string"
+        },
+        "target_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "requirement_id",
+        "target_ids",
+        "evidence_ids"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.proposed-step": {
+    "contract": "sequence-diagram-generator.proposed-step",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "step_id": {
+          "type": "string"
+        },
+        "requirement_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sender": {
+          "type": "string"
+        },
+        "receiver": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_id",
+        "requirement_ids",
+        "sender",
+        "receiver",
+        "label",
+        "kind"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.proposed-control": {
+    "contract": "sequence-diagram-generator.proposed-control",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "control_id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "requirement_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "condition": {
+          "type": "string"
+        },
+        "exit_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "control_id",
+        "kind",
+        "requirement_ids",
+        "condition",
+        "exit_ids"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.business-label": {
+    "contract": "sequence-diagram-generator.business-label",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "target_id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "explanation": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_id",
+        "label",
+        "evidence_ids",
+        "explanation"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.semantic-annotations": {
+    "contract": "sequence-diagram-generator.semantic-annotations",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "labels": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.business-label"
+          }
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.requirement"
+          }
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.requirement-link"
+          }
+        },
+        "proposed_steps": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.proposed-step"
+          }
+        },
+        "excluded_segments": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "proposed_controls": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.proposed-control"
+          }
+        },
+        "proposed_sequence": {
+          "anyOf": [
+            {
+              "$ref": "sequence-diagram-generator.sequence-block"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "labels",
+        "requirements",
+        "links",
+        "proposed_steps",
+        "excluded_segments",
+        "proposed_controls",
+        "proposed_sequence"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.host-task": {
+    "contract": "sequence-diagram-generator.host-task",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string"
+        },
+        "scope_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "segment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "task_id",
+        "scope_ids",
+        "segment_ids",
+        "questions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.task-package": {
+    "contract": "sequence-diagram-generator.task-package",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.host-task"
+          }
+        },
+        "model_hash": {
+          "type": "string"
+        },
+        "requirement_hash": {
+          "type": "string"
+        },
+        "execution_mode": {
+          "type": "string"
+        },
+        "execution_approval": {
+          "type": "string"
+        },
+        "scope_fingerprint": {
+          "type": "string"
+        },
+        "facts": {
+          "$ref": "sequence-diagram-generator.flow-model"
+        },
+        "requirements": {
+          "anyOf": [
+            {
+              "$ref": "sequence-diagram-generator.requirement-snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "submission_contract": {
+          "type": "string"
+        },
+        "stop_conditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "run_id",
+        "tasks",
+        "model_hash",
+        "requirement_hash",
+        "execution_mode",
+        "execution_approval",
+        "scope_fingerprint",
+        "facts",
+        "requirements",
+        "submission_contract",
+        "stop_conditions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.host-receipt": {
+    "contract": "sequence-diagram-generator.host-receipt",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string"
+        },
+        "package_hash": {
+          "type": "string"
+        },
+        "result_hash": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "child_agent_id": {
+          "type": "string"
+        },
+        "tool_references": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "ended_at": {
+          "type": "string"
+        },
+        "reclaimed_at": {
+          "type": "string"
+        },
+        "execution_approval": {
+          "type": "string"
+        },
+        "scope_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "degraded": {
+          "type": "boolean"
+        },
+        "parallel": {
+          "type": "boolean"
+        },
+        "child_count": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "task_id",
+        "package_hash",
+        "result_hash",
+        "status",
+        "child_agent_id",
+        "tool_references",
+        "started_at",
+        "ended_at",
+        "reclaimed_at",
+        "execution_approval",
+        "scope_ids",
+        "degraded",
+        "parallel",
+        "child_count"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.host-task-result": {
+    "contract": "sequence-diagram-generator.host-task-result",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "type": "string"
+        },
+        "annotations": {
+          "$ref": "sequence-diagram-generator.semantic-annotations"
+        },
+        "evidence_queries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "task_id",
+        "annotations",
+        "evidence_queries",
+        "diagnostics"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.host-submission": {
+    "contract": "sequence-diagram-generator.host-submission",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "package_hash": {
+          "type": "string"
+        },
+        "receipts": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.host-receipt"
+          }
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.host-task-result"
+          }
+        }
+      },
+      "required": [
+        "run_id",
+        "package_hash",
+        "receipts",
+        "results"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.rule-result": {
+    "contract": "sequence-diagram-generator.rule-result",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "rule_id": {
+          "type": "string"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule_id",
+        "passed",
+        "detail"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.validation-report": {
+    "contract": "sequence-diagram-generator.validation-report",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.rule-result"
+          }
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.coverage-gap"
+          }
+        }
+      },
+      "required": [
+        "rules",
+        "gaps"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.requirement-report": {
+    "contract": "sequence-diagram-generator.requirement-report",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.requirement"
+          }
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.requirement-link"
+          }
+        },
+        "candidate_segments": {
+          "type": "integer"
+        },
+        "processed_segments": {
+          "type": "integer"
+        },
+        "implementation_consistency": {
+          "type": "string"
+        },
+        "validation": {
+          "$ref": "sequence-diagram-generator.validation-report"
+        }
+      },
+      "required": [
+        "requirements",
+        "links",
+        "candidate_segments",
+        "processed_segments",
+        "implementation_consistency",
+        "validation"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.diagram-position": {
+    "contract": "sequence-diagram-generator.diagram-position",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "target_id": {
+          "type": "string"
+        },
+        "scene": {
+          "type": "string"
+        },
+        "tree_path": {
+          "type": "string"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "target_id",
+        "scene",
+        "tree_path",
+        "evidence_ids"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.scene-document": {
+    "contract": "sequence-diagram-generator.scene-document",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "filename": {
+          "type": "string"
+        },
+        "scope_id": {
+          "type": "string"
+        },
+        "view": {
+          "type": "string"
+        },
+        "sequence": {
+          "$ref": "sequence-diagram-generator.sequence-block"
+        },
+        "mermaid": {
+          "type": "string"
+        },
+        "markdown": {
+          "type": "string"
+        },
+        "positions": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.diagram-position"
+          }
+        }
+      },
+      "required": [
+        "filename",
+        "scope_id",
+        "view",
+        "sequence",
+        "mermaid",
+        "markdown",
+        "positions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.document-bundle": {
+    "contract": "sequence-diagram-generator.document-bundle",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "scenes": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.scene-document"
+          }
+        },
+        "matrix": {
+          "type": "string"
+        },
+        "overview": {
+          "type": "string"
+        },
+        "requirement_report": {
+          "$ref": "sequence-diagram-generator.requirement-report"
+        }
+      },
+      "required": [
+        "scenes",
+        "matrix",
+        "overview",
+        "requirement_report"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.render-report": {
+    "contract": "sequence-diagram-generator.render-report",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "passed",
+            "not_run",
+            "failed"
+          ]
+        },
+        "renderer": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "content_hashes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "renderer",
+        "version",
+        "content_hashes",
+        "diagnostics"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.verification-record": {
+    "contract": "sequence-diagram-generator.verification-record",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "model_digest": {
+          "type": "string"
+        },
+        "document_digest": {
+          "type": "string"
+        },
+        "annotations_digest": {
+          "type": "string"
+        },
+        "validation_digest": {
+          "type": "string"
+        },
+        "reproducible": {
+          "type": "boolean"
+        },
+        "verified_digest": {
+          "type": "string"
+        },
+        "render": {
+          "$ref": "sequence-diagram-generator.render-report"
+        }
+      },
+      "required": [
+        "model_digest",
+        "document_digest",
+        "annotations_digest",
+        "validation_digest",
+        "reproducible",
+        "verified_digest",
+        "render"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.artifact-digest": {
+    "contract": "sequence-diagram-generator.artifact-digest",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "digest"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.run-manifest": {
+    "contract": "sequence-diagram-generator.run-manifest",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "project_identity": {
+          "type": "string"
+        },
+        "project_path": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "code",
+            "requirement"
+          ]
+        },
+        "intent": {
+          "type": "string",
+          "enum": [
+            "implementation",
+            "proposal"
+          ]
+        },
+        "execution_mode": {
+          "type": "string",
+          "enum": [
+            "",
+            "native",
+            "serial"
+          ]
+        },
+        "execution_approval": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "discovered",
+            "prepared",
+            "collected",
+            "verified",
+            "accepted",
+            "failed"
+          ]
+        },
+        "tool_version": {
+          "type": "string"
+        },
+        "skill_version": {
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "source_fingerprint": {
+          "type": "string"
+        },
+        "requirement_hash": {
+          "type": "string"
+        },
+        "adapter_fingerprint": {
+          "type": "string"
+        },
+        "expected_baseline_digest": {
+          "type": "string"
+        },
+        "selected_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.artifact-digest"
+          }
+        },
+        "operation_errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "created_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "project_identity",
+        "project_path",
+        "mode",
+        "intent",
+        "execution_mode",
+        "execution_approval",
+        "state",
+        "tool_version",
+        "skill_version",
+        "schema_version",
+        "source_fingerprint",
+        "requirement_hash",
+        "adapter_fingerprint",
+        "expected_baseline_digest",
+        "selected_ids",
+        "artifacts",
+        "operation_errors",
+        "created_at"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.generated-asset": {
+    "contract": "sequence-diagram-generator.generated-asset",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "scene": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "digest",
+        "scene"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.accepted-baseline": {
+    "contract": "sequence-diagram-generator.accepted-baseline",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer"
+        },
+        "accepted_run_id": {
+          "type": "string",
+          "pattern": "^(|[0-9a-f]{32})$"
+        },
+        "source_fingerprint": {
+          "type": "string"
+        },
+        "requirement_fingerprint": {
+          "type": "string"
+        },
+        "scope_fingerprint": {
+          "type": "string"
+        },
+        "verified_digest": {
+          "type": "string"
+        },
+        "generated_assets": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.generated-asset"
+          }
+        },
+        "skill": {
+          "type": "string"
+        },
+        "skill_version": {
+          "type": "string"
+        },
+        "artifact_root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "revision",
+        "accepted_run_id",
+        "source_fingerprint",
+        "requirement_fingerprint",
+        "scope_fingerprint",
+        "verified_digest",
+        "generated_assets",
+        "skill",
+        "skill_version",
+        "artifact_root"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.commit-file": {
+    "contract": "sequence-diagram-generator.commit-file",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "old_digest": {
+          "type": "string"
+        },
+        "new_digest": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "scene": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "old_digest",
+        "new_digest",
+        "content",
+        "scene"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.commit-plan": {
+    "contract": "sequence-diagram-generator.commit-plan",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "project_path": {
+          "type": "string"
+        },
+        "baseline_digest": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.commit-file"
+          }
+        },
+        "parent": {
+          "$ref": "sequence-diagram-generator.accepted-baseline"
+        },
+        "next_baseline": {
+          "$ref": "sequence-diagram-generator.accepted-baseline"
+        }
+      },
+      "required": [
+        "run_id",
+        "project_path",
+        "baseline_digest",
+        "files",
+        "parent",
+        "next_baseline"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.commit-journal": {
+    "contract": "sequence-diagram-generator.commit-journal",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string"
+        },
+        "plan": {
+          "$ref": "sequence-diagram-generator.commit-plan"
+        },
+        "files_written": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "baseline_written": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "phase",
+        "plan",
+        "files_written",
+        "baseline_written"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.init-request": {
+    "contract": "sequence-diagram-generator.init-request",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "sequence-diagram-generator.project-context"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.discover-request": {
+    "contract": "sequence-diagram-generator.discover-request",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "sequence-diagram-generator.project-context"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "entry_selectors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requirement_input": {
+          "anyOf": [
+            {
+              "$ref": "sequence-diagram-generator.requirement-input"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "project",
+        "mode",
+        "intent",
+        "entry_selectors",
+        "requirement_input"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.prepare-request": {
+    "contract": "sequence-diagram-generator.prepare-request",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "sequence-diagram-generator.project-context"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "selected_entry_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "all_entries": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
+        },
+        "execution_mode": {
+          "type": "string"
+        },
+        "execution_approval": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project",
+        "run_id",
+        "selected_entry_ids",
+        "all_entries",
+        "confirm",
+        "execution_mode",
+        "execution_approval"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.collect-request": {
+    "contract": "sequence-diagram-generator.collect-request",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "sequence-diagram-generator.project-context"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "results_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "project",
+        "run_id",
+        "results_path"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.check-request": {
+    "contract": "sequence-diagram-generator.check-request",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "sequence-diagram-generator.project-context"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "full": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "project",
+        "run_id",
+        "stage",
+        "full"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.verify-request": {
+    "contract": "sequence-diagram-generator.verify-request",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "sequence-diagram-generator.project-context"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "project",
+        "run_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.accept-request": {
+    "contract": "sequence-diagram-generator.accept-request",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "sequence-diagram-generator.project-context"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "project",
+        "run_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.domain-command-result": {
+    "contract": "sequence-diagram-generator.domain-command-result",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "data": {},
+        "artifact_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "data",
+        "artifact_path"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.board-node": {
+    "contract": "sequence-diagram-generator.board-node",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        },
+        "fill": {
+          "type": "string"
+        },
+        "border": {
+          "type": "string"
+        },
+        "font_size": {
+          "type": "integer"
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "text_color": {
+          "type": "string"
+        },
+        "shape": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "role",
+        "x",
+        "y",
+        "width",
+        "height",
+        "text",
+        "fill",
+        "border",
+        "font_size",
+        "bold",
+        "evidence_ids",
+        "text_color",
+        "shape"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.board-connector": {
+    "contract": "sequence-diagram-generator.board-connector",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "connector_id": {
+          "type": "string"
+        },
+        "start_id": {
+          "type": "string"
+        },
+        "end_id": {
+          "type": "string"
+        },
+        "start_anchor": {
+          "type": "string"
+        },
+        "end_anchor": {
+          "type": "string"
+        },
+        "caption": {
+          "type": "string"
+        },
+        "target_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "connector_id",
+        "start_id",
+        "end_id",
+        "start_anchor",
+        "end_anchor",
+        "caption",
+        "target_ids"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.native-board-scene": {
+    "contract": "sequence-diagram-generator.native-board-scene",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "scene_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.board-node"
+          }
+        },
+        "connectors": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.board-connector"
+          }
+        },
+        "positions": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.diagram-position"
+          }
+        }
+      },
+      "required": [
+        "scene_id",
+        "title",
+        "width",
+        "height",
+        "nodes",
+        "connectors",
+        "positions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.native-board-bundle": {
+    "contract": "sequence-diagram-generator.native-board-bundle",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "scenes": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.native-board-scene"
+          }
+        },
+        "accepted_digest": {
+          "type": "string"
+        },
+        "reference_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "scenes",
+        "accepted_digest",
+        "reference_digest"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.native-style-binding": {
+    "contract": "sequence-diagram-generator.native-style-binding",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "shape_id": {
+          "type": "string"
+        },
+        "text_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "shape_id",
+        "text_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.native-node-style": {
+    "contract": "sequence-diagram-generator.native-node-style",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "fill": {
+          "type": "string"
+        },
+        "border": {
+          "type": "string"
+        },
+        "font_size": {
+          "type": "integer"
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "text_color": {
+          "type": "string"
+        },
+        "shape": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "width",
+        "height",
+        "fill",
+        "border",
+        "font_size",
+        "bold",
+        "text_color",
+        "shape"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.reference-bundle": {
+    "contract": "sequence-diagram-generator.reference-bundle",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "raw_path": {
+          "type": "string"
+        },
+        "preview_path": {
+          "type": "string"
+        },
+        "raw_digest": {
+          "type": "string"
+        },
+        "preview_digest": {
+          "type": "string"
+        },
+        "captured_at": {
+          "type": "string"
+        },
+        "visual_reference": {
+          "type": "string"
+        },
+        "style_bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.native-style-binding"
+          }
+        },
+        "node_styles": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.native-node-style"
+          }
+        }
+      },
+      "required": [
+        "source",
+        "raw_path",
+        "preview_path",
+        "raw_digest",
+        "preview_digest",
+        "captured_at",
+        "visual_reference",
+        "style_bindings",
+        "node_styles"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.published-object": {
+    "contract": "sequence-diagram-generator.published-object",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "scene_id": {
+          "type": "string"
+        },
+        "board_id": {
+          "type": "string"
+        },
+        "node_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "written_digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "scene_id",
+        "board_id",
+        "node_ids",
+        "written_digest"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.board-export": {
+    "contract": "sequence-diagram-generator.board-export",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "scene_id": {
+          "type": "string"
+        },
+        "local_native_path": {
+          "type": "string"
+        },
+        "local_preview_path": {
+          "type": "string"
+        },
+        "remote_native_path": {
+          "type": "string"
+        },
+        "remote_preview_path": {
+          "type": "string"
+        },
+        "local_native_digest": {
+          "type": "string"
+        },
+        "local_preview_digest": {
+          "type": "string"
+        },
+        "remote_native_digest": {
+          "type": "string"
+        },
+        "remote_preview_digest": {
+          "type": "string"
+        },
+        "visual_review_reference": {
+          "type": "string"
+        },
+        "visual_review_passed": {
+          "type": "boolean"
+        },
+        "comparison_reference": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "scene_id",
+        "local_native_path",
+        "local_preview_path",
+        "remote_native_path",
+        "remote_preview_path",
+        "local_native_digest",
+        "local_preview_digest",
+        "remote_native_digest",
+        "remote_preview_digest",
+        "visual_review_reference",
+        "visual_review_passed",
+        "comparison_reference"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.publication-manifest": {
+    "contract": "sequence-diagram-generator.publication-manifest",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "publication_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "accepted_digest": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "write_scope": {
+          "type": "string"
+        },
+        "execution_approval": {
+          "type": "string"
+        },
+        "reference": {
+          "$ref": "sequence-diagram-generator.reference-bundle"
+        },
+        "layout_digest": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.published-object"
+          }
+        },
+        "remote_revision": {
+          "type": "string"
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parent_publication_id": {
+          "type": "string"
+        },
+        "expected_remote_digest": {
+          "type": "string"
+        },
+        "owned_objects": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.published-object"
+          }
+        }
+      },
+      "required": [
+        "publication_id",
+        "run_id",
+        "accepted_digest",
+        "target",
+        "write_scope",
+        "execution_approval",
+        "reference",
+        "layout_digest",
+        "state",
+        "objects",
+        "remote_revision",
+        "diagnostics",
+        "parent_publication_id",
+        "expected_remote_digest",
+        "owned_objects"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.publication-receipt": {
+    "contract": "sequence-diagram-generator.publication-receipt",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "publication_id": {
+          "type": "string"
+        },
+        "accepted_digest": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "write_scope": {
+          "type": "string"
+        },
+        "execution_approval": {
+          "type": "string"
+        },
+        "layout_digest": {
+          "type": "string"
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.published-object"
+          }
+        },
+        "remote_revision": {
+          "type": "string"
+        },
+        "exports": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.board-export"
+          }
+        },
+        "status": {
+          "type": "string"
+        },
+        "remote_precondition_digest": {
+          "type": "string"
+        },
+        "remote_after_digest": {
+          "type": "string"
+        },
+        "write_tool_references": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "publication_id",
+        "accepted_digest",
+        "target",
+        "write_scope",
+        "execution_approval",
+        "layout_digest",
+        "objects",
+        "remote_revision",
+        "exports",
+        "status",
+        "remote_precondition_digest",
+        "remote_after_digest",
+        "write_tool_references"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.publish-request": {
+    "contract": "sequence-diagram-generator.publish-request",
+    "schema_version": "1",
+    "document": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "sequence-diagram-generator.project-context"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "write_scope": {
+          "type": "string"
+        },
+        "execution_approval": {
+          "type": "string"
+        },
+        "reference_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "receipt_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "project",
+        "run_id",
+        "stage",
+        "target",
+        "write_scope",
+        "execution_approval",
+        "reference_path",
+        "receipt_path"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

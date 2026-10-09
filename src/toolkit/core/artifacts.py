@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -14,17 +15,67 @@ from .redaction import redact
 
 SKILL_VERSION = "1.0.0"
 DOMAIN_SKILL_VERSIONS = {"biz-flow": "3.0.0", "bru-api": "1.0.0", "e2e": "1.0.0"}
+DOMAIN_SKILL_VERSIONS["sequence-diagram-generator"] = "1.0.0"
 VERSION_FILES = {
     "biz-flow": "docs/biz-flow/biz-flow-doc-generator-version.json",
     "bru-api": "qa/contracts/bru-api-test-generator-version.json",
     "e2e": "analysis/e2e-test-generator-version.json",
+    "sequence-diagram-generator": "docs/sequence-diagram/sequence-diagram-generator-version.json",
 }
 SKILL_NAMES = {
     "biz-flow": "biz-flow-doc-generator",
     "bru-api": "bru-api-test-generator",
     "e2e": "e2e-test-generator",
+    "sequence-diagram-generator": "sequence-diagram-generator",
 }
 ARTIFACT_ROOTS = {"biz-flow": "docs/biz-flow", "bru-api": "qa/contracts", "e2e": "analysis"}
+ARTIFACT_ROOTS["sequence-diagram-generator"] = "docs/sequence-diagram"
+
+
+class ProjectDomainLock:
+    """Nonblocking OS lock. A surviving lock file is not a surviving lock."""
+
+    def __init__(self, project_root: Path, domain: str):
+        identity = os.path.normcase(str(project_root.resolve())) + "\0" + domain
+        key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        self.path = state_root() / "locks" / f"{key}.lock"
+        self._stream = None
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        stream = self.path.open("a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                if stream.seek(0, os.SEEK_END) == 0:
+                    stream.write(b"\0")
+                    stream.flush()
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            stream.close()
+            raise DevflowError("GATE_FAILED", "concurrent project/domain operation", ExitCode.GATE_FAILED,
+                               "Retry after the other operation releases its OS lock.") from exc
+        self._stream = stream
+        return self
+
+    def __exit__(self, *_):
+        stream = self._stream
+        if stream is not None:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            finally:
+                stream.close()
+                self._stream = None
 
 
 def version_file(project_root: Path, domain: str) -> Path:

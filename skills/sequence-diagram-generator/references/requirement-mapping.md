@@ -1,0 +1,9 @@
+# Requirement mapping
+
+Use requirement mode with exactly one of `--requirement-file`, `--requirement-url`, or `--requirement-text`. Local files may be UTF-8 text, Markdown or HTML exports; explicit outside-project files are permitted. Proprietary/authenticated sources require an authorized host-produced text snapshot and `--source-anchor`; do not treat PDF/Office bytes as text. Ordinary HTTP(S) input has size, timeout and redirect-scope limits and never executes scripts. Verify uses the frozen snapshot without silently fetching a newer version.
+
+Candidate source sections must each map to requirement items or evidence-backed exclusions. Host items may merge/split sections; links are many-to-many and can cite actual steps, messages, operations, source symbols or exits. Similar wording alone never proves implementation. A proposed step/control/exit uses the source segments of its declared R-IDs as proof. Code targets use only their own code proofs. Proposal links cannot establish implemented status; partial/conflict claims still need actual code targets and code evidence.
+
+Implemented requires complete code evidence. Partial implementation records remaining rules. Requirement-only records `checked_not_found` only after sufficiently complete code analysis; otherwise use `not_evaluated`. Conflict needs a clear target rule for proposal acceptance. Unresolved source/rules/scope fail affected units. Not-applicable has a reason and separate accounting.
+
+Proposal intent can accept clear pending work. Implementation intent cannot pass partial, requirement-only or conflicting implementation. Current diagrams use only code facts. Proposed steps/controls cite R-IDs, show pending status and use a separate coverage denominator. No-code requirements may deliver a proposal with implementation explicitly unassessed.

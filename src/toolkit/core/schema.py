@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import json
+from pathlib import Path
 from copy import deepcopy
 from typing import Any
 
@@ -10,6 +12,7 @@ from typing import Any
 BRU_API_SCHEMA_VERSION = "6.2"
 BIZ_FLOW_SCHEMA_VERSION = "4"
 E2E_GATE_SCHEMA_VERSION = "10"
+SEQUENCE_SCHEMA_VERSION = "1"
 E2E_RUNTIME_CLASSIFICATIONS = (
     "protocol_available",
     "service_not_found",
@@ -2143,10 +2146,39 @@ CONTRACT_SCHEMAS = {
 }
 
 
+CONTRACT_SCHEMAS.update(json.loads(Path(__file__).with_name("sequence-contracts.json").read_text(encoding="utf-8")))
+CONTRACT_SCHEMAS["sequence-diagram-generator.domain-command-result"] = {
+    "contract": "sequence-diagram-generator.domain-command-result", "schema_version": SEQUENCE_SCHEMA_VERSION,
+    "document": {"type": "object", "properties": {
+        "summary": {"type": "string"}, "data": {"type": "object"}, "artifact_path": {"type": "string"}},
+        "required": ["summary", "data", "artifact_path"], "additionalProperties": False}}
+for _command, _options in {
+    "init": {},
+    "discover": {"--mode": "code|requirement", "--intent": "implementation|proposal", "--entry": "string[]",
+                 "--requirement-file": "path", "--requirement-url": "url", "--requirement-text": "string", "--source-anchor": "string"},
+    "prepare": {"--run-id": "uuid-hex", "--entry-id": "string[]", "--all-entries": "boolean", "--confirm": "boolean",
+                "--execution-mode": "native|serial", "--execution-approval": "string"},
+    "collect": {"--run-id": "uuid-hex", "--results": "path"},
+    "check": {"--run-id": "uuid-hex", "--stage": "entries|delivery", "--full": "boolean"},
+    "verify": {"--run-id": "uuid-hex"},
+    "accept": {"--run-id": "uuid-hex"},
+    "publish": {"--run-id": "uuid-hex", "--stage": "prepare|collect|check", "--target": "url-or-id", "--write-scope": "string",
+                "--execution-approval": "string", "--reference-bundle": "path", "--receipt": "path"},
+}.items():
+    COMMAND_SCHEMAS[f"sequence-diagram-generator.{_command}"] = {
+        "options": {"--project": "path", **_options}, "schema_version": SEQUENCE_SCHEMA_VERSION,
+        "required": ["--project"] + ([] if _command in {"init", "discover"} else ["--run-id"]),
+    }
+
+
 def get_schema(scope: str | None = None) -> dict[str, Any]:
     if scope is None:
         return {
             "domains": {
+                "sequence-diagram-generator": {
+                    "schema_version": SEQUENCE_SCHEMA_VERSION,
+                    "commands": [name.split(".", 1)[1] for name in COMMAND_SCHEMAS if name.startswith("sequence-diagram-generator.")],
+                },
                 "bru-api": {
                     "schema_version": BRU_API_SCHEMA_VERSION,
                     "commands": [name.split(".", 1)[1] for name in COMMAND_SCHEMAS if name.startswith("bru-api.")],
@@ -2166,7 +2198,9 @@ def get_schema(scope: str | None = None) -> dict[str, Any]:
     if scope not in COMMAND_SCHEMAS:
         raise KeyError(scope)
     schema = deepcopy(COMMAND_SCHEMAS[scope])
-    if scope.startswith("bru-api."):
+    if scope.startswith("sequence-diagram-generator."):
+        schema["schema_version"] = SEQUENCE_SCHEMA_VERSION
+    elif scope.startswith("bru-api."):
         schema["schema_version"] = BRU_API_SCHEMA_VERSION
     elif scope.startswith("biz-flow."):
         schema["schema_version"] = BIZ_FLOW_SCHEMA_VERSION
@@ -2181,6 +2215,11 @@ def validate_schema(schema: dict[str, Any], value: Any, path: str = "$") -> list
     errors: list[str] = []
     if not schema:
         return errors
+    if "$ref" in schema:
+        reference = CONTRACT_SCHEMAS.get(schema["$ref"])
+        if reference is None:
+            return [f"{path}: unknown contract reference"]
+        return validate_schema(reference["document"], value, path)
     if "anyOf" in schema:
         if not any(not validate_schema(branch, value, path) for branch in schema["anyOf"]):
             errors.append(f"{path}: does not match any allowed schema")
@@ -2224,6 +2263,9 @@ def validate_schema(schema: dict[str, Any], value: Any, path: str = "$") -> list
         if len(value) > schema.get("maxProperties", len(value)):
             errors.append(f"{path}: too many properties")
     elif isinstance(value, list):
+        for index, item_schema in enumerate(schema.get("prefixItems", [])):
+            if index < len(value):
+                errors.extend(validate_schema(item_schema, value[index], f"{path}[{index}]"))
         if len(value) < schema.get("minItems", 0):
             errors.append(f"{path}: too few items")
         if len(value) > schema.get("maxItems", len(value)):

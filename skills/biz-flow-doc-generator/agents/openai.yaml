@@ -7,7 +7,7 @@ interface:
     references/analysis-policy.md in two stages. First scan the whole project for
     registered business entries, including supported doExecute/doServe receivers;
     registration evidence is required, and thread pools or internal helpers are not
-    separate entries. Run discover and check --stage entries without an agent executor
+    separate entries. Use the read-only entry inventory: run discover and check --stage entries without an agent executor
     or deep call-chain analysis. Reconcile every candidate as included, evidence-backed
     excluded, or unresolved. Group by the project's broad business domains: one domain,
     one Markdown file, with all scenarios and channels retained in entry chapters;

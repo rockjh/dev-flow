@@ -1,0 +1,9 @@
+from typing import Protocol
+
+from ..models import AdapterCapabilities, AnalysisScope, ScopeAnalysis, SourceSnapshot, SourceSymbol
+
+
+class LanguageAdapter(Protocol):
+    def capabilities(self) -> AdapterCapabilities: ...
+    def discover(self, snapshot: SourceSnapshot) -> tuple[SourceSymbol, ...]: ...
+    def analyze(self, snapshot: SourceSnapshot, scope: AnalysisScope) -> ScopeAnalysis: ...

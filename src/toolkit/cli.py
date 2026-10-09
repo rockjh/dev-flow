@@ -21,6 +21,8 @@ from .core.schema import (
     BRU_API_SCHEMA_VERSION,
     BIZ_FLOW_SCHEMA_VERSION,
     E2E_GATE_SCHEMA_VERSION,
+    SEQUENCE_SCHEMA_VERSION,
+    validate_schema,
     get_schema,
 )
 
@@ -33,8 +35,10 @@ def _domains() -> dict[str, Callable[[list[str]], int]]:
         from .bru_api_test_generator.cli import main as bru_api_main
         from .biz_flow_doc_generator.cli import main as biz_flow_main
         from .e2e_test_generator.cli import main as e2e_main
+        from .sequence_diagram_generator.cli import main as sequence_main
 
         DOMAINS.update({"bru-api": bru_api_main, "biz-flow": biz_flow_main, "e2e": e2e_main})
+        DOMAINS["sequence-diagram-generator"] = sequence_main
     return DOMAINS
 
 
@@ -149,6 +153,31 @@ def _run_domain(domain: str, arguments: list[str], *, full: bool) -> tuple[dict[
     if not arguments:
         raise DevflowError("INVALID_ARGUMENT", f"missing {domain} command", ExitCode.ARGUMENT)
     command, remainder = arguments[0], arguments[1:]
+    if domain == "sequence-diagram-generator":
+        stdout, stderr = io.StringIO(), io.StringIO()
+        try:
+            if full and command == "check":
+                arguments = [*arguments, "--full"]
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                code = _domains()[domain](arguments)
+            if code != 0:
+                raise DevflowError("CONTRACT_ERROR", "structured domain returned a failure without DevflowError", ExitCode.INTERNAL)
+            try:
+                result = json.loads(stdout.getvalue())
+            except ValueError as exc:
+                raise DevflowError("CONTRACT_ERROR", "domain did not return one result JSON", ExitCode.INTERNAL) from exc
+            errors = validate_schema(get_schema("sequence-diagram-generator.domain-command-result")["document"], result)
+            if errors or not isinstance(result.get("data"), dict):
+                raise DevflowError("CONTRACT_ERROR", "invalid DomainCommandResult", ExitCode.INTERNAL)
+            data = {"summary": result["summary"], **result["data"]}
+            if not full:
+                data = {key: value for key, value in data.items() if key not in {"catalog", "report", "artifacts", "operation_errors"}}
+            return success(f"{domain}.{command}", data, result["artifact_path"]), 0
+        except DevflowError as exc:
+            return failure(f"{domain}.{command}", exc), int(exc.exit_code)
+        finally:
+            if stderr.getvalue():
+                print(redact(stderr.getvalue().rstrip()), file=sys.stderr)
     try:
         _prepare_lock(domain, command, remainder)
     except DevflowError as exc:
@@ -196,7 +225,7 @@ def _run_domain(domain: str, arguments: list[str], *, full: bool) -> tuple[dict[
 
 def _help_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="devflow", description="Shared runtime for development AI skills")
-    parser.add_argument("command", nargs="?", choices=("version", "doctor", "schema", "bru-api", "biz-flow", "e2e"))
+    parser.add_argument("command", nargs="?", choices=("version", "doctor", "schema", "bru-api", "biz-flow", "e2e", "sequence-diagram-generator"))
     parser.epilog = "Use 'devflow schema' to list domain commands and 'devflow schema <domain.command>' for one contract."
     return parser
 
@@ -233,6 +262,7 @@ def console_main(argv: list[str] | None = None) -> int:
                 "bru_api_schema": BRU_API_SCHEMA_VERSION,
                 "biz_flow_schema": BIZ_FLOW_SCHEMA_VERSION,
                 "e2e_gate_schema": E2E_GATE_SCHEMA_VERSION,
+                "sequence_diagram_schema": SEQUENCE_SCHEMA_VERSION,
             })
             code = ExitCode.OK
         elif command == "doctor":

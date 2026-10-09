@@ -8,7 +8,7 @@
 
 - Python 导入包使用 `toolkit`；项目发行名称、公共 CLI 和 npm 安装器使用 `devflow`，npm 包名称为 `dev-flow`。
 - 唯一的控制台入口是 `devflow = toolkit.cli:console_main`。`python -m toolkit` 会调用同一个入口。
-- 共享契约位于 `src/toolkit/core/`；领域模块位于 `src/toolkit/bru_api_test_generator/`、`src/toolkit/e2e_test_generator/` 和 `src/toolkit/biz_flow_doc_generator/`。可安装的 Skill 位于 `skills/<skill-name>/`，并安装到 `~/.agents/skills/<skill-name>/`。
+- 共享契约位于 `src/toolkit/core/`；领域模块位于 `src/toolkit/bru_api_test_generator/`、`src/toolkit/e2e_test_generator/`、`src/toolkit/biz_flow_doc_generator/` 和 `src/toolkit/sequence_diagram_generator/`。可安装的 Skill 位于 `skills/<skill-name>/`，并安装到 `~/.agents/skills/<skill-name>/`。
 - 命令使用静态注册。不得加入动态插件发现、运行时扫描、兼容性门面、占位模块或第二套扩展机制。
 - 不得恢复旧版包名或命令名、旧版 Skill 目录、旧版 npm 包装器、第二个 `pyproject.toml`，也不得在生成项目中复制工具包源代码。
 
@@ -16,13 +16,13 @@
 
 `src/toolkit/core/envelope.py`、`errors.py`、`schema.py`、`redaction.py` 和 `artifacts.py` 是信封、退出代码、作用域模式、脱敏、工件和锁的权威实现。所有领域都必须通过这些核心模块路由结果。流水线默认输出 JSON，TTY 默认输出 Markdown，进度信息写入 stderr；除非请求 `--full`，大型结果都应返回摘要及权威路径。领域模式版本独立于工具版本。
 
-当前启用的领域是 `bru-api`、`e2e` 和 `biz-flow`。修改包、CLI、Skill、状态、安装和发布结构时，必须保留它们现有的业务、安全、所有权和报告语义。
+当前启用的领域是 `bru-api`、`e2e`、`biz-flow` 和 `sequence-diagram-generator`。修改包、CLI、Skill、状态、安装和发布结构时，必须保留它们现有的业务、安全、所有权和报告语义。
 
 ## 生成资产与发布
 
-生成项目包含业务资产和调用已安装 `devflow` 的轻量启动器，不得包含工具包源代码。每个 skill 只使用自己的权威版本文件：`docs/biz-flow/biz-flow-doc-generator-version.json`、`qa/contracts/bru-api-test-generator-version.json` 或 `analysis/e2e-test-generator-version.json`；共享状态位于 `~/.local/state/devflow/`；Skill 目标目录为 `DEVFLOW_SKILL_HOME` 或 `~/.agents/skills/`。
+生成项目包含业务资产和调用已安装 `devflow` 的轻量启动器，不得包含工具包源代码。每个 skill 只使用自己的权威版本文件：`docs/biz-flow/biz-flow-doc-generator-version.json`、`qa/contracts/bru-api-test-generator-version.json`、`analysis/e2e-test-generator-version.json` 或 `docs/sequence-diagram/sequence-diagram-generator-version.json`；共享状态位于 `~/.local/state/devflow/`；Skill 目标目录为 `DEVFLOW_SKILL_HOME` 或 `~/.agents/skills/`。
 
-npm 流程依次使用 `npm/dist/` 中的内嵌 wheel、pipx、一个 Skill 目录，最后运行 `devflow doctor`。包装器解析 pipx 安装的绝对路径，绝不能通过 `PATH` 递归启动自身。禁用 npm postinstall 时，`npx dev-flow install` 是显式恢复命令。
+npm 流程依次使用 `npm/dist/` 中的内嵌 wheel、pipx、每个注册 Skill 的一个规范目录，最后运行 `devflow doctor`。包装器解析 pipx 安装的绝对路径，绝不能通过 `PATH` 递归启动自身。禁用 npm postinstall 时，`npx dev-flow install` 是显式恢复命令。
 
 旧状态迁移必须由操作员在运行时启动之外显式执行。运行时代码只读取新的状态目录，绝不回退到旧路径。
 

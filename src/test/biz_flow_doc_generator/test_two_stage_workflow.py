@@ -114,7 +114,7 @@ def test_domain_titles_do_not_split_actions_and_regroup_only_generated_skeletons
     assert manual.exists()
 
 
-def test_explicit_skill_upgrade_preserves_accepted_git_baseline(tmp_path):
+def test_removed_skill_upgrade_cannot_modify_accepted_git_baseline(tmp_path):
     (tmp_path / ".git").mkdir()
     docs = tmp_path / "docs/biz-flow"
     docs.mkdir(parents=True)
@@ -126,12 +126,12 @@ def test_explicit_skill_upgrade_preserves_accepted_git_baseline(tmp_path):
     overview.write_text("<!-- devflow:module-confirmed -->", encoding="utf-8")
     args = ["--project", str(tmp_path)]
     assert cli.init_command(args) == 8
+    import pytest
+    with pytest.raises(SystemExit) as error:
+        cli.init_command([*args, "--upgrade"])
+    assert error.value.code == 2
     assert json.loads(path.read_text(encoding="utf-8")) == metadata
-    assert cli.init_command([*args, "--upgrade"]) == 0
-    upgraded = json.loads(path.read_text(encoding="utf-8"))
-    assert upgraded["skill_version"] == "2.0.0"
-    assert upgraded["source"] == metadata["source"]
-    assert "<!-- devflow:module-confirmed -->" not in overview.read_text(encoding="utf-8")
+    assert "<!-- devflow:module-confirmed -->" in overview.read_text(encoding="utf-8")
 
 
 def test_entry_directory_is_complete_without_behavior_analysis(tmp_path, monkeypatch, capsys):

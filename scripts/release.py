@@ -17,6 +17,7 @@ INSTALLABLE_SKILLS = (
     "bru-api-test-generator",
     "biz-flow-doc-generator",
     "e2e-test-generator",
+    "sequence-diagram-generator",
 )
 
 

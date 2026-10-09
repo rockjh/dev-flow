@@ -46,6 +46,7 @@ class SkillContractTests(unittest.TestCase):
             "biz-flow-doc-generator": "docs/biz-flow/biz-flow-doc-generator-version.json",
             "bru-api-test-generator": "qa/contracts/bru-api-test-generator-version.json",
             "e2e-test-generator": "analysis/e2e-test-generator-version.json",
+            "sequence-diagram-generator": "docs/sequence-diagram/sequence-diagram-generator-version.json",
         }
         for name, path in expected.items():
             text = (SKILLS / name / "SKILL.md").read_text(encoding="utf-8")

@@ -37,11 +37,14 @@ class CliContractTests(unittest.TestCase):
         self.assertIn("\n\n" + overview + "\n", rendered)
         self.assertNotIn("- overview:", rendered)
 
-    def test_biz_flow_review_has_unconfirmed_read_only_contract(self) -> None:
+    def test_biz_flow_removed_review_has_no_public_schema(self) -> None:
         code, result = self.invoke("schema", "biz-flow.review")
+        self.assertEqual(2, code)
+        self.assertEqual("INVALID_ARGUMENT", result["error"]["code"])
+        code, result = self.invoke("schema", "biz-flow.prepare")
         self.assertEqual(0, code)
         self.assertIn("--project", result["data"]["options"])
-        self.assertNotIn("--confirm", result["data"]["options"])
+        self.assertIn("--confirm", result["data"]["options"])
         self.assertNotIn("--allow-degraded", result["data"]["options"])
 
     def test_design_understanding_command_is_registered_and_persisted(self) -> None:

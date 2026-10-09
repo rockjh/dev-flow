@@ -49,8 +49,16 @@ function install() {
     cpSync(join(skillSource, name), destination, { recursive: true, force: true });
   }
 
-  const doctor = spawnSync(resolveDevflow(), ["doctor", "--json"], { stdio: "inherit" });
+  const doctor = spawnSync(resolveDevflow(), ["doctor", "--json"], { encoding: "utf8" });
+  if (doctor.stdout) process.stdout.write(doctor.stdout);
+  if (doctor.stderr) process.stderr.write(doctor.stderr);
   if (doctor.error || doctor.status !== 0) throw doctor.error || new Error(`devflow doctor failed with exit code ${doctor.status}`);
+  const report = JSON.parse(doctor.stdout);
+  for (const language of ["python", "java", "javascript", "typescript", "go", "rust"]) {
+    if (!report.data?.checks?.[`sequence.${language}`]?.ok) {
+      throw new Error(`installed sequence parser failed its actual smoke parse: ${language}`);
+    }
+  }
 }
 
 if (require.main === module) {

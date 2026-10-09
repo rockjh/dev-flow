@@ -142,7 +142,8 @@ def test_conversation_and_markdown_share_business_counts_and_filenames(tmp_path:
     assert "DeviceDao.java:2" not in conversation and "DeviceDao.java:2" in overview
     assert "待源码复核" in conversation and "阻塞项：" not in conversation
     assert "| 其他源码证据待核对 | 1 |" in conversation
-    assert "generate --confirm" in conversation
+    assert "prepare" in conversation and "collect" in conversation
+    assert "generate --confirm" not in conversation
     assert "不能仅回复文件链接" in conversation
 
 

@@ -1,0 +1,12 @@
+{
+  "revision": 0,
+  "accepted_run_id": "",
+  "source_fingerprint": "",
+  "requirement_fingerprint": "",
+  "scope_fingerprint": "",
+  "verified_digest": "",
+  "generated_assets": [],
+  "skill": "sequence-diagram-generator",
+  "skill_version": "1.0.0",
+  "artifact_root": "docs/sequence-diagram"
+}
