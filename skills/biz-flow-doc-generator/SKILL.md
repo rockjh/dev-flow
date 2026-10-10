@@ -121,3 +121,7 @@ Return the complete business overview plus redacted authoritative manifest/repor
 paths, exit status, coverage, unresolved counts by phase/entry and stability.
 Human-facing descriptions and reports are Chinese; IDs and Mermaid keywords stay
 machine-compatible.
+
+## Cross-skill routing
+
+When the requested output is a standalone sequence diagram, route to the installed `sequence-diagram-generator` Skill. For this Skill's own documents, inspect project code and registered entries through the biz-flow CLI before writing business diagrams. Keep source-symbol evidence separate from requirement or description segment evidence, and never claim source-backed diagrams without completed code analysis and host-attested receipts.

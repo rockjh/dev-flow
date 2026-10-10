@@ -59,6 +59,10 @@ class RequirementInput:
     value: str
     source_anchor: str = ""
 
+    @property
+    def purpose(self):
+        return "description" if self.kind.startswith("description") else "requirement"
+
 
 @dataclass(frozen=True, slots=True)
 class RequirementSegment:
@@ -66,6 +70,9 @@ class RequirementSegment:
     anchor: str
     text: str
     digest: str
+
+
+InputSegment = RequirementSegment
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +86,9 @@ class RequirementSnapshot:
     text: str
     segments: tuple[RequirementSegment, ...]
     status: str = "read"
+
+
+InputSnapshot = RequirementSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +287,7 @@ class ProposedStep:
     receiver: str
     label: str
     kind: str = "proposed"
+    source_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,6 +297,7 @@ class ProposedControl:
     requirement_ids: tuple[str, ...]
     condition: str
     exit_ids: tuple[str, ...]
+    source_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -453,7 +465,6 @@ class RunManifest:
     run_id: str
     project_identity: str
     project_path: str
-    mode: str
     intent: str
     execution_mode: str
     execution_approval: str
@@ -469,6 +480,9 @@ class RunManifest:
     artifacts: tuple[ArtifactDigest, ...]
     operation_errors: tuple[str, ...]
     created_at: str
+    source_kind: str = "code"
+    input_hash: str = ""
+    selected_segment_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -488,7 +502,7 @@ class AcceptedBaseline:
     verified_digest: str
     generated_assets: tuple[GeneratedAsset, ...]
     skill: str = "sequence-diagram-generator"
-    skill_version: str = "1.0.0"
+    skill_version: str = "2.0.0"
     artifact_root: str = "docs/sequence-diagram"
 
 
@@ -531,6 +545,9 @@ class DiscoverRequest:
     intent: str
     entry_selectors: tuple[str, ...] = ()
     requirement_input: RequirementInput | None = None
+    description_input: RequirementInput | None = None
+    source_anchor: str = ""
+    generated_root: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,6 +559,8 @@ class PrepareRequest:
     confirm: bool
     execution_mode: str
     execution_approval: str
+    selected_segment_ids: tuple[str, ...] = ()
+    all_segments: bool = False
 
 
 @dataclass(frozen=True, slots=True)

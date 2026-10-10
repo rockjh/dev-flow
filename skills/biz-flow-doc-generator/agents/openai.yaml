@@ -3,7 +3,7 @@ interface:
   short_description: "全量归纳业务入口，再并行分析生成有源码证据的业务时序图和覆盖报告"
   default_prompt: >-
     Use $biz-flow-doc-generator with the installed devflow CLI, routing only
-    through devflow biz-flow with an explicit --project. Follow SKILL.md and
+    through devflow biz-flow with an explicit --project. If the request is a standalone sequence diagram, route to sequence-diagram-generator; otherwise inspect project code and registered entries through biz-flow. Follow SKILL.md and
     references/analysis-policy.md in two stages. First scan the whole project for
     registered business entries, including supported doExecute/doServe receivers;
     registration evidence is required, and thread pools or internal helpers are not

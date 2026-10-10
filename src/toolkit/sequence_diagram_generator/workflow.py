@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from .. import __version__
-from ..core.artifacts import ProjectDomainLock, require_version_file, write_version_file
+from ..core.artifacts import ProjectDomainLock, require_version_file, write_version_file, version_file
 from ..core.errors import DevflowError, ExitCode
 from .models import (AcceptedBaseline, CommitJournal, DiscoveryCatalog, DocumentBundle, DomainCommandResult, FlowModel,
                      HostSubmission, RequirementSnapshot, RunManifest, RunState, SemanticAnnotations, SourceSnapshot,
@@ -28,7 +28,7 @@ class SequenceWorkflow:
 
     def _load(self, context, run_id):
         manifest = self.repository.load(context, run_id)
-        if (manifest.skill_version, manifest.schema_version, manifest.tool_version) != ("1.0.0", 1, __version__):
+        if (manifest.skill_version, manifest.schema_version, manifest.tool_version) != ("2.0.0", 2, __version__):
             raise DevflowError("GATE_FAILED", "run was created by a different runtime contract", ExitCode.GATE_FAILED)
         self.repository.validate_artifacts(context, manifest)
         return manifest
@@ -52,13 +52,18 @@ class SequenceWorkflow:
                 raise
 
     def _requirements(self, context, manifest):
-        return self.repository.read_artifact(context, manifest.run_id, "requirements.json", RequirementSnapshot) if manifest.requirement_hash else None
+        if not manifest.input_hash and not manifest.requirement_hash:
+            return None
+        name = "input.json" if (self.repository.artifact_path(context, manifest.run_id, "input.json")).exists() else "requirements.json"
+        return self.repository.read_artifact(context, manifest.run_id, name, RequirementSnapshot)
 
     def _recheck(self, context, manifest):
         snapshot = self.scanner.snapshot(context)
         requirements = self._requirements(context, manifest)
         report = self.validator.validate_sources(manifest.source_fingerprint, snapshot.fingerprint, manifest.adapter_fingerprint,
                                                  self.scanner.registry.fingerprint(), manifest.requirement_hash, requirements)
+        if manifest.input_hash and manifest.input_hash != digest(requirements):
+            raise DevflowError("GATE_FAILED", "bound input snapshot changed; start a new discover", ExitCode.GATE_FAILED)
         if not report.passed:
             raise DevflowError("GATE_FAILED", "source, adapter or bound requirement snapshot changed; start a new discover", ExitCode.GATE_FAILED)
         return snapshot, requirements
@@ -66,12 +71,12 @@ class SequenceWorkflow:
     def init(self, request):
         context = request.project
         with ProjectDomainLock(context.project, context.domain):
-            path = context.assets / "sequence-diagram-generator-version.json"
+            path = version_file(context.project, context.domain)
             if path.exists():
                 baseline = self.committer.baseline(context)
             else:
                 baseline = AcceptedBaseline(0, "", "", "", "", "", ())
-                write_version_file(context.project, context.domain, to_dict(baseline))
+                write_version_file(context.project, context.domain, {**to_dict(baseline), "generated_root": context.assets.relative_to(context.project).as_posix()})
             return DomainCommandResult("initialized", {"revision": baseline.revision, "skill_version": baseline.skill_version}, str(path))
 
     def discover(self, request):
@@ -79,11 +84,11 @@ class SequenceWorkflow:
         with ProjectDomainLock(context.project, context.domain):
             baseline = self.committer.baseline(context)
             snapshot = self.scanner.snapshot(context)
-            requirements = self.reader.read(request.requirement_input) if request.requirement_input else None
-            if request.mode == "requirement" and requirements is None:
+            requirements = self.reader.read(request.requirement_input) if request.requirement_input else (self.reader.read(request.description_input) if request.description_input else None)
+            if request.intent == "proposal" and request.requirement_input is None:
                 raise DevflowError("INVALID_ARGUMENT", "requirement mode requires one explicit requirement input", ExitCode.ARGUMENT)
-            if request.mode == "code" and requirements is not None:
-                raise DevflowError("INVALID_ARGUMENT", "requirement inputs require --mode requirement", ExitCode.ARGUMENT)
+            if request.intent == "description" and request.description_input is None:
+                raise DevflowError("INVALID_ARGUMENT", "description intent requires a description input", ExitCode.ARGUMENT)
             catalog = self.scanner.discover(snapshot)
             selected = []
             for selector in request.entry_selectors:
@@ -96,14 +101,16 @@ class SequenceWorkflow:
             if len(selected) != len(set(selected)):
                 raise DevflowError("INVALID_ARGUMENT", "entry selectors contain duplicates", ExitCode.ARGUMENT)
             run_id = self.repository.new_id()
-            manifest = RunManifest(run_id, context.identity, str(context.project), request.mode, request.intent, "", "", RunState.DISCOVERED,
-                __version__, "1.0.0", 1, snapshot.fingerprint, digest(requirements) if requirements else "", self.scanner.registry.fingerprint(),
-                digest(baseline), tuple(selected), (), (), now())
+            source_kind = "requirement" if request.intent == "proposal" else "description" if request.intent == "description" else "code"
+            manifest = RunManifest(run_id, context.identity, str(context.project), request.intent, "", "", RunState.DISCOVERED,
+                __version__, "2.0.0", 2, snapshot.fingerprint, digest(requirements) if requirements else "", self.scanner.registry.fingerprint(),
+                digest(baseline), tuple(selected), (), (), now(), source_kind, digest(requirements) if requirements else "", tuple(s.segment_id for s in requirements.segments) if requirements else ())
             self.repository.create(context, manifest)
             for name, value in (("source-snapshot.json", snapshot), ("discovery.json", catalog)):
                 manifest = self.repository.record(context, manifest, name, value)
             if requirements:
                 manifest = self.repository.record(context, manifest, "requirements.json", requirements)
+                manifest = self.repository.record(context, manifest, "input.json", requirements)
             self.repository.save(context, manifest)
             return self._result(context, manifest, entries=len(catalog.symbols), registered=sum(s.selection_type == "registered" for s in catalog.symbols),
                                 selected_ids=manifest.selected_ids, catalog_path=self._path(context, run_id, "discovery.json"), gaps=len(catalog.gaps))
@@ -120,6 +127,17 @@ class SequenceWorkflow:
             snapshot, requirements = self._recheck(context, manifest)
             catalog = self.repository.read_artifact(context, request.run_id, "discovery.json", DiscoveryCatalog)
             selected_ids = request.selected_entry_ids or manifest.selected_ids
+            if manifest.intent in {"proposal", "description"}:
+                available = tuple(segment.segment_id for segment in requirements.segments) if requirements else ()
+                selected_segments = tuple(request.selected_segment_ids) or manifest.selected_segment_ids
+                if request.all_segments:
+                    selected_segments = available
+                if not selected_segments:
+                    raise DevflowError("INVALID_ARGUMENT", "choose --segment-id or --all-segments", ExitCode.ARGUMENT)
+                if not set(selected_segments) <= set(available):
+                    raise DevflowError("TARGET_NOT_FOUND", "selected segment is not in this input", ExitCode.NOT_FOUND)
+            else:
+                selected_segments = ()
             if request.all_entries:
                 selected_ids = tuple(symbol.symbol_id for symbol in catalog.symbols)
             elif not selected_ids:
@@ -130,7 +148,7 @@ class SequenceWorkflow:
             if not selected and requirements is None:
                 raise DevflowError("TARGET_NOT_FOUND", "no code or requirement units selected", ExitCode.NOT_FOUND)
             model = self.scanner.analyze(snapshot, tuple(AnalysisScope(symbol, symbol.symbol_id) for symbol in selected))
-            manifest = replace(manifest, selected_ids=tuple(s.symbol_id for s in selected), execution_mode=request.execution_mode,
+            manifest = replace(manifest, selected_ids=tuple(s.symbol_id for s in selected), selected_segment_ids=tuple(selected_segments), execution_mode=request.execution_mode,
                                execution_approval=request.execution_approval, expected_baseline_digest=digest(self.committer.baseline(context)), state=RunState.PREPARED)
             package = self.handoff.prepare(manifest, model, requirements)
             for name, value in (("flow-model.json", model), ("task-package.json", package)):
@@ -275,3 +293,22 @@ class SequenceWorkflow:
                 return self.publisher.collect(request, publication,
                     active_baseline=manifest.state == RunState.ACCEPTED and baseline.accepted_run_id == request.run_id)
             raise DevflowError("INVALID_ARGUMENT", "unknown publish stage", ExitCode.ARGUMENT)
+
+    def clean(self, context, run_id, all_files=False):
+        with ProjectDomainLock(context.project, context.domain):
+            manifest = self._load(context, run_id)
+            root = self.repository.run_path(context, run_id)
+            journal_path = root / "commit_journal.json"
+            if journal_path.exists() and all_files:
+                journal = self.repository.read_artifact(context, run_id, "commit_journal.json", CommitJournal)
+                if journal.phase not in {"finalized", "recovered"}:
+                    raise DevflowError("GATE_FAILED", "commit recovery evidence must be retained", ExitCode.GATE_FAILED, details_path=str(journal_path))
+                self.committer.cleanup(context, journal)
+            render = root / "tmp"
+            for folder in (render / "render", render / "verify-render"):
+                if folder.exists():
+                    for path in folder.glob("scene-*.mmd"):
+                        path.unlink(missing_ok=True)
+                    for path in folder.glob("scene-*.svg"):
+                        path.unlink(missing_ok=True)
+            return self._result(context, manifest, cleaned=True)

@@ -20,7 +20,8 @@ class ArtifactCommitter:
         self.repository = repository
 
     def baseline(self, context):
-        return from_dict(AcceptedBaseline, require_version_file(context.project, context.domain))
+        value = require_version_file(context.project, context.domain)
+        return from_dict(AcceptedBaseline, {key: item for key, item in value.items() if key in {field.name for field in __import__('dataclasses').fields(AcceptedBaseline)}})
 
     def _target(self, context, relative):
         if PureWindowsPath(relative).is_absolute() or "\\" in relative or any(part in {"..", ".", ""} for part in relative.split("/")):
@@ -145,7 +146,7 @@ class ArtifactCommitter:
             source_check()
             if any(self._file_hash(self._target(context, item.path)) != item.new_digest for item in plan.files):
                 raise DevflowError("GATE_FAILED", "asset changed during transaction", ExitCode.GATE_FAILED)
-            write_version_file(context.project, context.domain, to_dict(plan.next_baseline))
+            write_version_file(context.project, context.domain, {**to_dict(plan.next_baseline), "generated_root": context.assets.relative_to(context.project).as_posix()})
             journal = replace(journal, phase="baseline_written", baseline_written=True)
             self._save_journal(context, journal)
             if digest(self.baseline(context)) != digest(plan.next_baseline):
@@ -185,7 +186,7 @@ class ArtifactCommitter:
                 self._replace(target, contents)
             else:
                 target.unlink(missing_ok=True)
-        write_version_file(context.project, context.domain, to_dict(plan.parent))
+        write_version_file(context.project, context.domain, {**to_dict(plan.parent), "generated_root": context.assets.relative_to(context.project).as_posix()})
         self._save_journal(context, replace(journal, phase="recovered", files_written=(), baseline_written=False))
         return None
 

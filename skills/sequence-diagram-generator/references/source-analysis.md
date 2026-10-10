@@ -1,6 +1,6 @@
 # Source analysis
 
-Run `devflow sequence-diagram-generator init --project <absolute-root>`, then `discover --project <root> --mode code [--entry <qualified-symbol-and-signature>]`. Check inventory with `check --project <root> --run-id <id> --stage entries --full`.
+Run `devflow sequence-diagram-generator init --project <absolute-root>`, then `discover --project <root> --intent implementation [--entry <qualified-symbol-and-signature>]`. Use `--intent proposal` with one requirement input or `--intent description` with one description input; those paths select input segments and never masquerade as source symbols. Check inventory with `check --project <root> --run-id <id> --stage entries --full`.
 
 The Skill's `../example/` contains a minimal amount-decision project, requirement proposal and revision-zero baseline. Copy that business project to an isolated workspace for practice; it contains no host execution or online publication records.
 

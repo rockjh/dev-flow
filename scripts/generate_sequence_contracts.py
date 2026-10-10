@@ -51,9 +51,9 @@ def main():
             if field in properties:
                 properties[field]["pattern"] = r"^[0-9a-f]{32}$" if field == "run_id" else r"^(|[0-9a-f]{32})$"
         if name == "RunManifest":
-            properties["schema_version"] = {"const": 1}
-            properties["mode"]["enum"] = ["code", "requirement"]
-            properties["intent"]["enum"] = ["implementation", "proposal"]
+            properties["schema_version"] = {"const": 2}
+            properties.pop("mode", None)
+            properties["intent"]["enum"] = ["implementation", "proposal", "description"]
             properties["execution_mode"]["enum"] = ["", "native", "serial"]
         if name == "Requirement":
             properties["status"]["enum"] = ["implemented", "partially_implemented", "requirement_only", "conflict", "unresolved", "not_applicable"]
@@ -64,7 +64,7 @@ def main():
             properties["kind"]["enum"] = ["sequence", "alt", "opt", "loop", "par"]
         if name == "RenderReport":
             properties["status"]["enum"] = ["passed", "not_run", "failed"]
-        contracts[scope(name)] = {"contract": scope(name), "schema_version": "1",
+        contracts[scope(name)] = {"contract": scope(name), "schema_version": "2",
             "document": {"type": "object", "properties": properties,
                          "required": list(properties), "additionalProperties": False}}
     path = ROOT / "src" / "toolkit" / "core" / "sequence-contracts.json"

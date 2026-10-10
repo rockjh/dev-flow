@@ -1,7 +1,7 @@
 {
   "sequence-diagram-generator.project-context": {
     "contract": "sequence-diagram-generator.project-context",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -33,7 +33,7 @@
   },
   "sequence-diagram-generator.source-file": {
     "contract": "sequence-diagram-generator.source-file",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -61,7 +61,7 @@
   },
   "sequence-diagram-generator.source-snapshot": {
     "contract": "sequence-diagram-generator.source-snapshot",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -96,7 +96,7 @@
   },
   "sequence-diagram-generator.requirement-input": {
     "contract": "sequence-diagram-generator.requirement-input",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -120,7 +120,35 @@
   },
   "sequence-diagram-generator.requirement-segment": {
     "contract": "sequence-diagram-generator.requirement-segment",
-    "schema_version": "1",
+    "schema_version": "2",
+    "document": {
+      "type": "object",
+      "properties": {
+        "segment_id": {
+          "type": "string"
+        },
+        "anchor": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "segment_id",
+        "anchor",
+        "text",
+        "digest"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.input-segment": {
+    "contract": "sequence-diagram-generator.input-segment",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -148,7 +176,58 @@
   },
   "sequence-diagram-generator.requirement-snapshot": {
     "contract": "sequence-diagram-generator.requirement-snapshot",
-    "schema_version": "1",
+    "schema_version": "2",
+    "document": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "locator": {
+          "type": "string"
+        },
+        "anchor": {
+          "type": "string"
+        },
+        "read_at": {
+          "type": "string"
+        },
+        "raw_digest": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "$ref": "sequence-diagram-generator.requirement-segment"
+          }
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "locator",
+        "anchor",
+        "read_at",
+        "raw_digest",
+        "digest",
+        "text",
+        "segments",
+        "status"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "sequence-diagram-generator.input-snapshot": {
+    "contract": "sequence-diagram-generator.input-snapshot",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -199,7 +278,7 @@
   },
   "sequence-diagram-generator.adapter-capabilities": {
     "contract": "sequence-diagram-generator.adapter-capabilities",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -255,7 +334,7 @@
   },
   "sequence-diagram-generator.evidence": {
     "contract": "sequence-diagram-generator.evidence",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -299,7 +378,7 @@
   },
   "sequence-diagram-generator.source-symbol": {
     "contract": "sequence-diagram-generator.source-symbol",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -350,7 +429,7 @@
   },
   "sequence-diagram-generator.analysis-scope": {
     "contract": "sequence-diagram-generator.analysis-scope",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -370,7 +449,7 @@
   },
   "sequence-diagram-generator.call-context": {
     "contract": "sequence-diagram-generator.call-context",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -401,7 +480,7 @@
   },
   "sequence-diagram-generator.control-node": {
     "contract": "sequence-diagram-generator.control-node",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -473,7 +552,7 @@
   },
   "sequence-diagram-generator.flow-step": {
     "contract": "sequence-diagram-generator.flow-step",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -531,7 +610,7 @@
   },
   "sequence-diagram-generator.external-operation": {
     "contract": "sequence-diagram-generator.external-operation",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -584,7 +663,7 @@
   },
   "sequence-diagram-generator.coverage-gap": {
     "contract": "sequence-diagram-generator.coverage-gap",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -627,7 +706,7 @@
   },
   "sequence-diagram-generator.sequence-step": {
     "contract": "sequence-diagram-generator.sequence-step",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -643,7 +722,7 @@
   },
   "sequence-diagram-generator.sequence-arm": {
     "contract": "sequence-diagram-generator.sequence-arm",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -677,7 +756,7 @@
   },
   "sequence-diagram-generator.sequence-block": {
     "contract": "sequence-diagram-generator.sequence-block",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -715,7 +794,7 @@
   },
   "sequence-diagram-generator.source-order": {
     "contract": "sequence-diagram-generator.source-order",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -746,7 +825,7 @@
   },
   "sequence-diagram-generator.control-flow-edge": {
     "contract": "sequence-diagram-generator.control-flow-edge",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -781,7 +860,7 @@
   },
   "sequence-diagram-generator.scope-analysis": {
     "contract": "sequence-diagram-generator.scope-analysis",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -864,7 +943,7 @@
   },
   "sequence-diagram-generator.flow-model": {
     "contract": "sequence-diagram-generator.flow-model",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -891,7 +970,7 @@
   },
   "sequence-diagram-generator.discovery-catalog": {
     "contract": "sequence-diagram-generator.discovery-catalog",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -924,7 +1003,7 @@
   },
   "sequence-diagram-generator.requirement": {
     "contract": "sequence-diagram-generator.requirement",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -980,7 +1059,7 @@
   },
   "sequence-diagram-generator.requirement-link": {
     "contract": "sequence-diagram-generator.requirement-link",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1010,7 +1089,7 @@
   },
   "sequence-diagram-generator.proposed-step": {
     "contract": "sequence-diagram-generator.proposed-step",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1034,6 +1113,12 @@
         },
         "kind": {
           "type": "string"
+        },
+        "source_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -1042,14 +1127,15 @@
         "sender",
         "receiver",
         "label",
-        "kind"
+        "kind",
+        "source_ids"
       ],
       "additionalProperties": false
     }
   },
   "sequence-diagram-generator.proposed-control": {
     "contract": "sequence-diagram-generator.proposed-control",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1073,6 +1159,12 @@
           "items": {
             "type": "string"
           }
+        },
+        "source_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -1080,14 +1172,15 @@
         "kind",
         "requirement_ids",
         "condition",
-        "exit_ids"
+        "exit_ids",
+        "source_ids"
       ],
       "additionalProperties": false
     }
   },
   "sequence-diagram-generator.business-label": {
     "contract": "sequence-diagram-generator.business-label",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1118,7 +1211,7 @@
   },
   "sequence-diagram-generator.semantic-annotations": {
     "contract": "sequence-diagram-generator.semantic-annotations",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1193,7 +1286,7 @@
   },
   "sequence-diagram-generator.host-task": {
     "contract": "sequence-diagram-generator.host-task",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1230,7 +1323,7 @@
   },
   "sequence-diagram-generator.task-package": {
     "contract": "sequence-diagram-generator.task-package",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1300,7 +1393,7 @@
   },
   "sequence-diagram-generator.host-receipt": {
     "contract": "sequence-diagram-generator.host-receipt",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1374,7 +1467,7 @@
   },
   "sequence-diagram-generator.host-task-result": {
     "contract": "sequence-diagram-generator.host-task-result",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1408,7 +1501,7 @@
   },
   "sequence-diagram-generator.host-submission": {
     "contract": "sequence-diagram-generator.host-submission",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1443,7 +1536,7 @@
   },
   "sequence-diagram-generator.rule-result": {
     "contract": "sequence-diagram-generator.rule-result",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1467,7 +1560,7 @@
   },
   "sequence-diagram-generator.validation-report": {
     "contract": "sequence-diagram-generator.validation-report",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1493,7 +1586,7 @@
   },
   "sequence-diagram-generator.requirement-report": {
     "contract": "sequence-diagram-generator.requirement-report",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1535,7 +1628,7 @@
   },
   "sequence-diagram-generator.diagram-position": {
     "contract": "sequence-diagram-generator.diagram-position",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1566,7 +1659,7 @@
   },
   "sequence-diagram-generator.scene-document": {
     "contract": "sequence-diagram-generator.scene-document",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1609,7 +1702,7 @@
   },
   "sequence-diagram-generator.document-bundle": {
     "contract": "sequence-diagram-generator.document-bundle",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1640,7 +1733,7 @@
   },
   "sequence-diagram-generator.render-report": {
     "contract": "sequence-diagram-generator.render-report",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1683,7 +1776,7 @@
   },
   "sequence-diagram-generator.verification-record": {
     "contract": "sequence-diagram-generator.verification-record",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1723,7 +1816,7 @@
   },
   "sequence-diagram-generator.artifact-digest": {
     "contract": "sequence-diagram-generator.artifact-digest",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1743,7 +1836,7 @@
   },
   "sequence-diagram-generator.run-manifest": {
     "contract": "sequence-diagram-generator.run-manifest",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1757,18 +1850,12 @@
         "project_path": {
           "type": "string"
         },
-        "mode": {
-          "type": "string",
-          "enum": [
-            "code",
-            "requirement"
-          ]
-        },
         "intent": {
           "type": "string",
           "enum": [
             "implementation",
-            "proposal"
+            "proposal",
+            "description"
           ]
         },
         "execution_mode": {
@@ -1800,7 +1887,7 @@
           "type": "string"
         },
         "schema_version": {
-          "const": 1
+          "const": 2
         },
         "source_fingerprint": {
           "type": "string"
@@ -1834,13 +1921,24 @@
         },
         "created_at": {
           "type": "string"
+        },
+        "source_kind": {
+          "type": "string"
+        },
+        "input_hash": {
+          "type": "string"
+        },
+        "selected_segment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
         "run_id",
         "project_identity",
         "project_path",
-        "mode",
         "intent",
         "execution_mode",
         "execution_approval",
@@ -1855,14 +1953,17 @@
         "selected_ids",
         "artifacts",
         "operation_errors",
-        "created_at"
+        "created_at",
+        "source_kind",
+        "input_hash",
+        "selected_segment_ids"
       ],
       "additionalProperties": false
     }
   },
   "sequence-diagram-generator.generated-asset": {
     "contract": "sequence-diagram-generator.generated-asset",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1886,7 +1987,7 @@
   },
   "sequence-diagram-generator.accepted-baseline": {
     "contract": "sequence-diagram-generator.accepted-baseline",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1942,7 +2043,7 @@
   },
   "sequence-diagram-generator.commit-file": {
     "contract": "sequence-diagram-generator.commit-file",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -1974,7 +2075,7 @@
   },
   "sequence-diagram-generator.commit-plan": {
     "contract": "sequence-diagram-generator.commit-plan",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2014,7 +2115,7 @@
   },
   "sequence-diagram-generator.commit-journal": {
     "contract": "sequence-diagram-generator.commit-journal",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2045,7 +2146,7 @@
   },
   "sequence-diagram-generator.init-request": {
     "contract": "sequence-diagram-generator.init-request",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2061,7 +2162,7 @@
   },
   "sequence-diagram-generator.discover-request": {
     "contract": "sequence-diagram-generator.discover-request",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2089,6 +2190,22 @@
               "type": "null"
             }
           ]
+        },
+        "description_input": {
+          "anyOf": [
+            {
+              "$ref": "sequence-diagram-generator.requirement-input"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_anchor": {
+          "type": "string"
+        },
+        "generated_root": {
+          "type": "string"
         }
       },
       "required": [
@@ -2096,14 +2213,17 @@
         "mode",
         "intent",
         "entry_selectors",
-        "requirement_input"
+        "requirement_input",
+        "description_input",
+        "source_anchor",
+        "generated_root"
       ],
       "additionalProperties": false
     }
   },
   "sequence-diagram-generator.prepare-request": {
     "contract": "sequence-diagram-generator.prepare-request",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2131,6 +2251,15 @@
         },
         "execution_approval": {
           "type": "string"
+        },
+        "selected_segment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "all_segments": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -2140,14 +2269,16 @@
         "all_entries",
         "confirm",
         "execution_mode",
-        "execution_approval"
+        "execution_approval",
+        "selected_segment_ids",
+        "all_segments"
       ],
       "additionalProperties": false
     }
   },
   "sequence-diagram-generator.collect-request": {
     "contract": "sequence-diagram-generator.collect-request",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2172,7 +2303,7 @@
   },
   "sequence-diagram-generator.check-request": {
     "contract": "sequence-diagram-generator.check-request",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2201,7 +2332,7 @@
   },
   "sequence-diagram-generator.verify-request": {
     "contract": "sequence-diagram-generator.verify-request",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2222,7 +2353,7 @@
   },
   "sequence-diagram-generator.accept-request": {
     "contract": "sequence-diagram-generator.accept-request",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2243,7 +2374,7 @@
   },
   "sequence-diagram-generator.domain-command-result": {
     "contract": "sequence-diagram-generator.domain-command-result",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2265,7 +2396,7 @@
   },
   "sequence-diagram-generator.board-node": {
     "contract": "sequence-diagram-generator.board-node",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2336,7 +2467,7 @@
   },
   "sequence-diagram-generator.board-connector": {
     "contract": "sequence-diagram-generator.board-connector",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2379,7 +2510,7 @@
   },
   "sequence-diagram-generator.native-board-scene": {
     "contract": "sequence-diagram-generator.native-board-scene",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2428,7 +2559,7 @@
   },
   "sequence-diagram-generator.native-board-bundle": {
     "contract": "sequence-diagram-generator.native-board-bundle",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2455,7 +2586,7 @@
   },
   "sequence-diagram-generator.native-style-binding": {
     "contract": "sequence-diagram-generator.native-style-binding",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2479,7 +2610,7 @@
   },
   "sequence-diagram-generator.native-node-style": {
     "contract": "sequence-diagram-generator.native-node-style",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2527,7 +2658,7 @@
   },
   "sequence-diagram-generator.reference-bundle": {
     "contract": "sequence-diagram-generator.reference-bundle",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2581,7 +2712,7 @@
   },
   "sequence-diagram-generator.published-object": {
     "contract": "sequence-diagram-generator.published-object",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2612,7 +2743,7 @@
   },
   "sequence-diagram-generator.board-export": {
     "contract": "sequence-diagram-generator.board-export",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2672,7 +2803,7 @@
   },
   "sequence-diagram-generator.publication-manifest": {
     "contract": "sequence-diagram-generator.publication-manifest",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2754,7 +2885,7 @@
   },
   "sequence-diagram-generator.publication-receipt": {
     "contract": "sequence-diagram-generator.publication-receipt",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {
@@ -2827,7 +2958,7 @@
   },
   "sequence-diagram-generator.publish-request": {
     "contract": "sequence-diagram-generator.publish-request",
-    "schema_version": "1",
+    "schema_version": "2",
     "document": {
       "type": "object",
       "properties": {

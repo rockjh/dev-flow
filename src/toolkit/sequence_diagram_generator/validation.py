@@ -114,8 +114,9 @@ class FlowValidator:
             rules.append(RuleResult("document.actual_positions", expected <= actual and bool(scenes), scope.scope.entry_id))
         for scene in bundle.scenes:
             stack = []
-            valid = scene.mermaid.startswith("sequenceDiagram\nautonumber\n") and ";" not in scene.mermaid
-            for line in scene.mermaid.splitlines()[2:]:
+            lines = scene.mermaid.splitlines()
+            valid = lines[:3] == [lines[0], "sequenceDiagram", "autonumber"] and lines[0].startswith("%%{init:") and ";" not in scene.mermaid
+            for line in lines[3:]:
                 if line.startswith(("alt ", "opt ", "loop ", "par ")):
                     stack.append(line.split()[0])
                 elif line == "end":
@@ -127,6 +128,7 @@ class FlowValidator:
                 elif line.startswith("and "):
                     valid = valid and bool(stack) and stack[-1] == "par"
             rules.append(RuleResult("document.mermaid_structure", valid and not stack, scene.filename))
+            rules.append(RuleResult("document.layout", '"wrap": true' in scene.mermaid and '"activationWidth": 14' in scene.mermaid, scene.filename))
         return ValidationReport(tuple(rules))
 
     def validate_sources(self, expected, actual, adapter, current_adapter, requirement_hash, requirements):

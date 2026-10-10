@@ -2,6 +2,8 @@ interface:
   display_name: "bru-api-test-generator"
   short_description: "\u57fa\u4e8e biz-flow \u4ea7\u7269\u751f\u6210 API \u6d4b\u8bd5"
   default_prompt: >-
+    If the request is a standalone sequence diagram, route to sequence-diagram-generator. bru-api may consume accepted sequence reports but must not generate or edit sequence assets. Preserve QA evidence and inspect API/source facts through bru-api.
+    # >-
     使用已安装的 devflow CLI (installed devflow CLI)，只路由到 bru-api-test-generator，并确认
     biz-flow-doc-generator 已完成。只读取 docs/biz-flow/ 的已确认 Markdown、锁和源码证据，
     不重新维护业务设计；skill_version 为 1.0.0，只读写 qa/contracts/bru-api-test-generator-version.json，

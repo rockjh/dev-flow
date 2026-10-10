@@ -5,7 +5,7 @@ from .validation import target_evidence
 
 class RequirementMapper:
     def evaluate(self, requirements, links, model, intent, excluded_segments=(), proposed_steps=(), proposed_controls=()):
-        snapshot, items = requirements
+        snapshot, items = requirements if requirements else (None, ())
         candidates = {s.segment_id for s in snapshot.segments} if snapshot else set()
         evidence = {e.evidence_id for s in model.scopes for e in s.evidence}
         targets = {s.step_id for scope in model.scopes for s in scope.steps}
@@ -19,7 +19,8 @@ class RequirementMapper:
         proposal_requirements = {}
         for proposed in (*proposed_steps, *proposed_controls):
             identifier = getattr(proposed, "step_id", None) or proposed.control_id
-            proofs = {segment for rid in proposed.requirement_ids if rid in items_by_id for segment in items_by_id[rid].segment_ids}
+            refs = getattr(proposed, "source_ids", ())
+            proofs = set(refs) or {segment for rid in getattr(proposed, "requirement_ids", ()) if rid in items_by_id for segment in items_by_id[rid].segment_ids}
             for target in (identifier, *getattr(proposed, "exit_ids", ())):
                 targets.add(target)
                 bindings[target] = proofs
@@ -69,5 +70,7 @@ class RequirementMapper:
         rules.append(RuleResult("requirement.segment_reconciliation", processed == candidates, f"{len(processed)}/{len(candidates)} source segments handled"))
         if intent == "implementation":
             rules.append(RuleResult("requirement.implementation_gate", implemented, "all in-scope requirements implemented"))
+        if intent == "description":
+            rules = [rule for rule in rules if not rule.rule_id.startswith("requirement.implemented") and not rule.rule_id.startswith("requirement.partial") and not rule.rule_id.startswith("requirement.absence") and not rule.rule_id.startswith("requirement.conflict") and not rule.rule_id.startswith("requirement.unresolved")]
         consistency = "not_evaluated" if not model.scopes else "passed" if implemented and not critical and all(rule.passed for rule in rules) else "failed"
         return RequirementReport(tuple(items), tuple(links), len(candidates), len(processed), consistency, ValidationReport(tuple(rules)))

@@ -10,13 +10,26 @@ from .repository import digest, stable_id
 def mermaid_text(value):
     return str(value).replace("\r", " ").replace("\n", " ").replace(";", "；").replace('"', "＂").replace("<", "＜").replace(">", "＞").replace("&", "＆")
 
+def _wrap(value, width=28):
+    import unicodedata
+    out, line, size = [], [], 0
+    for char in str(value):
+        weight = 2 if unicodedata.east_asian_width(char) in "WFA" else 1
+        if char == "\n" or size + weight > width:
+            if line: out.append("".join(line)); line, size = [], 0
+            if char == "\n": continue
+        line.append(char); size += weight
+    if line: out.append("".join(line))
+    return "<br/>".join(out)
+
 
 class SequenceRenderer:
     def _diagram(self, tree, steps, labels, filename, view, block_evidence):
         names = sorted({name for step in steps.values() for name in (step.sender, step.receiver)})
         participants = {name: f"P{index}" for index, name in enumerate(names)}
-        lines = ["sequenceDiagram", "autonumber"] + [f"participant {alias} as {mermaid_text(name)}" for name, alias in participants.items()]
+        lines = ['%%{init: {"sequence": {"wrap": true, "actorMargin": 120, "diagramMarginX": 20, "activationWidth": 14, "messageMargin": 44, "boxMargin": 12}}}%%', "sequenceDiagram", "autonumber"] + [f"participant {alias} as {_wrap(mermaid_text(name))}" for name, alias in participants.items()]
         positions = []
+        active = {}
         def items(values, path):
             for index, item in enumerate(values):
                 location = path + f"/{index}"
@@ -25,11 +38,28 @@ class SequenceRenderer:
                 else:
                     step = steps[item.step_id]
                     arrow = "-->>" if step.kind in {"call_return", "return", "await", "wait"} else "->>"
-                    caption = labels.get(step.step_id, step.label)
+                    caption = _wrap(mermaid_text(labels.get(step.step_id, step.label)))
                     if view == "proposal":
                         caption = "[需求方案] " + caption
                     sender, receiver = (step.receiver, step.sender) if step.kind == "call_return" else (step.sender, step.receiver)
-                    lines.append(f"{participants[sender]}{arrow}{participants[receiver]}: {mermaid_text(caption)}")
+                    lines.append(f"{participants[sender]}{arrow}{participants[receiver]}: {caption}")
+                    if step.kind == "call_return":
+                        dependency = next((item for item in step.dependencies if item in active), None)
+                        if dependency:
+                            target = active.pop(dependency)
+                            lines.append(f"deactivate {participants[target]}")
+                        elif active:
+                            key = next(reversed(active))
+                            target = active.pop(key)
+                            lines.append(f"deactivate {participants[target]}")
+                    elif step.kind in {"return", "await", "wait"}:
+                        target = next((key for key in tuple(active) if active[key] == receiver), None)
+                        if target:
+                            active.pop(target, None)
+                            lines.append(f"deactivate {participants[receiver]}")
+                    else:
+                        active[step.step_id] = receiver
+                        lines.append(f"activate {participants[receiver]}")
                     positions.append(DiagramPosition(step.step_id, filename, location, step.evidence_ids))
         def arm_position(block, arm, location):
             if arm.exit_id:
@@ -60,6 +90,8 @@ class SequenceRenderer:
                 items(arm.items, path + f"/arm:{index}")
             lines.append("end")
         visit(tree, "root")
+        for receiver in reversed(tuple(active.values())):
+            lines.append(f"deactivate {participants[receiver]}")
         return "\n".join(lines) + "\n", tuple(positions)
 
     def build(self, model, annotations, intent, requirement_report):
@@ -78,11 +110,11 @@ class SequenceRenderer:
             markdown = f"# {scope.scope.symbol.qualified_name}\n\n目的：呈现选定范围的当前静态实现。\n\n参与方：{'、'.join(names) or '所选函数'}。\n\n关键流程：按代码控制出口、调用上下文和已观察等待关系展示；依赖内部不展开。\n\n```mermaid\n{mermaid}```\n\n完整覆盖仅指选定静态范围内已发现的相关控制点及出口，不证明所有输入、循环次数或并发交错。\n"
             scenes.append(SceneDocument(filename, scope.scope.entry_id, "implementation", scope.sequence, mermaid, markdown, positions))
             rows += [f"| `{p.target_id}` | {filename} | `{p.tree_path}` | {', '.join(p.evidence_ids)} |" for p in positions]
-        if intent == "proposal" and requirement_report.requirements:
+        if intent in {"proposal", "description"} and (annotations.proposed_steps or annotations.proposed_controls):
             steps, seq = {}, []
             by_requirement = {r.requirement_id: r for r in requirement_report.requirements}
             for proposed in annotations.proposed_steps:
-                evidence = tuple(segment for rid in proposed.requirement_ids for segment in by_requirement[rid].segment_ids)
+                evidence = tuple(proposed.source_ids) or tuple(segment for rid in proposed.requirement_ids if rid in by_requirement for segment in by_requirement[rid].segment_ids)
                 step = FlowStep(proposed.step_id, "requirement-plan", proposed.kind, proposed.sender, proposed.receiver,
                                 proposed.label + " [" + ", ".join(proposed.requirement_ids) + "]", "", evidence)
                 steps[step.step_id] = step

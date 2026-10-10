@@ -17,3 +17,7 @@ The authoritative version file is `qa/contracts/bru-api-test-generator-version.j
 `qa-lock.yaml` 继续作为 QA 状态锁；不要把它当作 Skill 版本文件。
 证据缺失、过期、归属不明、目标不安全或 CLI 门禁失败时停止，并返回脱敏报告
 或权威产物路径。
+
+## Cross-skill routing
+
+If a request is for a standalone sequence diagram, route it to the installed `sequence-diagram-generator` Skill. bru-api may consume accepted diagram or biz-flow reports as evidence, but it must not regenerate or edit sequence assets; API and source facts stay in the bru-api workflow and QA ownership lock.

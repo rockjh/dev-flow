@@ -12,7 +12,7 @@ from typing import Any
 BRU_API_SCHEMA_VERSION = "6.2"
 BIZ_FLOW_SCHEMA_VERSION = "4"
 E2E_GATE_SCHEMA_VERSION = "10"
-SEQUENCE_SCHEMA_VERSION = "1"
+SEQUENCE_SCHEMA_VERSION = "2"
 E2E_RUNTIME_CLASSIFICATIONS = (
     "protocol_available",
     "service_not_found",
@@ -2153,15 +2153,17 @@ CONTRACT_SCHEMAS["sequence-diagram-generator.domain-command-result"] = {
         "summary": {"type": "string"}, "data": {"type": "object"}, "artifact_path": {"type": "string"}},
         "required": ["summary", "data", "artifact_path"], "additionalProperties": False}}
 for _command, _options in {
-    "init": {},
-    "discover": {"--mode": "code|requirement", "--intent": "implementation|proposal", "--entry": "string[]",
-                 "--requirement-file": "path", "--requirement-url": "url", "--requirement-text": "string", "--source-anchor": "string"},
-    "prepare": {"--run-id": "uuid-hex", "--entry-id": "string[]", "--all-entries": "boolean", "--confirm": "boolean",
+    "init": {"--out": "path"},
+    "discover": {"--intent": "implementation|proposal|description", "--entry": "string[]", "--out": "path",
+                 "--requirement-file": "path", "--requirement-url": "url", "--requirement-text": "string",
+                 "--description-file": "path", "--description-url": "url", "--description-text": "string", "--source-anchor": "string"},
+    "prepare": {"--run-id": "uuid-hex", "--entry-id": "string[]", "--segment-id": "string[]", "--all-entries": "boolean", "--all-segments": "boolean", "--out": "path", "--confirm": "boolean",
                 "--execution-mode": "native|serial", "--execution-approval": "string"},
     "collect": {"--run-id": "uuid-hex", "--results": "path"},
     "check": {"--run-id": "uuid-hex", "--stage": "entries|delivery", "--full": "boolean"},
     "verify": {"--run-id": "uuid-hex"},
     "accept": {"--run-id": "uuid-hex"},
+    "clean": {"--run-id": "uuid-hex", "--all": "boolean"},
     "publish": {"--run-id": "uuid-hex", "--stage": "prepare|collect|check", "--target": "url-or-id", "--write-scope": "string",
                 "--execution-approval": "string", "--reference-bundle": "path", "--receipt": "path"},
 }.items():

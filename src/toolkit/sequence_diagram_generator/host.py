@@ -62,15 +62,17 @@ class HostHandoff:
                     raise DevflowError("GATE_FAILED", "requirement identity or source scope is invalid", ExitCode.GATE_FAILED)
             proposed_ids = set()
             for step in result.annotations.proposed_steps:
-                if not re.fullmatch(r"S-[0-9a-f]{24}", step.step_id) or step.step_id in proposed_ids or not step.requirement_ids or not set(step.requirement_ids) <= requirement_ids or not all((step.sender.strip(), step.receiver.strip(), step.label.strip())):
+                refs = set(step.source_ids) or set(step.requirement_ids)
+                if not re.fullmatch(r"S-[0-9a-f]{24}", step.step_id) or step.step_id in proposed_ids or not refs or not refs <= set(task.segment_ids) | requirement_ids or not all((step.sender.strip(), step.receiver.strip(), step.label.strip())):
                     raise DevflowError("GATE_FAILED", "proposal step lacks requirement evidence or unique identity", ExitCode.GATE_FAILED)
                 proposed_ids.add(step.step_id)
             control_ids = {control.control_id for control in result.annotations.proposed_controls}
             if len(control_ids) != len(result.annotations.proposed_controls):
                 raise DevflowError("GATE_FAILED", "duplicate proposal control identity", ExitCode.GATE_FAILED)
             for control in result.annotations.proposed_controls:
+                refs = set(control.source_ids) or set(control.requirement_ids)
                 if (not re.fullmatch(r"B-[0-9a-f]{24}", control.control_id) or control.kind not in {"alt", "opt", "loop", "par"}
-                    or not control.requirement_ids or not set(control.requirement_ids) <= requirement_ids
+                    or not refs or not refs <= set(task.segment_ids) | requirement_ids
                     or not control.exit_ids or len(set(control.exit_ids)) != len(control.exit_ids)):
                     raise DevflowError("GATE_FAILED", "proposal control is missing requirement evidence", ExitCode.GATE_FAILED)
             if result.annotations.proposed_sequence:
