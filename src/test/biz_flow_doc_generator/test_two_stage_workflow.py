@@ -29,6 +29,23 @@ def test_empty_git_head_cannot_turn_worktree_into_a_historical_snapshot(tmp_path
     assert info.comparison == "current"
 
 
+def test_dirty_worktree_source_view_uses_committed_files(tmp_path):
+    (tmp_path / "app.py").write_text("committed = True\n", encoding="utf-8")
+    for args in (("init", "-q"), ("config", "user.name", "Test"),
+                 ("config", "user.email", "test@example.invalid"), ("add", "app.py"),
+                 ("commit", "-qm", "baseline")):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True)
+    version = tmp_path / "docs" / "biz-flow"
+    version.mkdir(parents=True)
+    (version / "biz-flow-doc-generator-version.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "app.py").write_text("committed = False\n", encoding="utf-8")
+    (tmp_path / "untracked.py").write_text("untracked = True\n", encoding="utf-8")
+    with git.source_view(tmp_path) as (view, info):
+        assert info.dirty is True
+        assert (view / "app.py").read_text(encoding="utf-8") == "committed = True\n"
+        assert not (view / "untracked.py").exists()
+
+
 def test_windows_git_capture_preserves_commit_dirty_and_failure_details(tmp_path, monkeypatch):
     """真实子进程写入文件句柄，验证元数据、错误输出及空状态不会被误判。"""
     import sys
@@ -183,4 +200,6 @@ def test_entry_directory_is_complete_without_behavior_analysis(tmp_path, monkeyp
     modules[0].write_text(content, encoding="utf-8")
     with (tmp_path / "app.py").open("a", encoding="utf-8") as stream:
         stream.write("\n# 删除用户资料\n@app.delete('/users')\ndef delete_user(): return True\n")
-    assert cli.check_command([*args, "--stage", "entries"]) == 1
+    # Uncommitted source is outside the generation snapshot and does not alter
+    # the committed entry directory until it is committed.
+    assert cli.check_command([*args, "--stage", "entries"]) == 0

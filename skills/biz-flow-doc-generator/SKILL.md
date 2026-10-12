@@ -125,3 +125,8 @@ machine-compatible.
 ## Cross-skill routing
 
 When the requested output is a standalone sequence diagram, route to the installed `sequence-diagram-generator` Skill. For this Skill's own documents, inspect project code and registered entries through the biz-flow CLI before writing business diagrams. Keep source-symbol evidence separate from requirement or description segment evidence, and never claim source-backed diagrams without completed code analysis and host-attested receipts.
+
+## Git source snapshot gate
+
+When the project has a Git version record, generation must read only the recorded committed snapshot (or committed HEAD when no baseline is recorded). Never read modified or untracked source files. If a tracked file is modified but uncommitted, use its pre-change committed content and record that commit; stop on missing or invalid Git evidence.
+After successful completion, delete process-only temporary artifacts and retain only owned business assets, the version lock, and authoritative reports or recovery evidence.

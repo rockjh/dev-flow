@@ -46,3 +46,6 @@ interface:
     fail; retain completed work without claiming overall success. Respond in Chinese
     with the complete overview, redacted authoritative manifest/report paths, exit
     status, coverage, per-entry unresolved counts and stability.
+
+# Git source snapshot gate: use only the recorded committed snapshot; exclude modified and untracked files; use pre-change committed content for uncommitted edits; stop when Git evidence is missing or invalid.
+# Completion cleanup: remove process-only temporary artifacts after success; retain owned assets, version lock, authoritative reports, and recovery evidence.

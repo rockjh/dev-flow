@@ -15,3 +15,8 @@ The authoritative version file is `analysis/e2e-test-generator-version.json` and
 ## Cross-skill routing
 
 If a request is for a standalone sequence diagram, route it to the installed `sequence-diagram-generator` Skill. E2E scenarios may reference an accepted sequence report, but this Skill does not generate or rewrite sequence assets. Code facts remain bound to the E2E workflow evidence.
+
+## Git source snapshot gate
+
+When the project has a Git version record, generation must read only the recorded committed snapshot (or committed HEAD when no baseline is recorded). Never read modified or untracked source files. If a tracked file is modified but uncommitted, use its pre-change committed content and record that commit; stop on missing or invalid Git evidence.
+After successful completion, delete process-only temporary artifacts and retain only owned business assets, the version lock, and authoritative reports or recovery evidence.

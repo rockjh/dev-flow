@@ -7,6 +7,8 @@ import argparse
 import fnmatch
 import hashlib
 import json
+import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -135,11 +137,26 @@ def is_qa_path(path: str) -> bool:
 
 
 def source_digest(repo: Path, *, exclude_root: Path | None = None) -> str:
-    """Hash current business files without reading version-control history."""
+    """Hash the committed business tree when Git is available."""
 
     repo = repo.resolve()
     candidate = exclude_root.resolve() if exclude_root is not None else None
     excluded = candidate if candidate is not None and candidate != repo and candidate.is_relative_to(repo) else None
+    git = shutil.which("git")
+    if git and (repo / ".git").exists():
+        tree = subprocess.run([git, "-C", str(repo), "ls-tree", "-r", "--name-only", "HEAD"], capture_output=True, text=True, check=False)
+        if tree.returncode == 0:
+            digest = hashlib.sha256()
+            for value in sorted(item for item in tree.stdout.splitlines() if item):
+                relative = Path(value)
+                if any(part in {".git", "qa", "node_modules", "target", "build", ".venv", "venv"} for part in relative.parts):
+                    continue
+                path = repo / relative
+                if excluded is not None and (path.resolve() == excluded or excluded in path.resolve().parents):
+                    continue
+                content = subprocess.run([git, "-C", str(repo), "show", f"HEAD:{value}"], capture_output=True, check=False).stdout
+                digest.update(value.encode("utf-8")); digest.update(b"\0"); digest.update(content); digest.update(b"\0")
+            return digest.hexdigest()
     values = [
         str(path.relative_to(repo))
         for path in repo.rglob("*")

@@ -193,6 +193,7 @@ def test_repeated_discovery_preserves_reviewed_filename_without_confirming(tmp_p
     result = scan(tmp_path)
     docs = tmp_path / "docs" / "biz-flow"
     _, map_path = write_discovery(result, docs)
+    (docs / "biz-flow-doc-generator-version.json").write_text("{}", encoding="utf-8")
     overview = docs / "业务流程覆盖总览.md"
     text = overview.read_text(encoding="utf-8")
     assert "<!-- devflow:module-confirmed -->" not in text
@@ -208,7 +209,9 @@ def test_repeated_discovery_preserves_reviewed_filename_without_confirming(tmp_p
     source = tmp_path / "DeviceController.java"
     source.write_text(source.read_text(encoding="utf-8") + "\n// 更新设备入口说明。\n", encoding="utf-8")
     changed = scan(tmp_path, entry_only=True)
-    assert changed.source_fingerprint != result.source_fingerprint
+    # Dirty source is intentionally excluded from generation; the committed
+    # snapshot remains the authoritative input until the edit is committed.
+    assert changed.source_fingerprint == result.source_fingerprint
     write_discovery(changed, docs)
     updated = overview.read_text(encoding="utf-8")
     assert changed.source_fingerprint in updated

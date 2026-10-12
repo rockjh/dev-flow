@@ -21,3 +21,8 @@ The authoritative version file is `qa/contracts/bru-api-test-generator-version.j
 ## Cross-skill routing
 
 If a request is for a standalone sequence diagram, route it to the installed `sequence-diagram-generator` Skill. bru-api may consume accepted diagram or biz-flow reports as evidence, but it must not regenerate or edit sequence assets; API and source facts stay in the bru-api workflow and QA ownership lock.
+
+## Git source snapshot gate
+
+When the project has a Git version record, generation must read only the recorded committed snapshot (or committed HEAD when no baseline is recorded). Never read modified or untracked source files. If a tracked file is modified but uncommitted, use its pre-change committed content and record that commit; stop on missing or invalid Git evidence.
+After successful completion, delete process-only temporary artifacts and retain only owned business assets, the version lock, and authoritative reports or recovery evidence.

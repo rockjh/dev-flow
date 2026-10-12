@@ -206,7 +206,7 @@ def source_status_command(argv: list[str]) -> int:
     for error in errors:
         print(error, file=sys.stderr)
     print(json.dumps({"schema_version": RULES_VERSION, "results": results}, ensure_ascii=False))
-    failing = {"affected", "full_rediscovery_required", "dirty_review_required"}
+    failing = {"affected", "full_rediscovery_required"}
     code = int(ExitCode.GATE_FAILED) if errors or any(item["outcome"] in failing for item in results) else 0
     if code == 0:
         advance_baseline(root, report)

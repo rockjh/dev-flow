@@ -10,3 +10,6 @@ interface:
     并将 qa-lock.yaml 仅作为 QA 状态锁；只生成 API 测试资产、中文 Bruno 请求、配置、锁和报告。
     保留核心架构、安全、脱敏和所有权规则；stop when 证据缺失、目标不安全或校验失败，
     返回 redacted authoritative 报告或产物路径。
+
+# Git source snapshot gate: use only the recorded committed snapshot; exclude modified and untracked files; use pre-change committed content for uncommitted edits; stop when Git evidence is missing or invalid.
+# Completion cleanup: remove process-only temporary artifacts after success; retain owned assets, version lock, authoritative reports, and recovery evidence.

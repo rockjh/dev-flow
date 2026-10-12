@@ -64,10 +64,15 @@ def git_info(root: Path, target: str | None = None) -> GitInfo:
 
 @contextmanager
 def source_view(root: Path, target: str | None = None) -> Iterator[tuple[Path, GitInfo]]:
-    """Yield the worktree for HEAD, or an extracted read-only target snapshot."""
+    """Yield a committed read-only view whenever a Git baseline is available.
+
+    A dirty worktree must never feed generation: changed files are read from the
+    committed target and untracked files are absent from the archive.
+    """
 
     info = git_info(root, target)
-    if info.target == info.head:
+    has_version_record = (root / "docs" / "biz-flow" / "biz-flow-doc-generator-version.json").is_file()
+    if info.target == info.head and (not info.dirty or not has_version_record):
         yield root, info
         return
     with tempfile.TemporaryDirectory(prefix="devflow-biz-flow-") as temporary:

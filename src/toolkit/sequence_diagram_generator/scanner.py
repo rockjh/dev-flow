@@ -4,6 +4,9 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
+import zipfile
+from dataclasses import replace
 from pathlib import Path
 
 from ..core.errors import DevflowError, ExitCode
@@ -25,6 +28,24 @@ class ProjectScanner:
         self.registry = registry
 
     def snapshot(self, context: ProjectContext) -> SourceSnapshot:
+        git = shutil.which("git")
+        commit, dirty = "", True
+        if git and (context.project / ".git").exists():
+            arguments = [git, "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-C", str(context.project)]
+            head = subprocess.run([*arguments, "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10, check=False)
+            status = subprocess.run([*arguments, "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True, timeout=10, check=False)
+            if head.returncode == 0:
+                commit = head.stdout.strip()
+                dirty = status.returncode != 0 or bool(status.stdout.strip())
+            if commit and dirty:
+                with tempfile.TemporaryDirectory(prefix="devflow-sequence-snapshot-") as temporary:
+                    archive = Path(temporary) / "source.zip"
+                    subprocess.run([*arguments, "archive", "--format=zip", "-o", str(archive), commit], check=True)
+                    with zipfile.ZipFile(archive) as zipped:
+                        zipped.extractall(temporary)
+                    relative_assets = context.assets.relative_to(context.project)
+                    snapshot = self.snapshot(replace(context, project=Path(temporary), assets=Path(temporary) / relative_assets))
+                    return replace(snapshot, git_commit=commit, git_dirty=True)
         files, contents = [], []
         size = 0
         for parent, directories, names in os.walk(context.project, followlinks=False):
@@ -62,17 +83,6 @@ class ProjectScanner:
         files.sort(key=lambda item: item.path)
         contents.sort()
         configs = tuple(item for item in files if not item.language)
-        commit, dirty = "", True
-        git = shutil.which("git")
-        if git and (context.project / ".git").exists():
-            arguments = [git, "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-C", str(context.project)]
-            for command in (("rev-parse", "HEAD"), ("status", "--porcelain", "--untracked-files=no")):
-                result = subprocess.run([*arguments, *command], capture_output=True, text=True, timeout=10, check=False)
-                if result.returncode == 0:
-                    if command[0] == "rev-parse":
-                        commit = result.stdout.strip()
-                    else:
-                        dirty = bool(result.stdout.strip())
         return SourceSnapshot(tuple(files), digest(tuple((item.path, item.digest) for item in files)), commit, dirty, digest(configs), tuple(contents))
 
     def discover(self, snapshot: SourceSnapshot) -> DiscoveryCatalog:

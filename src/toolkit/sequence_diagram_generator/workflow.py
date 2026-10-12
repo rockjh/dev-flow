@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from dataclasses import replace
 import json
+import shutil
 from pathlib import Path
 
 from .. import __version__
@@ -56,6 +57,12 @@ class SequenceWorkflow:
             return None
         name = "input.json" if (self.repository.artifact_path(context, manifest.run_id, "input.json")).exists() else "requirements.json"
         return self.repository.read_artifact(context, manifest.run_id, name, RequirementSnapshot)
+
+    def _cleanup_process_artifacts(self, context, run_id):
+        """Remove renderer scratch files after their hashes are recorded."""
+        scratch = self.repository.run_path(context, run_id) / "tmp"
+        if scratch.exists():
+            shutil.rmtree(scratch, ignore_errors=True)
 
     def _recheck(self, context, manifest):
         snapshot = self.scanner.snapshot(context)
@@ -193,6 +200,7 @@ class SequenceWorkflow:
                                    details_path=self._path(context, request.run_id, "validation.json"))
             manifest = replace(manifest, state=RunState.COLLECTED)
             self.repository.save(context, manifest)
+            self._cleanup_process_artifacts(context, request.run_id)
             return self._result(context, manifest, "document-bundle.json", render_status=render.status, implementation_consistency=report.implementation_consistency)
 
     def check(self, request):
@@ -237,6 +245,7 @@ class SequenceWorkflow:
             manifest = self.repository.record(context, manifest, "verification.json", record)
             manifest = replace(manifest, state=RunState.VERIFIED)
             self.repository.save(context, manifest)
+            self._cleanup_process_artifacts(context, request.run_id)
             return self._result(context, manifest, "verification.json", reproducible=True, render_status=render.status, verified_digest=record.verified_digest)
 
     def accept(self, request):

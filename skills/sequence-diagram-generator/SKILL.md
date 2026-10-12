@@ -26,3 +26,8 @@ Do not execute target code, builds, generators, macros, target npm scripts or HT
 
 Stop on missing dependencies, ambiguous symbols, credential or path violations, missing host receipts or serial execution approval, changed sources, critical gaps, invalid ordering, edited/unowned assets or conflicting baselines. Online publishing requests must be handed off to the user-level Feishu workflow. Preserve diagnostics. Missing mmdc is `not_run`, not render success; an available renderer failing blocks delivery. Existing user files and manually edited generated files must never be overwritten.
 `intent-and-inputs` and `diagram-conventions` are required references for discover and rendering.
+
+## Git source snapshot gate
+
+When the project has a Git version record, generation must read only the recorded committed snapshot (or committed HEAD when no baseline is recorded). Never read modified or untracked source files. If a tracked file is modified but uncommitted, use its pre-change committed content and record that commit; stop on missing or invalid Git evidence.
+After successful completion, delete process-only temporary artifacts and retain only owned business assets, the version lock, and authoritative reports or recovery evidence.
