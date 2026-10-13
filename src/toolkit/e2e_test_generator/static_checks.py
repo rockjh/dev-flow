@@ -1342,6 +1342,7 @@ def _yaml_comment_errors(path: Path) -> list[str]:
 def _diagram_errors(project_root: Path) -> list[str]:
     """校验所有生成图都使用业务或系统交互粒度的 Mermaid 流程表达。"""
 
+    from ..core.sequence import validate_sequence
     errors: list[str] = []
     for path in _walk_files(project_root):
         if path.suffix.casefold() != ".md":
@@ -1362,6 +1363,8 @@ def _diagram_errors(project_root: Path) -> list[str]:
             lines = [line.strip() for line in block.splitlines() if line.strip() and not line.lstrip().startswith("%%")]
             kind = lines[0].split(maxsplit=1)[0] if lines else ""
             kinds.append(kind)
+            if kind == "sequenceDiagram":
+                errors.extend(_error(path, "diagram-activation", error) for error in validate_sequence(block))
             if kind not in {"sequenceDiagram", "flowchart"}:
                 errors.append(_error(path, "diagram-type", "生成图形只允许业务序列图或高层流程/服务交互图", kind or "```mermaid"))
         if path.name == "业务流程图.md" and kinds != ["sequenceDiagram"]:

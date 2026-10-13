@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "devflow"
-version = "8.2.0"
+version = "9.1.0"
 description = "统一开发生命周期工具包"
 requires-python = ">=3.11"
 dependencies = [

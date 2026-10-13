@@ -1,4 +1,4 @@
-"""Conservative source discovery for business entry points and active errors."""
+"""Registration identity and business ownership; behavior belongs to fact adapters."""
 
 from __future__ import annotations
 
@@ -7,14 +7,19 @@ import configparser
 from difflib import SequenceMatcher
 import hashlib
 import json
+import os
+import subprocess
+import tempfile
+import sys
+import time
 import re
 import textwrap
 import tomllib
 from pathlib import Path
 from typing import Callable
 
-from .git import source_view
-from .models import BehaviorEvidence, EntryPoint, ErrorEvidence, FunctionInfo, ScanResult
+from .git import source_view, git_info, _run
+from .models import EntryPoint, FunctionInfo, ScanResult
 
 _LOCAL_SYNTAX_NAMES = {"if", "else", "catch", "try", "for", "while", "input", "return"}
 
@@ -41,7 +46,10 @@ def _capability_id(language: str, relative: str, function: FunctionInfo, text: s
 
 EXCLUDED_DIRS = {
     ".git", ".idea", ".venv", "venv", "env", ".tox", ".nox", "node_modules", "dist", "build", "target",
-    "vendor", "docs", "logs", "log", "__pycache__", ".gradle", ".mvn", ".pytest_cache",
+    "vendor", "__pycache__", ".gradle", ".mvn", ".pytest_cache",
+    # Tool-owned worktrees and editor/agent state are never source evidence.
+    ".worktrees", ".git-worktrees", ".trae", ".dltk", ".codex", ".agents", ".idea-workspace",
+    ".vscode", ".fleet", ".cursor", ".windsurf", ".clinerules", ".devflow", ".local",
 }
 _EXCLUDED_DIRS_CASEFOLD = {item.casefold() for item in EXCLUDED_DIRS}
 EXTENSIONS = {
@@ -83,78 +91,14 @@ def _trigger_summary(entry: EntryPoint) -> str:
     return f"{labels.get(entry.kind, entry.kind)}：{entry.identifier}" if adapter else f"{entry.kind}：{entry.identifier}"
 
 
-_BUSINESS_DOMAIN_LABELS = {
-    # 通用领域词汇；未命中时仍回退到源码路径模块，避免凭空创造业务域。
-    "ac": "AC",
-    "user": "用户",
-    "account": "账户",
-    "auth": "用户认证",
-    "login": "用户认证",
-    "esim": "eSIM",
-    "device": "设备",
-    "terminal": "设备",
-    "oti": "设备",
-    "tbox": "车辆",
-    "vehicle": "车辆",
-    "car": "车辆",
-    "sim": "SIM 卡",
-    "iccid": "码号",
-    "imsi": "码号",
-    "msisdn": "码号",
-    "number": "码号",
-    "profile": "套餐",
-    "plan": "套餐",
-    "package": "套餐",
-    "usage": "套餐用量",
-    "operator": "运营商",
-    "country": "国家地区",
-    "region": "国家地区",
-    "rule": "规则",
-    "monitor": "监控",
-    "order": "订单",
-    "salearea": "销售地",
-    "tsp": "TSP",
-    "sms": "短信",
-    "record": "记录",
-    "group": "分组",
-    "allocation": "分配",
-    "file": "文件",
-    "batch": "批量任务",
-    "log": "日志",
-}
-_BUSINESS_ACTION_LABELS = {
-    "sync": "同步", "report": "上报", "receive": "接收", "push": "推送",
-    "callback": "回调", "import": "导入", "export": "导出", "query": "查询",
-    "list": "查询", "get": "查询", "search": "查询", "create": "创建",
-    "register": "登记", "claim": "领取", "allocate": "分配", "download": "下载",
-    "delete": "删除", "remove": "删除", "update": "更新", "change": "变更",
-    "status": "状态处理", "request": "请求", "generate": "生成", "process": "处理",
-    "reset": "重置", "trigger": "触发", "complete": "完成", "release": "释放",
-}
-
-
 def _name_tokens(value: str) -> list[str]:
     value = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value)
-    tokens = [token.casefold() for token in re.findall(r"[A-Za-z][A-Za-z0-9]*", value)]
-    return [token[:-1] if token.endswith("s") and token[:-1] in _BUSINESS_DOMAIN_LABELS else token for token in tokens]
+    return [token.casefold() for token in re.findall(r"[A-Za-z][A-Za-z0-9]*", value)]
 
 
 def _inferred_business_name(entry: EntryPoint) -> str:
-    """从入口注释、类名、路由和方法名推断可读名称，保留源码可追溯性。"""
-    sources = " ".join((entry.title, entry.handler, Path(entry.file).stem, entry.identifier))
-    tokens = _name_tokens(sources)
-    # 批量、记录等描述处理形式，只有没有更具体业务对象时才作为模块。
-    generic = {"batch", "record", "group", "allocation", "log", "sync"}
-    tokens = [token for token in tokens if token not in generic] + [token for token in tokens if token in generic]
-    domain = next((_BUSINESS_DOMAIN_LABELS[token] for token in tokens if token in _BUSINESS_DOMAIN_LABELS), "")
-    action = next((_BUSINESS_ACTION_LABELS[token] for token in tokens if token in _BUSINESS_ACTION_LABELS), "")
-    if domain and action:
-        return f"{domain}{action}"
-    if domain:
-        return f"{domain}业务入口"
-    if action:
-        return f"业务{action}"
-    return ""
+    """Keep source wording when no explicit business description exists."""
+    return entry.title.strip() or f"业务入口：{entry.handler}（{entry.identifier}）"
 
 
 def _business_name(entry: EntryPoint) -> str:
@@ -201,7 +145,6 @@ ERROR_RE = re.compile(r"\b(?:raise|throw|panic)\b[^\n;]*", re.IGNORECASE)
 CODE_RE = re.compile(r"[\"']((?:[A-Z][A-Z0-9_.:-]{2,}|\d{3,}))[\"']")
 ENUM_RE = re.compile(r"\b(?:ErrorCode|Errors?|StatusCode)\.([A-Z][A-Z0-9_]+)")
 STATUS_CODE_RE = re.compile(r"\b(?:status_code|code)\s*=\s*(\d{3,})\b", re.IGNORECASE)
-CALL_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 IGNORED_EXTERNAL_CALLS = {
     "get", "post", "put", "patch", "delete", "head", "request", "fetch", "save", "insert", "update",
     "create", "publish", "send", "emit", "execute", "query", "commit", "rollback", "close", "log",
@@ -346,104 +289,8 @@ def _module_name(relative: Path, identifier: str, text: str = "", line: int = 0)
 
 
 def _business_module_name(entry: EntryPoint) -> str:
-    """按一级业务域归组，渠道、操作和触发方式保留在域内入口说明。"""
-    aliases = {
-        "user": "user", "account": "account", "auth": "auth", "login": "auth",
-        "ac": "ac", "esim": "number", "sim": "number", "iccid": "number", "imsi": "number",
-        "msisdn": "number", "number": "number", "device": "device", "terminal": "device",
-        "oti": "device", "tbox": "vehicle", "vehicle": "vehicle", "car": "vehicle",
-        "profile": "plan", "plan": "plan", "package": "plan", "usage": "usage",
-        "operator": "operator", "country": "country", "region": "country", "rule": "rule",
-        "monitor": "monitor", "order": "order", "salearea": "salearea", "tsp": "tsp",
-        "sms": "sms", "log": "log",
-    }
-
-    def domain(value: str) -> str:
-        tokens = _name_tokens(value)
-        # 小写包名常把业务形容词与对象连写，如 salableplan；仍按既有业务对象归一。
-        for token in tokens:
-            if token in aliases:
-                return aliases[token]
-            for noun in ("usage", "plan", "profile", "package", "vehicle", "device"):
-                if token.endswith(noun) and len(token) > len(noun):
-                    return aliases[noun]
-        return ""
-
-    def display(value: str) -> str:
-        if value == "usage":
-            return "用量"
-        label = _BUSINESS_DOMAIN_LABELS.get(value, value)
-        return label if re.search(r"[\u3400-\u9fff]", label) else f"{label}业务"
-
-    parts = list(Path(entry.file).parts[:-1])
-    source_domain = next((parts[index + 1] for index, part in enumerate(parts[:-1])
-                          if re.fullmatch(r"v\d+", part, re.I)), "")
-    class_name = Path(entry.file).stem
-    semantics = f"{class_name} {entry.identifier} {entry.module_label} {entry.business_name}"
-    # 用量是独立业务域，即使注册在车辆或套餐命名空间下也不按查询渠道拆分。
-    if "usage" in _name_tokens(semantics) or "用量" in entry.module_label:
-        return "用量"
-    # 未收录的源码一级域可由同名缩写证明，不把 DMS 等业务系统拆成配置/回调/任务。
-    abbreviation = re.match(r"([A-Z][A-Z0-9_-]{1,})", entry.module_label)
-    if source_domain and abbreviation and abbreviation.group(1).casefold() == source_domain.casefold():
-        return display(abbreviation.group(1))
-    class_tokens = _name_tokens(class_name)
-    if any(token in {"sim", "esim", "iccid", "imsi", "msisdn", "number"} for token in class_tokens):
-        return "码号"
-    if source_domain and domain(source_domain):
-        return display(domain(source_domain))
-    route_resources = [part for part in entry.identifier.split(" ", 1)[-1].split("/")
-                       if part and not part.startswith("{") and not re.fullmatch(r"v\d+", part, re.I)
-                       and part.casefold() not in {"api", "admin", "public", "internal", "private"}]
-    if route_resources and domain(route_resources[0]):
-        return display(domain(route_resources[0]))
-    # 套餐目录、订单、订购、履约及提醒均属于套餐域，不按运营商或销售渠道拆模块。
-    if any(domain(token) == "plan" for token in _name_tokens(semantics)) or "套餐" in semantics:
-        return "套餐"
-    if abbreviation and not domain(abbreviation.group(1)):
-        return display(abbreviation.group(1))
-    for token in _name_tokens(f"{class_name} {entry.identifier}"):
-        if token in aliases:
-            return display(aliases[token])
-    for part in reversed(parts):
-        if domain(part):
-            return display(domain(part))
-    # 没有通用领域词时保留源码中文业务对象，去掉动作和入口形式，不猜测其他领域。
-    label = entry.module_label or entry.business_name
-    label = re.sub(r"^(?:查询|创建|新增|编辑|删除|配置|管理|同步|回调|通知|履约|恢复|接收|开通|变更)", "", label)
-    label = re.sub(r"(?:(?:查询|创建|新增|编辑|删除|配置|管理|同步|回调|通知|履约|恢复|接收|开通|变更)[，、；：。\s]*)+$", "", label).strip("，、；：。 ")
-    label = re.sub(r"(?:与|和|及|以及|或)+$", "", label).strip()
-    if label and label != "待确认" and re.search(r"[\u3400-\u9fff]", label):
-        return label
-    return display(source_domain or entry.module)
-
-
-def _error(line: str, file: str, number: int) -> ErrorEvidence:
-    # Prefer the code attached to the raised/thrown error.  Conditions often
-    # contain unrelated uppercase literals (for example a payment status
-    # ``"PAID"``) before the actual ``raise OrderError("PAYMENT_FAILED")``.
-    # Searching the whole condition first mislabels the business error.
-    raised = re.search(r"(?:raise|throw|panic)\b[^\n;]*", line, re.IGNORECASE)
-    code_match = (
-        (CODE_RE.search(raised.group(0)) if raised else None)
-        or CODE_RE.search(line)
-        or ENUM_RE.search(line)
-        or STATUS_CODE_RE.search(line)
-    )
-    code = code_match.group(1) if code_match else "代码中未确认"
-    condition = line.strip()
-    phase = "async" if re.search(r"\b(?:async|await|submit|enqueue|publish|send)\b", condition, re.I) else "sync"
-    return ErrorEvidence(
-        code=code,
-        condition=condition,
-        file=file,
-        line=number,
-        capture_boundary="入口或当前调用链抛出；未见本地捕获" if phase == "sync" else "异步任务边界；工作线程结果不回到同步响应",
-        propagation="向调用方传播或由上层映射；具体映射以证据为准",
-        consequence="本地写入、远端状态和后续任务结果代码中未确认",
-        phase=phase,
-        recovery="代码中未确认自动重试、补偿或人工恢复入口",
-    )
+    """Project-owned labels first; the source package/path is the fallback."""
+    return entry.module_label.strip() or entry.module
 
 
 def _source_syntax(text: str) -> str:
@@ -454,20 +301,42 @@ def _source_syntax(text: str) -> str:
     )
 
 
-def _qualified_calls(body: str) -> list[tuple[str, str]]:
-    """Keep receiver information so a same-named method is not merged blindly."""
-    body = _source_syntax(body)
-    calls = [
-        (receiver, name)
-        for receiver, name in re.findall(
-            r"\b(?:self\s*\.\s*)?([A-Za-z_]\w*)\s*\.\s*([A-Za-z_]\w*)\s*\(", body
-        )
-        if receiver not in {"self", "cls", "super"}
-    ]
-    return list(dict.fromkeys(calls))
-
-
 def _functions(text: str, language: str, relative: str) -> list[FunctionInfo]:
+    if language in {"TypeScript", "JavaScript", "Go"}:
+        from ..core.syntax import parser_for, field, walk, text as node_text
+        raw = text.encode("utf-8")
+        tree = parser_for(language.lower(), relative.endswith(".tsx")).parse(raw).root_node
+        functions = []
+        for node in walk(tree):
+            if node.type not in {"function_declaration", "method_definition", "method_declaration"}:
+                continue
+            name_node = field(node, "name")
+            if name_node is None:
+                continue
+            owner, parent = "", node.parent
+            while parent:
+                if parent.type in {"class_declaration", "class"}:
+                    owner = node_text(field(parent, "name"), raw)
+                    break
+                parent = parent.parent
+            functions.append(FunctionInfo(node_text(name_node, raw), name_node.start_point.row + 1,
+                node.end_point.row + 1, node_text(node, raw), owner))
+        return sorted(functions, key=lambda item: item.start)
+    if language == "Java":
+        from .java_behavior import JavaIndex
+        from ..core.syntax import field, text as node_text
+        index = JavaIndex({relative: text})
+        functions = []
+        for owner in index.types.values():
+            for method in owner.methods:
+                body = node_text(method.node, owner.raw)
+                start = field(method.node, "name").start_point.row + 1
+                name = owner.name.removeprefix(owner.package + ".") if owner.package else owner.name
+                functions.append(FunctionInfo(
+                    method.name, start, method.node.end_point.row + 1, body,
+                    name, method.name + "(" + ",".join(method.parameter_types) + ")",
+                ))
+        return sorted(functions, key=lambda f: f.start)
     lines = text.splitlines()
     starts: list[tuple[int, str, int]] = []
     if language == "Python":
@@ -486,10 +355,7 @@ def _functions(text: str, language: str, relative: str) -> list[FunctionInfo]:
                     node.lineno,
                     node.end_lineno or node.lineno,
                     "\n".join(lines[node.lineno - 1:node.end_lineno]),
-                    _calls("\n".join(lines[node.lineno - 1:node.end_lineno])),
-                    _python_errors("\n".join(lines[node.lineno - 1:node.end_lineno]), relative, node.lineno),
                     owner=_python_owner(root, node),
-                    qualified_calls=_qualified_calls("\n".join(lines[node.lineno - 1:node.end_lineno])),
                 )
                 for node in nodes
             ]
@@ -509,8 +375,7 @@ def _functions(text: str, language: str, relative: str) -> list[FunctionInfo]:
                     break
             body = "\n".join(lines[start:end])
             result.append(FunctionInfo(
-                name, start + 1, end, body, _calls(body), _python_errors(body, relative, start + 1),
-                qualified_calls=_qualified_calls(body),
+                name, start + 1, end, body,
             ))
         return result
     # 字符串中的 {、} 和 ; 不参与声明匹配与代码块计数，偏移和行号保持不变。
@@ -578,11 +443,10 @@ def _functions(text: str, language: str, relative: str) -> list[FunctionInfo]:
         ]
         owner = max(owners, key=lambda item: (item[0], -item[1]))[2] if owners else ""
         result.append(FunctionInfo(
-            name, start + 1, end, body, _calls(body), _c_style_errors(body, relative, start + 1),
+            name, start + 1, end, body,
             owner=owner,
-            qualified_calls=_qualified_calls(body),
         ))
-    return result
+    return sorted(result, key=lambda item: (item.start, item.name))
 
 
 def _python_owner(root: ast.AST, function: ast.AST) -> str:
@@ -600,274 +464,6 @@ def _python_owner(root: ast.AST, function: ast.AST) -> str:
     return ".".join(reversed(owners))
 
 
-def _calls(body: str) -> list[str]:
-    body = _source_syntax(body)
-    ignored = {"if", "for", "while", "switch", "catch", "return", "raise", "throw", "def", "class"}
-    names = [name for name in CALL_RE.findall(body) if name not in ignored]
-    names.extend(
-        name
-        for name in re.findall(r"\b(?:submit|create_task|spawn|schedule|enqueue|delay)\s*\(\s*([A-Za-z_]\w*)", body)
-        if name not in ignored
-    )
-    return list(dict.fromkeys(names))
-
-
-def _unresolved_call(name: str) -> bool:
-    if name.lower() in IGNORED_EXTERNAL_CALLS:
-        return False
-    if name.endswith(("Error", "Exception", "ErrorCode")):
-        return False
-    return True
-
-
-def _errors(body: str, relative: str, offset: int) -> list[ErrorEvidence]:
-    lines = body.splitlines()
-    found: list[ErrorEvidence] = []
-    for index, line in enumerate(lines):
-        if line.lstrip().startswith(("#", "//", "/*", "*")) or not ERROR_RE.search(line):
-            continue
-        condition = line.strip()
-        guard = next(
-            (
-                candidate.strip()
-                for candidate in reversed(lines[max(0, index - 4):index])
-                if re.search(r"\b(?:if|unless|when)\b", candidate)
-            ),
-            "",
-        )
-        if guard:
-            condition = f"{guard} -> {condition}"
-        found.append(_error(condition, relative, offset + index))
-    return found
-
-
-def _python_errors(body: str, relative: str, offset: int) -> list[ErrorEvidence]:
-    try:
-        root = ast.parse(textwrap.dedent(body))
-    except SyntaxError:
-        return _errors(body, relative, offset)
-    function = next((node for node in root.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))), None)
-    if function is None:
-        return _errors(body, relative, offset)
-    found: list[ErrorEvidence] = []
-
-    def exception_name(node: ast.AST | None) -> str:
-        if isinstance(node, ast.Call):
-            node = node.func
-        if isinstance(node, ast.Name):
-            return node.id
-        if isinstance(node, ast.Attribute):
-            return node.attr
-        return ""
-
-    normalized = textwrap.dedent(body)
-
-    def source_of(node: ast.AST) -> str:
-        return ast.get_source_segment(normalized, node) or "代码中未确认"
-
-    def visit(
-        statements: list[ast.stmt],
-        caught: set[str],
-        conditions: tuple[str, ...] = (),
-        loop_depth: int = 0,
-    ) -> None:
-        terminated = False
-        for statement in statements:
-            if terminated:
-                break
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                continue
-            if isinstance(statement, ast.Raise):
-                name = exception_name(statement.exc)
-                is_caught = bool(
-                    name and (name in caught or "*" in caught or "Exception" in caught or "BaseException" in caught)
-                )
-                if is_caught and loop_depth:
-                    source = source_of(statement)
-                    condition = f"{' 且 '.join(conditions)} -> {source}" if conditions else source
-                    item_error = _error(condition, relative, offset + statement.lineno - 1)
-                    item_error.capture_boundary = "循环单项捕获边界；异常未传播到入口"
-                    item_error.propagation = "当前项记录失败并继续后续项；不改写整批同步响应"
-                    item_error.consequence = "当前项失败；已处理项和后续项按源码路径继续，批次不因该项立即终止"
-                    item_error.phase = "item"
-                    item_error.recovery = "仅记录当前项失败；是否重试或补偿须由源码另行确认"
-                    found.append(item_error)
-                if is_caught:
-                    continue
-                source = source_of(statement)
-                condition = f"{' 且 '.join(conditions)} -> {source}" if conditions else source
-                found.append(_error(condition, relative, offset + statement.lineno - 1))
-                terminated = True
-                continue
-            if isinstance(statement, ast.Try):
-                handler_types = {exception_name(handler.type) or "*" for handler in statement.handlers}
-                visit(statement.body, caught | handler_types, conditions, loop_depth)
-                for handler in statement.handlers:
-                    visit(handler.body, caught, conditions, loop_depth)
-                visit(statement.orelse, caught, conditions, loop_depth)
-                visit(statement.finalbody, caught, conditions, loop_depth)
-                continue
-            if isinstance(statement, ast.If):
-                condition = source_of(statement.test)
-                visit(statement.body, caught, (*conditions, condition), loop_depth)
-                visit(statement.orelse, caught, (*conditions, f"非（{condition}）"), loop_depth)
-                continue
-            if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
-                condition = source_of(statement.target if isinstance(statement, (ast.For, ast.AsyncFor)) else statement.test)
-                visit(statement.body, caught, (*conditions, condition), loop_depth + 1)
-                visit(statement.orelse, caught, (*conditions, f"循环结束：{condition}"), loop_depth)
-                continue
-            if isinstance(statement, (ast.Return, ast.Break, ast.Continue)):
-                terminated = True
-                continue
-            child_blocks = [
-                value for _, value in ast.iter_fields(statement)
-                if isinstance(value, list) and value and all(isinstance(item, ast.stmt) for item in value)
-            ]
-            for block in child_blocks:
-                visit(block, caught, conditions, loop_depth)
-
-    visit(function.body, set())
-    return found
-
-
-def _caught_calls(body: str) -> set[str]:
-    try:
-        root = ast.parse(textwrap.dedent(body))
-    except SyntaxError:
-        return set()
-    caught: set[str] = set()
-    def exception_name(node: ast.AST | None) -> str:
-        if isinstance(node, ast.Call):
-            node = node.func
-        if isinstance(node, ast.Name):
-            return node.id
-        if isinstance(node, ast.Attribute):
-            return node.attr
-        return ""
-
-    for statement in ast.walk(root):
-        if not isinstance(statement, ast.Try):
-            continue
-        types = {"*"}
-        explicit = {exception_name(handler.type) for handler in statement.handlers if handler.type is not None}
-        if explicit:
-            types = explicit
-        if not types:
-            continue
-        for nested in ast.walk(ast.Module(body=statement.body, type_ignores=[])):
-            if not isinstance(nested, ast.Call):
-                continue
-            if "*" in types or types & {"Exception", "BaseException", "BusinessError", "Error"}:
-                if isinstance(nested.func, ast.Name):
-                    caught.add(nested.func.id)
-                elif isinstance(nested.func, ast.Attribute):
-                    caught.add(nested.func.attr)
-    return caught
-
-
-def _c_style_errors(body: str, relative: str, offset: int) -> list[ErrorEvidence]:
-    caught_lines: set[int] = set()
-    pattern = re.compile(
-        r"try\s*\{(?P<body>.*?)\}\s*catch\s*\((?P<parameter>[^)]*)\)",
-        re.DOTALL,
-    )
-    for match in pattern.finditer(body):
-        type_match = re.search(r"\b([A-Za-z_]\w*(?:Exception|Error|Throwable))\b", match.group("parameter"))
-        catch_type = type_match.group(1) if type_match else "*"
-        start_line = body[:match.start("body")].count("\n")
-        for throw in re.finditer(r"\bthrow\s+new\s+([A-Za-z_]\w*)", match.group("body")):
-            thrown = throw.group(1)
-            if catch_type == "*" or catch_type in {thrown, "Exception", "RuntimeException", "Throwable", "Error"}:
-                caught_lines.add(start_line + match.group("body")[:throw.start()].count("\n"))
-    return [
-        error
-        for error in _errors(body, relative, offset)
-        if error.line - offset not in caught_lines
-    ]
-
-
-def _c_style_caught_calls(body: str) -> set[str]:
-    caught: set[str] = set()
-    pattern = re.compile(
-        r"try\s*\{(?P<body>.*?)\}\s*catch\s*\((?P<parameter>[^)]*)\)",
-        re.DOTALL,
-    )
-    for match in pattern.finditer(body):
-        parameter = match.group("parameter")
-        if re.search(r"(?:Exception|Error|Throwable)|^\s*[A-Za-z_]\w*\s*$", parameter):
-            caught.update(
-                name for name in CALL_RE.findall(match.group("body"))
-                if name not in {"if", "for", "while", "try", "catch", "throw", "return"}
-            )
-    return caught
-
-
-def _exception_mappings(text: str, relative: str) -> dict[str, ErrorEvidence]:
-    lines = text.splitlines()
-    mappings: dict[str, ErrorEvidence] = {}
-    for index, line in enumerate(lines):
-        marker = re.search(
-            r"(?:@ExceptionHandler|exception_handler|errorhandler|exceptionHandler)\s*\(\s*([A-Za-z_]\w*)",
-            line,
-        )
-        if not marker:
-            continue
-        exception = marker.group(1)
-        for offset, candidate in enumerate(lines[index:index + 20]):
-            code = CODE_RE.search(candidate) or ENUM_RE.search(candidate) or STATUS_CODE_RE.search(candidate)
-            if code:
-                mappings[exception] = ErrorEvidence(code.group(1), f"统一异常处理器将 {exception} 转换为 {code.group(1)}", relative, index + offset + 1)
-                break
-    return mappings
-
-
-BEHAVIOR_PATTERNS = (
-    ("循环", re.compile(r"^\s*(?:for|while|foreach)\b", re.I)),
-    ("分支", re.compile(r"^\s*else\b", re.I)),
-    ("校验", re.compile(r"\b(assert|validate|validation|require|check|guard|verify)\b|\bif\s*\(", re.I)),
-    ("事务", re.compile(r"@Transactional|\b(transaction|commit|rollback)\b", re.I)),
-    ("锁与幂等", re.compile(r"\b(lock|unlock|synchronized|idempot|dedup|compareAndSet|nonce)\b", re.I)),
-    ("持久化", re.compile(r"\b(repository|dao|save|insert|update|delete|persist|select|query|findBy)\b", re.I)),
-    ("外部调用", re.compile(r"\b(requests|httpx|urllib|RestTemplate|WebClient|grpc|axios|fetch|httpClient)\b", re.I)),
-    ("消息", re.compile(r"\b(kafka|rabbit|rocketmq|pulsar|publish|producer|send|emit)\b", re.I)),
-    ("异步", re.compile(r"\b(async|await|executor|threadPool|future|submit)\b", re.I)),
-    ("缓存或文件", re.compile(r"\b(cache|redis|memcached|open|read|write|file|path)\b", re.I)),
-    ("状态变化", re.compile(r"\b(status|state)\b\s*(?:=|\.|,)|setStatus|setState", re.I)),
-    ("结果", re.compile(r"^\s*(?:return|yield)\b", re.I)),
-)
-
-
-def _behaviors(function: FunctionInfo, relative: str) -> list[BehaviorEvidence]:
-    evidence: list[BehaviorEvidence] = []
-    for offset, line in enumerate(function.body.splitlines()):
-        stripped = line.strip()
-        if not stripped or stripped.startswith(("#", "//", "/*", "*")):
-            continue
-        # Python control flow is business evidence even when the localized
-        # behavior table is unavailable or encoded differently.
-        if re.match(r"^if\b", stripped):
-            evidence.append(BehaviorEvidence("校验", stripped, relative, function.start + offset))
-        for kind, pattern in BEHAVIOR_PATTERNS:
-            if pattern.search(stripped):
-                evidence.append(BehaviorEvidence(kind, stripped, relative, function.start + offset))
-    return evidence
-
-
-def _declaration_behaviors(function: FunctionInfo, relative: str, text: str) -> list[BehaviorEvidence]:
-    lines = text.splitlines()
-    start = max(0, function.start - 8)
-    evidence: list[BehaviorEvidence] = []
-    for index in range(start, function.start - 1):
-        stripped = lines[index].strip()
-        if not stripped.startswith(("@", "[")):
-            continue
-        for kind, pattern in BEHAVIOR_PATTERNS:
-            if pattern.search(stripped):
-                evidence.append(BehaviorEvidence(kind, stripped, relative, index + 1))
-    return evidence
-
-
 def _decorated_entries(text: str, language: str, relative: str) -> list[tuple[str, str, int, str]]:
     lines = text.splitlines()
     found: list[tuple[str, str, int, str]] = []
@@ -880,7 +476,14 @@ def _decorated_entries(text: str, language: str, relative: str) -> list[tuple[st
         value = value.strip().strip('{}() ')
         return constants.get(value, value.strip("\"'"))
 
-    declarations = _functions(text, language, relative) if language == "Java" else []
+    declarations = _functions(text, language, relative) if language in {"Java", "Python", "TypeScript", "JavaScript", "Go"} else []
+    outbound_lines = set()
+    if language == "Java":
+        from .java_behavior import JavaIndex
+        for owner in JavaIndex({relative: text}).types.values():
+            header = owner.raw[owner.node.start_byte:owner.node.end_byte].decode("utf-8").split("{", 1)[0]
+            if re.search(r"@FeignClient\b|@HttpExchange\b", header):
+                outbound_lines.update(range(owner.node.start_point.row + 1, owner.node.end_point.row + 2))
     base_path = ""
     base_paths = [""]
     proto_service = ""
@@ -903,7 +506,7 @@ def _decorated_entries(text: str, language: str, relative: str) -> list[tuple[st
                 if balance <= 0:
                     break
             annotation_text = " ".join(block)
-        if outbound_only and re.search(
+        if (outbound_only or index + 1 in outbound_lines) and re.search(
             r"@(Get|Post|Put|Patch|Delete|Options|Head)Mapping\b|@RequestMapping\b|@HttpExchange\b",
             annotation_text,
         ):
@@ -943,6 +546,20 @@ def _decorated_entries(text: str, language: str, relative: str) -> list[tuple[st
             kind, identifier = "url", f"{laravel.group(1).upper()} {laravel.group(2)}"
         elif quartz:
             kind, identifier = "scheduled", quartz.group(1)
+        elif language == "Java" and re.match(r"@Path\s*\(", annotation_text):
+            value = re.search(r'@Path\s*\(\s*"([^"]*)"', annotation_text)
+            following = " ".join(lines[index:index + 6])
+            # JAX-RS uses the same annotation for class and method scopes.  A
+            # method path is consumed by the following HTTP annotation and
+            # must never replace the class prefix.
+            if value and re.search(r"\b(class|interface|record)\b", following):
+                base_path = value[1]
+            continue
+        elif language == "Java" and re.match(r"@(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b", annotation_text):
+            method = re.match(r"@(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b", annotation_text)[1]
+            declaration = next((f for f in declarations if f.start >= index + 1), None)
+            local = re.search(r'@Path\s*\(\s*"([^"]*)"', declaration.body.split("{", 1)[0] if declaration else annotation_text)
+            kind, identifier = "url", f"{method} {base_path.rstrip('/') + '/' + local[1].lstrip('/') if local else base_path or '/'}"
         elif re.match(r"@Controller\b", annotation_text) and re.search(r"\bclass\s+[A-Za-z_]\w*", " ".join(lines[index + 1:index + 5])):
             value = re.search(r"@Controller\s*\(\s*[\"']([^\"']+)", annotation_text)
             base_path = value.group(1) if value else ""
@@ -1016,27 +633,32 @@ def _decorated_entries(text: str, language: str, relative: str) -> list[tuple[st
                 topics = [resolve_value(raw_topic)]
             kind, identifier = "message", (topics[0] if topics else "代码中未确认")
         elif (
-            (stripped.startswith("@") and re.search(r"@?(?:XxlJob|JobHandler|Scheduled|Cron)\b", annotation_text, re.I))
-            or re.search(r"\b(?:schedule|scheduler\.add_job|add_job)\s*\(", stripped, re.I)
+            (stripped.startswith("@") and re.search(r"@?(?:XxlJob|JobHandler|Scheduled|Cron|scheduler\.scheduled_job)\b", annotation_text, re.I))
         ):
             value = re.search(r"(?:cron|fixedDelay|fixedRate|fixedDelayString|fixedRateString|name|value)\s*=\s*[\"']([^\"']+)|\(\s*[\"']([^\"']+)", annotation_text, re.I)
             kind, identifier = "scheduled", next((item for item in (value.groups() if value else ()) if item), "代码中未确认")
         elif (
             (stripped.startswith("@") and re.search(
-                r"(?:EventListener|EventPattern|MessagePattern|Transition|Workflow|state_machine)", stripped, re.I
+                r"(?:EventListener|EventPattern|MessagePattern|OnEvent|Transition|Workflow|state_machine)", stripped, re.I
             ))
             or re.search(r"\b(?:event_handler|on_event)\s*\(", stripped, re.I)
         ):
-            value = re.search(r"(?:classes|value|pattern|event)\s*=\s*[\"']([^\"']+)", stripped, re.I)
-            kind, identifier = "event", (value.group(1) if value else "代码中未确认")
+            value = re.search(r"(?:classes|value|pattern|event)\s*=\s*[\"']([^\"']+)|\(\s*[\"']([^\"']+)", stripped, re.I)
+            kind = "message" if "MessagePattern" in stripped else "event"
+            identifier = next((item for item in value.groups() if item), "代码中未确认") if value else "代码中未确认"
+            if identifier == "代码中未确认" and language == "Java":
+                event_type = re.search(r"@EventListener\s*\(\s*(?:classes\s*=\s*)?([\w.]+)\.class", stripped)
+                if event_type:
+                    identifier = event_type[1]
         elif re.match(r"@(?:click\.command|app\.command|typer\.command|Command)\s*\(", stripped, re.I):
             value = re.search(r"(?:name|value)\s*=\s*[\"']([^\"']+)|\(\s*[\"']([^\"']+)", stripped, re.I)
             kind, identifier = "cli", next((item for item in (value.groups() if value else ()) if item), "代码中未确认")
         elif re.search(r"@OnMessage\b|(?:socketio|io)\.on\s*\(", stripped, re.I):
             value = re.search(r"\(\s*[\"']([^\"']+)", stripped)
             kind, identifier = "websocket", (value.group(1) if value else "代码中未确认")
-        elif re.search(r"\b(?:FileListener|OnFile|FileSystemEventHandler|watchdog)\b", stripped, re.I):
-            kind, identifier = "file", "代码中未确认"
+        elif re.search(r"@(?:FileListener|OnFile)\b", stripped, re.I):
+            value = re.search(r"(?:path|value)\s*=\s*[\"']([^\"']+)|\(\s*[\"']([^\"']+)", stripped)
+            kind, identifier = "file", next((item for item in value.groups() if item), "代码中未确认") if value else "代码中未确认"
         elif re.search(r"@Bean\b", stripped) and re.search(r"\bJob\s+[A-Za-z_]\w*\s*\(", " ".join(lines[index + 1:index + 6])):
             job = re.search(r"\bJob\s+([A-Za-z_]\w*)\s*\(", " ".join(lines[index + 1:index + 6]))
             kind, identifier = "batch", job.group(1) if job else "代码中未确认"
@@ -1047,7 +669,7 @@ def _decorated_entries(text: str, language: str, relative: str) -> list[tuple[st
                 kind = "webhook"
             handler = "代码中未确认"
             # 方法声明、参数注解和 throws 可以跨行；不能逐行匹配或把注解当作方法。
-            following = next((function for function in declarations if function.start > index + 1), None)
+            following = next((function for function in declarations if function.start >= index + 1), None)
             if following and following.start <= index + 20:
                 handler = following.name
             for candidate in ([] if following else lines[index + 1:index + 8]):
@@ -1074,7 +696,7 @@ def _decorated_entries(text: str, language: str, relative: str) -> list[tuple[st
                     for group in topic_values
                     for topic in re.findall(r"[\"']([^\"']+)[\"']|\b([A-Z_]\w*)\b", " ".join(group))
                 ] or [identifier]
-                identifiers = [resolve_value(topic[0] or topic[1]) for topic in identifiers]
+                identifiers = [resolve_value((topic[0] or topic[1]) if isinstance(topic, tuple) else topic) for topic in identifiers]
                 found.extend((kind, topic, index + 1, handler) for topic in dict.fromkeys(identifiers))
             else:
                 found.append((kind, identifier, index + 1, handler))
@@ -1106,6 +728,10 @@ def _decorated_entries(text: str, language: str, relative: str) -> list[tuple[st
             prior = "\n".join(lines[max(0, index - 8):index + 1])
             command = re.findall(r"\.add_parser\s*\(\s*[\"']([^\"']+)", prior)
             found.append(("cli", command[-1] if command else "代码中未确认", index + 1, defaults.group(1)))
+        if language == "Python":
+            job = re.search(r"\bscheduler\.add_job\(\s*([A-Za-z_]\w*)\s*,\s*['\"](cron|interval|date)['\"]([^)]*)\)", line)
+            if job:
+                found.append(("scheduled", job[2] + job[3].strip(), index + 1, job[1]))
     call_pattern = re.compile(
         r"\b(?:app|router|blueprint|bp|r|mux)\.(get|post|put|patch|delete|options|head|all)\s*\(\s*[\"']([^\"']+)[\"'](?P<tail>[^)]*)\)",
         re.IGNORECASE | re.DOTALL,
@@ -1241,6 +867,8 @@ def _platform_message_entries(text: str, relative: str, functions: list[Function
 def _enrich_signatures(functions: list[FunctionInfo], language: str) -> None:
     """Attach stable, source-derived method signatures for capability IDs."""
     for function in functions:
+        if function.signature:
+            continue
         declaration_body = re.sub(r'"(?:\\.|[^"\\])*"', lambda match: " " * len(match.group()), function.body)
         head = declaration_body.split("{", 1)[0] if language != "Python" else (function.body.splitlines()[0] if function.body else "")
         match = re.search(rf"\b{re.escape(function.name)}\s*\(", head)
@@ -1269,8 +897,6 @@ def _enrich_signatures(functions: list[FunctionInfo], language: str) -> None:
                 params = re.sub(r"\s+[A-Za-z_$][\w$]*(\s*\[\s*\])*\s*(?=,|$)", lambda match: (match.group(1) or "").replace(" ", ""), params)
             params = ",".join(part.strip() for part in params.split(",") if part.strip())
         function.signature = f"{function.name}({params})"
-        return_match = re.search(r"\)\s*(?:->\s*([\w.<>\[\]]+)|:\s*([\w.<>\[\]]+))", head)
-        function.return_type = next((value for value in (return_match.groups() if return_match else ()) if value), "")
 
 
 def _select_handler(
@@ -1366,7 +992,7 @@ def _unrecognized_registration_lines(text: str, language: str, known_lines: set[
     patterns = (
         r"@(?:Get|Post|Put|Patch|Delete)Mapping\b",
         r"@(?:Get|Post|Put|Patch|Delete|Options|Head)\s*(?:\(|$)",
-        r"\b(?:app|router|blueprint|bp|r|mux)\.(?:get|post|put|patch|delete|all|route|api_route|add_api_route)\s*\(\s*[\"']",
+        r"\b(?:app|router|blueprint|bp|r|mux)\.(?:get|post|put|patch|delete|all|route|api_route|add_api_route)\s*\(",
         r"@(?:KafkaListener|RabbitListener|JmsListener|PulsarListener|RocketMQMessageListener)\b",
         r"@(?:XxlJob|JobHandler|Scheduled|Cron)\b",
         r"@(?:EventListener|MessagePattern|OnEvent)\b",
@@ -1451,7 +1077,7 @@ def _frameworks(files: list[Path]) -> list[str]:
     return sorted(names)
 
 
-def _source_files(root: Path) -> list[Path]:
+def _source_files(root: Path, project: Path | None = None) -> list[Path]:
     """Return every readable project text file used by discovery and fingerprinting."""
     def generated_docs(path: Path) -> bool:
         parts = path.relative_to(root).parts
@@ -1468,17 +1094,40 @@ def _source_files(root: Path) -> list[Path]:
         except OSError:
             return False
 
-    return sorted(
-        (
-            path for path in root.rglob("*")
-            if path.is_file()
-            and not any(part.casefold() in _EXCLUDED_DIRS_CASEFOLD for part in path.parts)
-            and path.suffix.casefold() not in {".log", ".trace", ".out"}
-            and not generated_docs(path)
-            and readable_text(path)
-        ),
-        key=lambda item: item.relative_to(root).as_posix(),
-    )
+    files = []
+    for directory, children, names in os.walk(root, followlinks=False):
+        children[:] = sorted(name for name in children if name.casefold() not in _EXCLUDED_DIRS_CASEFOLD
+                             and not (Path(directory) / name).is_symlink())
+        for name in sorted(names):
+            path = Path(directory) / name
+            if (not path.is_symlink() and path.suffix.casefold() not in {".log", ".trace", ".out"}
+                    and not generated_docs(path) and readable_text(path)):
+                files.append(path)
+    if project is not None and files:
+        # Let Git implement nested rules, negation and info/exclude semantics.
+        # --no-index applies rules to archived tracked files as well.  The
+        # archive supplies .gitignore, while the repository supplies info/exclude.
+        git_dir = _run(project, "rev-parse", "--absolute-git-dir")
+        payload = "\0".join(path.relative_to(root).as_posix() for path in files) + "\0"
+        with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as error:
+            completed = subprocess.run(["git", "--git-dir=" + git_dir, "--work-tree=" + str(root),
+                "check-ignore", "--no-index", "-z", "--stdin"], cwd=root,
+                input=payload.encode("utf-8"), stdout=output, stderr=error)
+            output.seek(0)
+            ignored = set(output.read().decode("utf-8").split("\0"))
+            if completed.returncode not in {0, 1}:
+                error.seek(0)
+                raise ValueError("SOURCE_IGNORE_FAILED: " + error.read().decode("utf-8", errors="replace"))
+        files = [path for path in files if path.relative_to(root).as_posix() not in ignored]
+    config = root / ".devflow-biz-flow.json"
+    if config.is_file():
+        settings = json.loads(config.read_text(encoding="utf-8"))
+        if set(settings) != {"exclude"} or not isinstance(settings["exclude"], list) or any(not isinstance(p, str) for p in settings["exclude"]):
+            raise ValueError("SOURCE_CONFIG_INVALID: .devflow-biz-flow.json accepts only exclude: string[]")
+        import fnmatch
+        files = [path for path in files if not any(fnmatch.fnmatchcase(path.relative_to(root).as_posix(), pattern.rstrip("/") + "/*")
+                 or fnmatch.fnmatchcase(path.relative_to(root).as_posix(), pattern) for pattern in settings["exclude"])]
+    return sorted(files, key=lambda item: item.relative_to(root).as_posix())
 
 
 def _fingerprint_files(
@@ -1492,7 +1141,10 @@ def _fingerprint_files(
         digest.update(relative.encode("utf-8"))
         digest.update(b"\0")
         try:
-            digest.update(path.read_bytes())
+            # A snapshot fingerprint describes source text, not the checkout's
+            # platform line ending.  Git archives can preserve either CRLF or
+            # LF depending on attributes, so normalize before hashing.
+            digest.update(path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
         except OSError as exc:
             if on_error is not None:
                 on_error(f"{relative}: cannot fingerprint source: {exc}")
@@ -1507,21 +1159,61 @@ def source_fingerprint(project_root: Path, target: str | None = None) -> str:
     same source snapshot before reconstructing a ``ScanResult``.
     """
     with source_view(project_root, target) as (root, _git):
-        return _fingerprint_files(root, _source_files(root))
+        return _fingerprint_files(root, _source_files(root, project_root))
 
 
 def scan(project_root: Path, target: str | None = None, *, entry_only: bool = False, entry_ids: set[str] | None = None) -> ScanResult:
+    """Cache immutable registration inventories by target and ignore policy."""
+    from dataclasses import asdict
+    from ..core.artifacts import state_root, write_json
+    info = git_info(project_root, target)
+    info.includes_uncommitted = False
+    exclude = Path(_run(project_root, "rev-parse", "--git-path", "info/exclude"))
+    if not exclude.is_absolute():
+        exclude = project_root / exclude
+    identity = json.dumps([str(project_root.resolve()), info.target,
+        exclude.read_text(encoding="utf-8", errors="replace") if exclude.is_file() else "",
+        "registration-v5"], ensure_ascii=False)
+    cache = state_root() / "biz-flow" / "scan-cache" / (hashlib.sha256(identity.encode()).hexdigest() + ".json")
+    result = None
+    try:
+        saved = json.loads(cache.read_text(encoding="utf-8"))
+        value = saved["scan"]
+        if saved["sha256"] != hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest():
+            raise ValueError("cache checksum mismatch")
+        if value["git"]["target"] != info.target or Path(value["root"]).resolve() != project_root.resolve():
+            raise ValueError("cache scope mismatch")
+        value["root"] = Path(value["root"])
+        value["git"] = info
+        value["entries"] = [EntryPoint(**item) for item in value["entries"]]
+        value["all_entries"] = [EntryPoint(**item) for item in value["all_entries"]]
+        result = ScanResult(**value)
+        print(f"progress stage=scan completed={len(result.files)} total={len(result.files)} cache=hit", file=sys.stderr)
+    except (OSError, ValueError, TypeError, KeyError):
+        result = _scan(project_root, info.target)
+        value = asdict(result)
+        value["root"] = str(result.root)
+        write_json(cache, {"sha256": hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest(), "scan": value})
+        from .evidence import trim_cache
+        trim_cache(cache.parent)
+    if entry_ids is not None:
+        result.entries = [entry for entry in result.entries if entry.entry_id in entry_ids]
+    return result
+
+
+def _scan(project_root: Path, target: str | None = None) -> ScanResult:
+    started = time.monotonic()
     with source_view(project_root, target) as (root, git):
-        files = _source_files(root)
+        files = _source_files(root, project_root)
+        print(f"progress stage=scan completed=0 total={len(files)} cache=miss", file=sys.stderr)
         entries: list[EntryPoint] = []
         unresolved: list[str] = []
         registration_audit: list[dict[str, object]] = []
         source_lines: dict[str, int] = {}
         language_names: set[str] = set()
-        records: list[tuple[Path, str, str, list[FunctionInfo], dict[str, FunctionInfo], dict[str, ErrorEvidence]]] = []
+        records: list[tuple[Path, str, str, list[FunctionInfo], dict[str, FunctionInfo], dict]] = []
         global_functions: dict[str, list[tuple[str, FunctionInfo]]] = {}
         typed_functions: dict[tuple[str, str], list[tuple[str, FunctionInfo]]] = {}
-        global_mappings: dict[str, list[ErrorEvidence]] = {}
         source_texts: dict[str, str] = {}
         for path in files:
             relative = path.relative_to(root).as_posix()
@@ -1541,10 +1233,8 @@ def scan(project_root: Path, target: str | None = None, *, entry_only: bool = Fa
             for item in funcs:
                 name_counts[item.name] = name_counts.get(item.name, 0) + 1
             by_name = {item.name: item for item in funcs if name_counts[item.name] == 1}
-            mappings = _exception_mappings(text, relative)
+            mappings = {}
             records.append((path, relative, text, funcs, by_name, mappings))
-            for exception, mapping in mappings.items():
-                global_mappings.setdefault(exception, []).append(mapping)
             for function in funcs:
                 global_functions.setdefault(function.name, []).append((relative, function))
                 if function.owner:
@@ -1628,160 +1318,12 @@ def scan(project_root: Path, target: str | None = None, *, entry_only: bool = Fa
                     r"text/event-stream|SseEmitter|EventSource|StreamingResponse", selected.body, re.IGNORECASE
                 ):
                     kind = "sse"
-                errors: list[ErrorEvidence] = []
-                functions: list[str] = []
-                bodies: list[str] = []
-                behaviors: list[BehaviorEvidence] = []
-                registered_id = f"{kind}:{identifier}:{_capability_id(language, relative, selected, text) if selected else f'{relative}:{handler}'}"
-                excluded = _exclusion_reason(EntryPoint(registered_id, kind, identifier, handler, relative, line, "", relative))
-                shallow = entry_only or bool(excluded) or (entry_ids is not None and registered_id not in entry_ids)
-                if selected and shallow:
-                    functions.append(_capability_id(language, relative, selected, text))
-                elif selected:
-                    pending: list[tuple[str, str, str]] = [(relative, selected.name, selected.owner)]
-                    seen: set[tuple[str, str, str]] = set()
-                    async_nodes: set[tuple[str, str, str]] = set()
-                    while pending:
-                        current_file, name, owner_hint = pending.pop(0)
-                        key = (current_file, name, owner_hint)
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        if owner_hint:
-                            candidates = typed_functions.get((owner_hint, name), [])
-                        else:
-                            candidates = (
-                                [(current_file, by_name[name])]
-                                if current_file == relative and name in by_name
-                                else global_functions.get(name, [])
-                            )
-                        if not candidates:
-                            if not _unresolved_call(name):
-                                continue
-                            unresolved.append(f"{relative}:{line}: called function {name} is outside this repository or not statically resolvable")
-                            continue
-                        if len(candidates) > 1:
-                            unresolved.append(f"{relative}:{line}: call {name} has multiple possible definitions")
-                            # A same-named method in another service is not evidence of a
-                            # reachable call. Keep the edge unresolved instead of merging
-                            # unrelated side effects and error codes into this entry.
-                            continue
-                        for candidate_file, function in candidates:
-                            capability = _capability_id(
-                                EXTENSIONS.get(Path(candidate_file).suffix.lower(), language),
-                                candidate_file,
-                                function,
-                                source_texts.get(candidate_file, ""),
-                            )
-                            if function.name.casefold() not in _LOCAL_SYNTAX_NAMES:
-                                functions.append(capability)
-                            bodies.append(function.body)
-                            for error in function.errors:
-                                if key in async_nodes:
-                                    errors.append(ErrorEvidence(
-                                        error.code,
-                                        error.condition,
-                                        error.file,
-                                        error.line,
-                                        "后台工作线程边界；结果不会回到已返回的同步响应",
-                                        "工作线程失败写入日志或任务状态；同步入口不再传播该异常",
-                                        "入口已受理；后台任务终态失败，具体持久化结果以源码为准",
-                                        "worker",
-                                        "是否重试、补偿或人工恢复须由后台任务实现确认",
-                                    ))
-                                else:
-                                    errors.append(error)
-                            behaviors.extend(
-                                _declaration_behaviors(function, candidate_file, source_texts.get(candidate_file, ""))
-                            )
-                            behaviors.extend(_behaviors(function, candidate_file))
-                            caught_calls = _caught_calls(function.body) | _c_style_caught_calls(function.body)
-                            receiver_types: dict[str, str] = {}
-                            for receiver, called_name in function.qualified_calls:
-                                type_match = re.search(
-                                    rf"(?:\b{re.escape(receiver)}\b\s*:\s*|\b{re.escape(receiver)}\b\s*=\s*(?:new\s+)?)"
-                                    r"([A-Za-z_]\w*)",
-                                    function.body,
-                                )
-                                if type_match:
-                                    receiver_types[called_name] = type_match.group(1)
-                                elif language == "Java":
-                                    # Java 的依赖常声明为类字段；局部变量和参数优先，不能只查赋值表达式。
-                                    declaration = re.search(
-                                        rf"\b([A-Za-z_]\w*)(?:\s*<[^;{{}}]+?>)?\s+{re.escape(receiver)}\s*(?=[,;=)])",
-                                        function.body,
-                                    ) or re.search(
-                                        rf"\b([A-Za-z_]\w*)(?:\s*<[^;{{}}]+?>)?\s+{re.escape(receiver)}\s*(?=[;=])",
-                                        source_texts.get(candidate_file, ""),
-                                    )
-                                    if declaration:
-                                        receiver_types[called_name] = declaration.group(1)
-                            qualified_names = {name for _, name in function.qualified_calls}
-                            submitted_workers = {name for name, _line, _executor in _executor_submissions(function.body, candidate_file) if name}
-                            for call in dict.fromkeys([*function.calls, *sorted(submitted_workers)]):
-                                if call in caught_calls:
-                                    continue
-                                owner = receiver_types.get(call, "")
-                                if owner and (owner, call) not in typed_functions and re.search(
-                                    rf"\bimport\s+[\w.]+\.{re.escape(owner)}\s*;",
-                                    source_texts.get(candidate_file, ""),
-                                ) and not any(path.name == f"{owner}.java" for path in files):
-                                    # 可证明是项目外类型时保留调用边界，不把 SDK 实现缺失报成内部未知调用。
-                                    behaviors.append(BehaviorEvidence("外部调用", f"{owner}.{call}", candidate_file, function.start))
-                                    continue
-                                if call in qualified_names and not owner:
-                                    # An unresolved receiver such as ``client.save()`` must not
-                                    # be matched to an unrelated global ``save`` function.
-                                    unresolved.append(
-                                        f"{candidate_file}:{function.start}: qualified call {call} has an unknown receiver type"
-                                    )
-                                    continue
-                                child_key = (candidate_file, call, owner)
-                                if child_key not in seen:
-                                    pending.append(child_key)
-                                    if call in submitted_workers or re.search(
-                                        rf"\b(?:submit|execute|create_task|spawn|schedule|enqueue|delay)\s*\([^\n)]*\b{re.escape(call)}\b",
-                                        function.body,
-                                        re.IGNORECASE,
-                                    ):
-                                        async_nodes.add(child_key)
-                else:
+                # Registration discovery owns identity and scope only. Behavior
+                # is expanded once by the canonical source-fact adapters.
+                functions = [_capability_id(language, relative, selected, text)] if selected else []
+                if not selected:
                     unresolved.append(f"{relative}:{line}: handler for {identifier} is not statically resolvable")
-                entry_capability = functions[0] if functions else f"{relative}:{handler}"
-                entry_id = f"{kind}:{identifier}:{entry_capability}"
-                mapped_errors: list[ErrorEvidence] = []
-                for error in errors:
-                    if error.code == "代码中未确认":
-                        exception = re.search(r"(?:raise|throw\s+new)\s+([A-Za-z_]\w*)", error.condition)
-                        candidates = global_mappings.get(exception.group(1), []) if exception else []
-                        if len(candidates) == 1:
-                            mapping = candidates[0]
-                            error = ErrorEvidence(
-                                mapping.code,
-                                f"{error.condition}；{mapping.condition}（映射证据：{mapping.file}:{mapping.line}）",
-                                error.file,
-                                error.line,
-                                error.capture_boundary,
-                                error.propagation,
-                                error.consequence,
-                                error.phase,
-                                error.recovery,
-                            )
-                        elif len(candidates) > 1:
-                            unresolved.append(f"{relative}:{line}: exception {exception.group(1)} has multiple outward mappings")
-                    mapped_errors.append(error)
-                unique_errors: list[ErrorEvidence] = []
-                seen_errors: set[tuple[str, str, int]] = set()
-                for error in mapped_errors:
-                    key = (error.code, error.file, error.line)
-                    if key not in seen_errors:
-                        seen_errors.add(key)
-                        unique_errors.append(error)
-                for error in unique_errors:
-                    if error.code == "代码中未确认":
-                        unresolved.append(
-                            f"{error.file}:{error.line}: active error code for {identifier} is not statically resolvable"
-                        )
+                entry_id = f"{kind}:{identifier}:{functions[0] if functions else f'{relative}:{handler}'}"
                 if "代码中未确认" in identifier:
                     unresolved.append(f"{relative}:{line}: business entry identifier is not statically resolvable")
                 entries.append(EntryPoint(
@@ -1796,8 +1338,6 @@ def scan(project_root: Path, target: str | None = None, *, entry_only: bool = Fa
                     # Shared helpers may be reached through multiple paths;
                     # core capabilities are a unique ordered list.
                     functions=list(dict.fromkeys(functions)),
-                    errors=unique_errors,
-                    behaviors=behaviors,
                     caller={
                         "url": "HTTP 客户端", "webhook": "Webhook 调用方", "websocket": "WebSocket 客户端",
                         "sse": "SSE 客户端",
@@ -1805,11 +1345,6 @@ def scan(project_root: Path, target: str | None = None, *, entry_only: bool = Fa
                         "event": "事件发布方", "cli": "命令行调用方", "file": "文件提供方",
                         "batch": "批处理调度方",
                     }.get(kind, "代码中未确认"),
-                    input_summary=(selected.body.splitlines()[0].strip() if selected else "代码中未确认"),
-                    has_loop=bool(bodies and re.search(r"\b(for|while|foreach)\b", "\n".join(bodies))),
-                    has_external_call=bool(bodies and re.search(r"\b(requests|httpx|urllib|RestTemplate|WebClient|grpc|axios|fetch)\b", "\n".join(bodies), re.I)),
-                    has_persistence=bool(bodies and re.search(r"\b(save|insert|update|delete|persist|repository|dao|\.create\s*\()", "\n".join(bodies), re.I)),
-                    has_async=bool(bodies and re.search(r"\b(async|await|thread|executor|queue|publish|send)\b", "\n".join(bodies), re.I)),
                     binding_confirmed=True,
                     handler_confirmed=handler_confirmed,
                     title=_comment_label(text, selected.start if selected else line),
@@ -1977,13 +1512,18 @@ def scan(project_root: Path, target: str | None = None, *, entry_only: bool = Fa
                 "/src/test/" in str(item["file"]) or "/tests/" in str(item["file"]) or "/sdk/" in str(item["file"])
             )
         )]
+        coverage_gaps = [item for item in registration_audit if item["adapter"] in {"unsupported", "configuration"}
+                         and item["status"] == "unresolved"]
+        gap_locations = {f"{item['file']}:{item['line']}:" for item in coverage_gaps}
+        unresolved = [item for item in unresolved if not any(item.startswith(location) for location in gap_locations)]
         source_fingerprint = _fingerprint_files(root, files, unresolved.append)
+        print(f"progress stage=scan completed={len(files)} total={len(files)} elapsed={time.monotonic() - started:.3f}s budget=300s", file=sys.stderr)
         return ScanResult(
             root=project_root.resolve(),
             git=git,
             languages=sorted(language_names),
             frameworks=_frameworks(files),
-            entries=[entry for entry in entries if entry_ids is None or entry.entry_id in entry_ids],
+            entries=entries,
             files=[path.relative_to(root).as_posix() for path in files],
             unresolved=sorted(dict.fromkeys(unresolved)),
             source_fingerprint=source_fingerprint,
@@ -1995,4 +1535,5 @@ def scan(project_root: Path, target: str | None = None, *, entry_only: bool = Fa
             discovered_handler_count=len({entry.handler for entry in entries if entry.handler_confirmed and entry.handler != "代码中未确认"}),
             all_entries=list(entries),
             registration_audit=registration_audit,
+            coverage_gaps=coverage_gaps,
         )

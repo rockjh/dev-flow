@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from ..core.sequence import participant_declaration
 
 CHINESE_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 
@@ -463,14 +464,26 @@ def _definition(
         "source": source_entries,
     }
     diagram_participants = context.get("participants") or [str((context.get("services") or [design_rule_id])[0]), component]
+    actor = rule.get("actor")
     diagram_lines = [f"# {title}", "", "本图来自当前设计规则和正式协议映射，未补充未确认的业务规则。", "", "关键步骤："]
     for index, step in enumerate(steps, 1):
         diagram_lines.append(f"{index}. {step['action']}")
-    diagram_lines.extend(["", "```mermaid", "sequenceDiagram"])
+    diagram_lines.extend(["", "```mermaid", "sequenceDiagram", "    autonumber"])
     for index, participant in enumerate(diagram_participants, 1):
-        diagram_lines.append(f"    participant P{index} as {participant}")
+        diagram_lines.append("    " + participant_declaration(f"P{index}", participant, "actor" if participant == actor else "service"))
     if len(diagram_participants) >= 2:
         diagram_lines.append(f"    P1->>P2: {action}")
+        target = "P2"
+    else:
+        target = "P1"
+    if diagram_participants[int(target[1:]) - 1] == actor:
+        target = next((f"P{i}" for i, p in enumerate(diagram_participants, 1) if p != actor), None)
+    if not target:
+        raise ValueError("TECHNICAL_PARTICIPANT_REQUIRED")
+    diagram_lines.append(f"    activate {target}")
+    if len(diagram_participants) == 1:
+        diagram_lines.append(f"    Note over {target}: {action}")
+    diagram_lines.extend([f"    Note over {target}: 协议操作，完成结果以场景证据为准", f"    deactivate {target}"])
     diagram_lines.extend(["```", ""])
     return title, definition, data, "\n".join(diagram_lines)
 
@@ -574,12 +587,15 @@ def materialize_scenarios(
     plan: Mapping[str, Any],
     *,
     owner: str = "main-agent",
+    preview: bool = False,
 ) -> tuple[list[Path], list[str]]:
     """Create only missing scenario directories and never overwrite user assets."""
+    from .contracts import _render_yaml
 
     project_root = project_root.resolve()
     scenarios_root = project_root / "scenarios"
-    scenarios_root.mkdir(parents=True, exist_ok=True)
+    if not preview:
+        scenarios_root.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     blockers: list[str] = []
     rules = {str(rule.get("id")): rule for rule in design.get("rules", []) if isinstance(rule, Mapping) and rule.get("id")}
@@ -608,10 +624,13 @@ def materialize_scenarios(
                 directory = scenarios_root / title
         if directory.exists() and any(directory.iterdir()):
             continue
+        if preview:
+            written.append(directory / "场景定义.yaml")
+            continue
         directory.mkdir(parents=True, exist_ok=True)
         test_file_name = re.sub(r"\s+", "_", title)
         files = {
-            directory / "场景定义.yaml": yaml.safe_dump(definition, allow_unicode=True, sort_keys=False),
+            directory / "场景定义.yaml": _render_yaml("定义场景业务来源、控制、所有权及清理恢复", definition),
             directory / "业务数据.json": json.dumps(data, ensure_ascii=False, indent=2) + "\n",
             directory / "业务流程图.md": diagram,
             directory / f"test_{test_file_name}.py": _test_source(title, definition),

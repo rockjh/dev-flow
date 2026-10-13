@@ -30,6 +30,7 @@ class AdapterRegistry:
         root = Path(__file__).parent
         implementations = tuple((name, bytes_digest((root / name).read_bytes())) for name in IMPLEMENTATIONS)
         implementations += (("control_flow.py", bytes_digest((root.parent / "control_flow.py").read_bytes())),)
+        implementations += (("core/syntax.py", bytes_digest((root.parent.parent / "core" / "syntax.py").read_bytes())),)
         capabilities = tuple(adapter.capabilities(language) if language in {"javascript", "typescript"} else adapter.capabilities()
                              for language, adapter in self._adapters.items())
         return digest((__version__, SKILL_VERSION, SCHEMA_VERSION, implementations, capabilities))

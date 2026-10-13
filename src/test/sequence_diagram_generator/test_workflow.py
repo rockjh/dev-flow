@@ -11,10 +11,11 @@ import pytest
 from toolkit.cli import console_main
 from toolkit.core.errors import DevflowError
 from toolkit.sequence_diagram_generator.cli import build_workflow
-from toolkit.sequence_diagram_generator.models import (AcceptRequest, CheckRequest, CollectRequest, DiscoverRequest, HostReceipt,
+from toolkit.sequence_diagram_generator.models import (AcceptRequest, BusinessLabel, CheckRequest, CollectRequest, DiscoverRequest, HostReceipt,
     HostSubmission, HostTaskResult, InitRequest, PrepareRequest, ProjectContext, Requirement, RequirementInput, ProposedStep,
     SemanticAnnotations, TaskPackage, VerifyRequest)
 from toolkit.sequence_diagram_generator.repository import digest, now, stable_id, to_dict
+from toolkit.sequence_diagram_generator.validation import target_evidence
 from test_adapters import FIXTURES
 
 
@@ -26,16 +27,19 @@ def context(tmp_path, monkeypatch):
     return ProjectContext(root, root / "docs" / "sequence-diagram", state / "sequence-diagram", digest(str(root)))
 
 
-def prepare(context, language="python", requirements=None):
+def prepare(context, language="python", requirements=None, *, execution_mode="serial"):
     if language:
         name, code = FIXTURES[language]
         (context.project / name).write_text(code, encoding="utf-8")
     flow = build_workflow(context)
+    # Fixtures exercise domain gates only, never real host execution acceptance.
+    flow.handoff.allow_fixtures = True
     flow.init(InitRequest(context))
     found = flow.discover(DiscoverRequest(context, "requirement" if requirements else "code", "proposal" if requirements else "implementation",
         (), RequirementInput("text", requirements) if requirements else None))
     run_id = found.data["run_id"]
-    flow.prepare(PrepareRequest(context, run_id, (), True, True, "serial", "test-session-explicit-serial-approval"))
+    flow.prepare(PrepareRequest(context, run_id, (), True, True, execution_mode,
+                                "test-session-explicit-serial-approval" if execution_mode == "serial" else ""))
     return flow, run_id, flow.repository.read_artifact(context, run_id, "task-package.json", TaskPackage)
 
 
@@ -43,21 +47,29 @@ def submission(package):
     annotations = SemanticAnnotations((), (), (), (), ())
     results = []
     for task in package.tasks:
+        labels = []
+        for scope in package.facts.scopes:
+            if scope.scope.entry_id in task.scope_ids and not task.segment_ids:
+                refs = target_evidence((scope,)).get(scope.scope.entry_id, ())
+                labels.append(BusinessLabel(scope.scope.entry_id, scope.scope.symbol.qualified_name, tuple(sorted(refs)), "Synthetic fixture checks source evidence binding."))
+        annotations = SemanticAnnotations(tuple(labels), (), (), (), ())
         if task.segment_ids:
             reqs = tuple(Requirement(stable_id("R", segment.segment_id), (segment.segment_id,), segment.text, "requirement_only",
                                      "not_evaluated", "仅需求方案，本次未评估实现") for segment in package.requirements.segments)
-            proposed = tuple(ProposedStep(stable_id("S", r.requirement_id), (r.requirement_id,), "用户", "服务", r.text) for r in reqs)
+            proposed = tuple(ProposedStep(stable_id("S", r.requirement_id), (r.requirement_id,), "用户", "服务", r.text,
+                                          sender_role="actor", receiver_role="service") for r in reqs)
             annotations = SemanticAnnotations((), reqs, (), proposed, ())
         results.append(HostTaskResult(task.task_id, annotations, (), ("synthetic test receipt",)))
-    receipts = tuple(HostReceipt(result.task_id, digest(package), digest(result), "success", "", (), now(), now(), now(),
-        package.execution_approval, next(task.scope_ids for task in package.tasks if task.task_id == result.task_id), True, False, 0) for result in results)
+    receipts = tuple(HostReceipt(result.task_id, digest(package), digest(result), "success", "", (), now(), now(), "",
+        package.execution_approval, next(task.scope_ids for task in package.tasks if task.task_id == result.task_id), True, False, 0,
+        time_source="coordinator_observed", record_origin="fixture") for result in results)
     return HostSubmission(package.run_id, digest(package), receipts, tuple(results))
 
 
 @pytest.mark.parametrize("language", FIXTURES)
 def test_local_workflow_all_syntaxes_and_readonly_check(context, language):
     flow, run_id, package = prepare(context, language)
-    results = context.project.parent / "result.json"
+    results = flow.repository.artifact_path(context, run_id, "result.json")
     results.write_text(json.dumps(to_dict(submission(package)), ensure_ascii=False), encoding="utf-8")
     collected = flow.collect(CollectRequest(context, run_id, results))
     assert collected.data["state"] == "collected"
@@ -74,7 +86,7 @@ def test_local_workflow_all_syntaxes_and_readonly_check(context, language):
 
 def test_requirement_only_proposal(context):
     flow, run_id, package = prepare(context, None, "收到订单后通知用户。")
-    results = context.project.parent / "result.json"
+    results = flow.repository.artifact_path(context, run_id, "result.json")
     results.write_text(json.dumps(to_dict(submission(package)), ensure_ascii=False), encoding="utf-8")
     result = flow.collect(CollectRequest(context, run_id, results))
     assert result.data["implementation_consistency"] == "not_evaluated"

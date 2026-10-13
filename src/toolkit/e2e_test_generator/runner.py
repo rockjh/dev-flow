@@ -626,7 +626,7 @@ def _scoped_errors(errors: list[str], stage: str) -> list[str]:
             "design-", "protocol-", "logic-", "scenario-plan-", "value-resolution-", "version-lock-", "generation-",
         ),
         "scenario_split": ("generation-schema", "generation-mode", "generation-degradation", "multi-scenario-mode"),
-        "scenario_ownership": ("generation-owner", "generation-scope", "multi-scenario-owner"),
+        "scenario_ownership": ("generation-owner", "generation-scope", "generation-host-binding", "multi-scenario-owner"),
     }
     if stage in discovery_prefixes:
         assigned = discovery_prefixes

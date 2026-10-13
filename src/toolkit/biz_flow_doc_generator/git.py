@@ -71,10 +71,7 @@ def source_view(root: Path, target: str | None = None) -> Iterator[tuple[Path, G
     """
 
     info = git_info(root, target)
-    has_version_record = (root / "docs" / "biz-flow" / "biz-flow-doc-generator-version.json").is_file()
-    if info.target == info.head and (not info.dirty or not has_version_record):
-        yield root, info
-        return
+    info.includes_uncommitted = False
     with tempfile.TemporaryDirectory(prefix="devflow-biz-flow-") as temporary:
         archive = Path(temporary) / "source.zip"
         subprocess.run(["git", "archive", "--format=zip", "-o", str(archive), info.target], cwd=root, check=True)

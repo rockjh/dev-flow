@@ -104,8 +104,8 @@ class RuntimeTests(unittest.TestCase):
             self._write_yaml(scenario / "场景定义.yaml", {
                 "meta": {"status": "pending_environment"},
                 "steps": [
-                    {"id": "first", "status": "executable", "control": "database_read", "side_effect": "read"},
-                    {"id": "later", "status": "environment_missing", "control": "public_api", "side_effect": "read"},
+                    {"id": "first", "action": "read", "status": "executable", "control": "database_read", "side_effect": "read"},
+                    {"id": "later", "action": "query", "status": "environment_missing", "control": "public_api", "side_effect": "read"},
                 ],
                 "controls": {},
                 "integrations": {"services": [], "components": []},
@@ -145,7 +145,7 @@ class RuntimeTests(unittest.TestCase):
                 "meta:\n  status: ready\nintegrations:\n  services: []\n  components: []\n"
                 "controls:\n  messages:\n    status: usable\n    planned_use: [publish]\n"
                 "  database_control:\n    status: not_applicable\n    planned_use: []\n"
-                "steps:\n  - control: messages\n    side_effect: write\n"
+                "steps:\n  - control: messages\n    action: publish\n    status: executable\n    side_effect: write\n"
                 "isolation:\n  namespace: publish\n",
                 encoding="utf-8",
             )
@@ -160,6 +160,18 @@ class RuntimeTests(unittest.TestCase):
             }
             context = RUNTIME.preflight(root, "发布场景", environ=authorized)
             self.assertEqual("test", context["active_environment"])
+            definition_path = scenario / "场景定义.yaml"
+            original = RUNTIME.yaml.safe_load(definition_path.read_text(encoding="utf-8"))
+            for field, value in (("action", None), ("status", None), ("status", "unknown"), ("action", " ")):
+                with self.subTest(field=field, value=value):
+                    definition = {**original, "steps": [dict(original["steps"][0])]}
+                    if value is None:
+                        definition["steps"][0].pop(field)
+                    else:
+                        definition["steps"][0][field] = value
+                    self._write_yaml(definition_path, definition)
+                    with self.assertRaisesRegex(RUNTIME.PreflightError, "status.*action"):
+                        RUNTIME.preflight(root, "发布场景", environ=authorized)
 
     def test_database_control_restores_after_row_count_failure(self) -> None:
         """控制 SQL 影响行数异常时仍必须恢复原值。"""
@@ -442,7 +454,7 @@ class RuntimeTests(unittest.TestCase):
             })
             self._write_yaml(scenario / "场景定义.yaml", {
                 "meta": {"status": "ready"},
-                "steps": [{"control": "scheduled_jobs", "side_effect": "read"}],
+                "steps": [{"action": "trigger", "status": "executable", "control": "scheduled_jobs", "side_effect": "read"}],
                 "controls": {"scheduled_jobs": {"status": "usable", "planned_use": ["trigger"]}},
                 "integrations": {"services": [], "components": []},
                 "isolation": {"namespace": "owned"},
@@ -470,7 +482,7 @@ class RuntimeTests(unittest.TestCase):
             })
             self._write_yaml(scenario / "场景定义.yaml", {
                 "meta": {"status": "ready"},
-                "steps": [{"side_effect": "write", "control": "messages"}],
+                "steps": [{"action": "publish", "status": "executable", "side_effect": "write", "control": "messages"}],
                 "controls": {"messages": {"status": "usable", "planned_use": ["publish"]}},
                 "integrations": {"services": [], "components": []},
                 "isolation": {"namespace": "owned"},

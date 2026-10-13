@@ -25,6 +25,7 @@ from ..core.schema import (
     validate_schema,
 )
 from ..core.artifacts import write_version_file
+from .host import ownership_errors, prepare_scenario_owners, validate_serial_approval
 from .discovery import (
     SHA_RE,
     SKIP_DIRS,
@@ -1110,7 +1111,7 @@ def _write_artifacts(documents: Mapping[Path, str]) -> None:
     try:
         for path, content in documents.items():
             path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as stream:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", dir=path.parent, delete=False) as stream:
                 stream.write(content)
                 temporary.append((Path(stream.name), path))
         for source, target in temporary:
@@ -1172,6 +1173,10 @@ def _generate_artifacts(
     openapi_roots: Iterable[Path] = (),
     openapi_files: Iterable[Path] = (),
     runtime_urls: Iterable[str] = (),
+    delegate: bool = False,
+    prepare_owners: bool = True,
+    serial_approval: dict[str, Any] | None = None,
+    preview: bool = False,
 ) -> tuple[dict[str, Any], list[str]]:
     """Validate every authority input, then atomically write generation artifacts."""
 
@@ -1312,6 +1317,16 @@ def _generate_artifacts(
     if errors:
         return result, sorted(set(errors))
 
+    if serial_approval is not None:
+        planned, _ = materialize_scenarios(project_root, design, protocols, plan, preview=True)
+        scopes = {path.parent.relative_to(project_root).as_posix() for path in (project_root / "scenarios").glob("*/场景定义.yaml")}
+        scopes.update(path.parent.relative_to(project_root).as_posix() for path in planned)
+        errors = validate_serial_approval(project_root, serial_approval, scopes)
+        if errors:
+            return result, errors
+    if preview:
+        return result, []
+
     # Materialize first so the version lock fingerprints the generated scenario
     # data and cleanup contract in the same generation transaction.
     scenario_files, scenario_blockers = materialize_scenarios(project_root, design, protocols, plan)
@@ -1329,9 +1344,13 @@ def _generate_artifacts(
     write_version_file(project_root, "e2e", lock, path=lock_path)
     if scenario_blockers:
         result["materialization_blockers"] = scenario_blockers
-    for legacy in (project_root / "source-rules.yaml", discovery_dir / "source-rules.yaml"):
-        legacy.unlink(missing_ok=True)
     result["artifacts"] = [str(path) for path in documents] + [str(lock_path)] + [str(path) for path in scenario_files]
+    try:
+        handoff = prepare_scenario_owners(project_root, delegate=delegate, serial_approval=serial_approval) if prepare_owners else None
+    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as exc:
+        return result, [f"cannot prepare scenario owners: {exc}"]
+    if handoff is not None:
+        result["host_handoff"] = handoff
     return result, []
 
 
@@ -1343,11 +1362,19 @@ def generate_artifacts(
     openapi_roots: Iterable[Path] = (),
     openapi_files: Iterable[Path] = (),
     runtime_urls: Iterable[str] = (),
+    delegate: bool = False,
+    serial_approval: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Public generation entry point; never bypass the document preflight."""
     from .document_gate import run_document_gate
 
     root = project_root.resolve()
+    if serial_approval is not None:
+        result, errors = _generate_artifacts(root, design_roots=design_roots, design_files=design_files,
+            openapi_roots=openapi_roots, openapi_files=openapi_files, runtime_urls=runtime_urls,
+            serial_approval=serial_approval, preview=True)
+        if errors:
+            return result, errors
     report = run_document_gate(root, "generate")
     if not report.allowed:
         return {"document_gate": report.as_dict()}, [str(issue) for issue in report.issues]
@@ -1358,6 +1385,8 @@ def generate_artifacts(
         openapi_roots=openapi_roots,
         openapi_files=openapi_files,
         runtime_urls=runtime_urls,
+        delegate=delegate,
+        serial_approval=serial_approval,
     )
 
 
@@ -2099,7 +2128,10 @@ def _scenario_errors(
             errors.append(_error(path, "scenario-meta-participants", "participants 必须是非空且不重复的字符串列表", "participants:"))
 
     generation = definition.get("generation")
-    if _exact_keys(path, generation, {"mode", "owner", "write_scope", "degradation_reason"}, "generation-schema", errors):
+    generation_keys = {"mode", "owner", "write_scope", "degradation_reason"}
+    if isinstance(generation, dict):
+        generation_keys.update(key for key in ("host_task", "serial_approval") if key in generation)
+    if _exact_keys(path, generation, generation_keys, "generation-schema", errors):
         mode = generation.get("mode")
         if mode not in GENERATION_MODES:
             errors.append(_error(path, "generation-mode", f"生成模式无效: {mode}", "mode:"))
@@ -2113,6 +2145,18 @@ def _scenario_errors(
             errors.append(_error(path, "generation-degradation", "降级模式必须说明原因", "degradation_reason:"))
         if mode != "sequential_degraded" and reason is not None:
             errors.append(_error(path, "generation-degradation", "非降级模式的 degradation_reason 必须为 null", "degradation_reason:"))
+        if mode in {"delegated", "sequential_degraded"}:
+            errors.extend(_error(path, "generation-host-binding", message) for message in ownership_errors(project_root, definition=definition))
+        elif "host_task" in generation:
+            errors.append(_error(path, "generation-host-binding", "原生场景任务已准备，必须完成真实宿主执行和收集后才可验收"))
+        if mode == "sequential_degraded":
+            authorization = generation.get("serial_approval")
+            if (not isinstance(authorization, dict) or set(authorization) != {"reference", "scope"}
+                    or not isinstance(authorization.get("reference"), str) or not authorization["reference"].strip()
+                    or authorization.get("scope") != expected_scope):
+                errors.append(_error(path, "generation-degradation", "串行降级必须绑定本场景明确会话授权；直接生成不构成串行授权"))
+        elif "serial_approval" in generation:
+            errors.append(_error(path, "generation-degradation", "非降级场景不得携带串行降级授权"))
 
     readiness = definition.get("readiness")
     readiness_keys = {"source_contract", "safe_control", "runtime_configuration", "test_data", "blockers"}
@@ -2730,9 +2774,12 @@ def _cross_scenario_errors(scenarios: list[tuple[Path, dict[str, Any]]]) -> list
         modes = {str(definition.get("generation", {}).get("mode")) for _, definition in scenarios}
         if modes not in ({"delegated"}, {"sequential_degraded"}):
             errors.append(_error(scenarios[0][0] / "场景定义.yaml", "multi-scenario-mode", "多场景必须全部 delegated，或全部明确 sequential_degraded"))
-        owners = [str(definition.get("generation", {}).get("owner")) for _, definition in scenarios]
+        # A completed child may be reused sequentially. Ownership belongs to a
+        # run/task, while owner identifies the actual child rather than a label.
+        references = [definition.get("generation", {}).get("host_task") for _, definition in scenarios]
+        owners = [(reference.get("run_id"), reference.get("task_id")) if isinstance(reference, dict) else (None, None) for reference in references]
         if "delegated" in modes and len(owners) != len(set(owners)):
-            errors.append(_error(scenarios[0][0] / "场景定义.yaml", "multi-scenario-owner", "delegated 场景 owner 必须唯一"))
+            errors.append(_error(scenarios[0][0] / "场景定义.yaml", "multi-scenario-owner", "delegated 场景任务归属必须唯一"))
 
     namespaces: dict[str, Path] = {}
     correlations: dict[str, tuple[Path, str | None]] = {}

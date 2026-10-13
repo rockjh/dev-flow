@@ -17,6 +17,8 @@ from typing import Any, TypeVar
 
 import yaml
 
+from ..core.schema import E2E_STEP_STATUSES
+
 
 PLACEHOLDER_RE = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)\}$")
 SENSITIVE_FRAGMENTS = {
@@ -108,7 +110,7 @@ def _has_write_step(definition: Mapping[str, Any]) -> bool:
     return any(
         isinstance(step, Mapping)
         and step.get("side_effect") == "write"
-        and step.get("status", "executable") == "executable"
+        and step.get("status") == "executable"
         for step in definition.get("steps", [])
     )
 
@@ -123,20 +125,13 @@ def _required_control(definition: Mapping[str, Any], name: str) -> bool:
         for step in definition.get("steps", [])
         if isinstance(step, Mapping)
         and step.get("control") == name
-        and step.get("status", "executable") == "executable"
+        and step.get("status") == "executable"
     }
-    legacy_active = any(
-        isinstance(step, Mapping)
-        and step.get("control") == name
-        and "status" not in step
-        and not isinstance(step.get("action"), str)
-        for step in definition.get("steps", [])
-    )
     planned = {str(item) for item in control.get("planned_use", [])} if isinstance(control, Mapping) else set()
     return (
         isinstance(control, Mapping)
         and control.get("status") == "usable"
-        and ((legacy_active and bool(planned)) or bool(active_actions & planned))
+        and bool(active_actions & planned)
     )
 
 
@@ -168,6 +163,15 @@ def preflight(project_root: Path, scenario_name: str, *, environ: Mapping[str, s
         raise PreflightError("场景名不能是路径")
     scenario_root = project_root / "scenarios" / scenario_name
     definition = _load_yaml(scenario_root / "场景定义.yaml")
+    steps = definition.get("steps")
+    if not isinstance(steps, list) or any(
+        not isinstance(step, Mapping)
+        or step.get("status") not in E2E_STEP_STATUSES
+        or not isinstance(step.get("action"), str)
+        or not step["action"].strip()
+        for step in steps
+    ):
+        raise PreflightError("场景 steps 必须显式声明有效 status 和非空 action")
     status = definition.get("meta", {}).get("status")
     partial = status == "pending_environment" and any(
         isinstance(step, Mapping) and step.get("status") == "executable"
@@ -279,7 +283,7 @@ def preflight(project_root: Path, scenario_name: str, *, environ: Mapping[str, s
         "partial": partial,
         "executable_steps": [
             str(step.get("id")) for step in definition.get("steps", [])
-            if isinstance(step, Mapping) and step.get("status", "executable") == "executable"
+            if isinstance(step, Mapping) and step.get("status") == "executable"
         ],
     }
 

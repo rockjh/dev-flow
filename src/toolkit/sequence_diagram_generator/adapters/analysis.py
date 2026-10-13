@@ -52,10 +52,10 @@ class _Analysis:
             self.gap("REDACTION_SEMANTIC_LOSS", line, "required source evidence contains redacted business semantics")
         return evidence
 
-    def step(self, kind, label, evidence, receiver=None, completion="not_observed", dependencies=()):
+    def step(self, kind, label, evidence, receiver=None, completion="not_observed", dependencies=(), receiver_role="service"):
         step = FlowStep(self.identifier("S", (kind, label, evidence.digest)), self.context.context_id, kind,
                         self.symbol.qualified_name, receiver or self.symbol.qualified_name, redact(label),
-                        self.exit_id, (evidence.evidence_id,), tuple(dependencies), completion)
+                        self.exit_id, (evidence.evidence_id,), tuple(dependencies), completion, "service", receiver_role)
         self.steps.append(step)
         return SequenceStep(step.step_id)
 
@@ -82,7 +82,8 @@ class _Analysis:
         return SequenceBlock(identifier, kind, redact(label), tuple(results)), bool(terminated) and all(terminated)
 
     def call(self, label, evidence, target, resolution, build=None, completion="returned", kind="call", side_effect=""):
-        call_step = self.step(kind, label, evidence, target, completion="dispatched" if kind == "dispatch" else "not_observed")
+        receiver_role = "service" if resolution == "project" else "external"
+        call_step = self.step(kind, label, evidence, target, completion="dispatched" if kind == "dispatch" else "not_observed", receiver_role=receiver_role)
         operation = ExternalOperation(stable_id("P" if side_effect.startswith("persistence:") else "O", call_step.step_id), call_step.step_id, target,
                                       (evidence.evidence_id,), resolution, "project declaration" if resolution == "project" else "dependency internals not expanded",
                                       side_effect or ("external operation" if resolution in {"boundary", "unknown"} else "supported syntax only"), completion)
@@ -127,7 +128,7 @@ class _Analysis:
             self.context, self.symbol, self.parent, self.exit_id = saved_context, saved_symbol, saved_parent, saved_exit
         if completion == "returned" and kind != "dispatch":
             items.append(self.step("call_return", "call returned (dependency internals unexpanded)" if resolution == "boundary" else "call returned",
-                                   evidence, target, completion="observed", dependencies=(call_step.step_id,)))
+                                   evidence, target, completion="observed", dependencies=(call_step.step_id,), receiver_role=receiver_role))
         return items
 
     def _normalize(self, items, active_context):

@@ -1,10 +1,10 @@
 version: 1
 module: tasks
-swagger_tag: 浠诲姟绠＄悊
+swagger_tag: 任务管理
 cases:
 - id: LISTTASKS_GET_TASKS_MISSING_X_TENANT_ID
-  title: List tasks澶辫触锛氱己灏戝繀濉?Header X-Tenant-Id
-  description: 楠岃瘉List tasks鐨勭己灏戝繀濉?Header X-Tenant-Id鍦烘櫙銆?
+  title: 查询任务列表缺少必需请求头 X-Tenant-Id
+  description: 验证查询任务列表缺少必需请求头 X-Tenant-Id场景，预期结果按本用例现有契约核对。
   endpoint_id: LISTTASKS_GET_TASKS
   scenario: validation
   status: runnable
@@ -23,8 +23,8 @@ cases:
   - VALIDATION:GET /tasks:header.X-Tenant-Id:required
   openapi_trace: LISTTASKS_GET_TASKS:validation
 - id: LISTTASKS_GET_TASKS_INVALID_MINLENGTH_X_TENANT_ID
-  title: List tasks澶辫触锛氬弬鏁?X-Tenant-Id 鐭簬鏈€灏忛暱搴?
-  description: 楠岃瘉List tasks鐨勫弬鏁?X-Tenant-Id 鐭簬鏈€灏忛暱搴﹀満鏅€?
+  title: 查询任务列表请求头 X-Tenant-Id 短于最小长度
+  description: 验证查询任务列表请求头 X-Tenant-Id 短于最小长度场景，预期结果按本用例现有契约核对。
   endpoint_id: LISTTASKS_GET_TASKS
   scenario: validation
   status: runnable
@@ -42,8 +42,8 @@ cases:
   - VALIDATION:GET /tasks:header.X-Tenant-Id:minLength
   openapi_trace: LISTTASKS_GET_TASKS:validation
 - id: LISTTASKS_GET_TASKS_INVALID_MINIMUM_PAGE
-  title: List tasks澶辫触锛氬弬鏁?page 灏忎簬鏈€灏忓€?
-  description: 楠岃瘉List tasks鐨勫弬鏁?page 灏忎簬鏈€灏忓€煎満鏅€?
+  title: 查询任务列表页码低于最小值
+  description: 验证查询任务列表页码低于最小值场景，预期结果按本用例现有契约核对。
   endpoint_id: LISTTASKS_GET_TASKS
   scenario: validation
   status: runnable
@@ -63,8 +63,8 @@ cases:
   - QUERY:GET /tasks:query.page:minimum
   openapi_trace: LISTTASKS_GET_TASKS:validation
 - id: LISTTASKS_GET_TASKS_INVALID_MINIMUM_PAGESIZE
-  title: List tasks澶辫触锛氬弬鏁?pageSize 灏忎簬鏈€灏忓€?
-  description: 楠岃瘉List tasks鐨勫弬鏁?pageSize 灏忎簬鏈€灏忓€煎満鏅€?
+  title: 查询任务列表每页数量低于最小值
+  description: 验证查询任务列表每页数量低于最小值场景，预期结果按本用例现有契约核对。
   endpoint_id: LISTTASKS_GET_TASKS
   scenario: validation
   status: runnable
@@ -84,8 +84,8 @@ cases:
   - QUERY:GET /tasks:query.pageSize:minimum
   openapi_trace: LISTTASKS_GET_TASKS:validation
 - id: LISTTASKS_GET_TASKS_INVALID_MAXIMUM_PAGESIZE
-  title: List tasks澶辫触锛氬弬鏁?pageSize 澶т簬鏈€澶у€?
-  description: 楠岃瘉List tasks鐨勫弬鏁?pageSize 澶т簬鏈€澶у€煎満鏅€?
+  title: 查询任务列表每页数量超过最大值
+  description: 验证查询任务列表每页数量超过最大值场景，预期结果按本用例现有契约核对。
   endpoint_id: LISTTASKS_GET_TASKS
   scenario: validation
   status: runnable
@@ -105,8 +105,8 @@ cases:
   - QUERY:GET /tasks:query.pageSize:maximum
   openapi_trace: LISTTASKS_GET_TASKS:validation
 - id: LISTTASKS_GET_TASKS_INVALID_STATUS
-  title: List tasks澶辫触锛氬弬鏁?status 浣跨敤闈炴硶鏋氫妇鍊?
-  description: 楠岃瘉List tasks鐨勫弬鏁?status 浣跨敤闈炴硶鏋氫妇鍊煎満鏅€?
+  title: 查询任务列表状态枚举无效
+  description: 验证查询任务列表状态枚举无效场景，预期结果按本用例现有契约核对。
   endpoint_id: LISTTASKS_GET_TASKS
   scenario: validation
   status: runnable
@@ -126,8 +126,8 @@ cases:
   - QUERY:GET /tasks:query.status:enum
   openapi_trace: LISTTASKS_GET_TASKS:validation
 - id: LISTTASKS_GET_TASKS_INVALID_SORT
-  title: List tasks澶辫触锛氬弬鏁?sort 浣跨敤闈炴硶鏋氫妇鍊?
-  description: 楠岃瘉List tasks鐨勫弬鏁?sort 浣跨敤闈炴硶鏋氫妇鍊煎満鏅€?
+  title: 查询任务列表排序枚举无效
+  description: 验证查询任务列表排序枚举无效场景，预期结果按本用例现有契约核对。
   endpoint_id: LISTTASKS_GET_TASKS
   scenario: validation
   status: runnable
@@ -147,8 +147,8 @@ cases:
   - QUERY:GET /tasks:query.sort:enum
   openapi_trace: LISTTASKS_GET_TASKS:validation
 - id: CREATETASK_POST_TASKS_MISSING_X_TENANT_ID
-  title: Create a task澶辫触锛氱己灏戝繀濉?Header X-Tenant-Id
-  description: 楠岃瘉Create a task鐨勭己灏戝繀濉?Header X-Tenant-Id鍦烘櫙銆?
+  title: 创建任务缺少必需请求头 X-Tenant-Id
+  description: 验证创建任务缺少必需请求头 X-Tenant-Id场景，预期结果按本用例现有契约核对。
   endpoint_id: CREATETASK_POST_TASKS
   scenario: validation
   status: runnable
@@ -172,8 +172,8 @@ cases:
   - VALIDATION:POST /tasks:header.X-Tenant-Id:required
   openapi_trace: CREATETASK_POST_TASKS:validation
 - id: CREATETASK_POST_TASKS_INVALID_MINLENGTH_X_TENANT_ID
-  title: Create a task澶辫触锛氬弬鏁?X-Tenant-Id 鐭簬鏈€灏忛暱搴?
-  description: 楠岃瘉Create a task鐨勫弬鏁?X-Tenant-Id 鐭簬鏈€灏忛暱搴﹀満鏅€?
+  title: 创建任务请求头 X-Tenant-Id 短于最小长度
+  description: 验证创建任务请求头 X-Tenant-Id 短于最小长度场景，预期结果按本用例现有契约核对。
   endpoint_id: CREATETASK_POST_TASKS
   scenario: validation
   status: runnable
@@ -196,8 +196,8 @@ cases:
   - VALIDATION:POST /tasks:header.X-Tenant-Id:minLength
   openapi_trace: CREATETASK_POST_TASKS:validation
 - id: CREATETASK_POST_TASKS_MISSING_IDEMPOTENCY_KEY
-  title: Create a task澶辫触锛氱己灏戝繀濉?Header Idempotency-Key
-  description: 楠岃瘉Create a task鐨勭己灏戝繀濉?Header Idempotency-Key鍦烘櫙銆?
+  title: 创建任务缺少必需请求头 Idempotency-Key
+  description: 验证创建任务缺少必需请求头 Idempotency-Key场景，预期结果按本用例现有契约核对。
   endpoint_id: CREATETASK_POST_TASKS
   scenario: validation
   status: runnable
@@ -221,8 +221,8 @@ cases:
   - VALIDATION:POST /tasks:header.Idempotency-Key:required
   openapi_trace: CREATETASK_POST_TASKS:validation
 - id: CREATETASK_POST_TASKS_INVALID_MINLENGTH_IDEMPOTENCY_KEY
-  title: Create a task澶辫触锛氬弬鏁?Idempotency-Key 鐭簬鏈€灏忛暱搴?
-  description: 楠岃瘉Create a task鐨勫弬鏁?Idempotency-Key 鐭簬鏈€灏忛暱搴﹀満鏅€?
+  title: 创建任务请求头 Idempotency-Key 短于最小长度
+  description: 验证创建任务请求头 Idempotency-Key 短于最小长度场景，预期结果按本用例现有契约核对。
   endpoint_id: CREATETASK_POST_TASKS
   scenario: validation
   status: runnable
@@ -245,8 +245,8 @@ cases:
   - VALIDATION:POST /tasks:header.Idempotency-Key:minLength
   openapi_trace: CREATETASK_POST_TASKS:validation
 - id: CREATETASK_POST_TASKS_INVALID_MAXLENGTH_IDEMPOTENCY_KEY
-  title: Create a task澶辫触锛氬弬鏁?Idempotency-Key 瓒呰繃鏈€澶ч暱搴?
-  description: 楠岃瘉Create a task鐨勫弬鏁?Idempotency-Key 瓒呰繃鏈€澶ч暱搴﹀満鏅€?
+  title: 创建任务请求头 Idempotency-Key 超过最大长度
+  description: 验证创建任务请求头 Idempotency-Key 超过最大长度场景，预期结果按本用例现有契约核对。
   endpoint_id: CREATETASK_POST_TASKS
   scenario: validation
   status: runnable
@@ -269,8 +269,8 @@ cases:
   - VALIDATION:POST /tasks:header.Idempotency-Key:maxLength
   openapi_trace: CREATETASK_POST_TASKS:validation
 - id: CREATETASK_POST_TASKS_MISSING_BODY_TASKTYPE
-  title: Create a task澶辫触锛氱己灏戝繀濉瓧娈?body.taskType
-  description: 楠岃瘉Create a task鐨勭己灏戝繀濉瓧娈?body.taskType鍦烘櫙銆?
+  title: 创建任务缺少必需字段 body.taskType
+  description: 验证创建任务缺少必需字段 body.taskType场景，预期结果按本用例现有契约核对。
   endpoint_id: CREATETASK_POST_TASKS
   scenario: validation
   status: runnable
@@ -292,8 +292,8 @@ cases:
   - VALIDATION:POST /tasks:body.taskType:missing
   openapi_trace: CREATETASK_POST_TASKS:validation
 - id: CREATETASK_POST_TASKS_MISSING_BODY_PAYLOAD
-  title: Create a task澶辫触锛氱己灏戝繀濉瓧娈?body.payload
-  description: 楠岃瘉Create a task鐨勭己灏戝繀濉瓧娈?body.payload鍦烘櫙銆?
+  title: 创建任务缺少必需字段 body.payload
+  description: 验证创建任务缺少必需字段 body.payload场景，预期结果按本用例现有契约核对。
   endpoint_id: CREATETASK_POST_TASKS
   scenario: validation
   status: runnable
@@ -315,8 +315,8 @@ cases:
   - VALIDATION:POST /tasks:body.payload:missing
   openapi_trace: CREATETASK_POST_TASKS:validation
 - id: CREATETASK_POST_TASKS_INVALID_BODY_ENUM_TASKTYPE
-  title: Create a task澶辫触锛氬瓧娈?body.taskType 浣跨敤闈炴硶鏋氫妇鍊?
-  description: 楠岃瘉Create a task鐨勫瓧娈?body.taskType 浣跨敤闈炴硶鏋氫妇鍊煎満鏅€?
+  title: 创建任务字段 body.taskType 枚举无效
+  description: 验证创建任务字段 body.taskType 枚举无效场景，预期结果按本用例现有契约核对。
   endpoint_id: CREATETASK_POST_TASKS
   scenario: validation
   status: runnable
@@ -339,8 +339,8 @@ cases:
   - VALIDATION:POST /tasks:body.taskType:enum
   openapi_trace: CREATETASK_POST_TASKS:validation
 - id: CREATETASK_POST_TASKS_INVALID_CONTENT_TYPE
-  title: Create a task澶辫触锛欳ontent-Type 閿欒
-  description: 楠岃瘉Create a task鐨凜ontent-Type 閿欒鍦烘櫙銆?
+  title: 创建任务 Content-Type 无效
+  description: 验证创建任务 Content-Type 无效场景，预期结果按本用例现有契约核对。
   endpoint_id: CREATETASK_POST_TASKS
   scenario: validation
   status: runnable
@@ -363,8 +363,8 @@ cases:
   - VALIDATION:POST /tasks:Content-Type:content-type
   openapi_trace: CREATETASK_POST_TASKS:validation
 - id: CREATETASK_POST_TASKS_TASK_CREATE_ACCEPTED
-  title: Create a task鎴愬姛 - 璁捐瑙勫垯 TASK_CREATE_ACCEPTED
-  description: 楠岃瘉璁捐瑙勫垯 CREATETASK_POST_TASKS
+  title: 创建任务成功
+  description: 验证创建任务成功场景，预期结果按本用例现有契约核对。
   endpoint_id: CREATETASK_POST_TASKS
   request:
     body:
@@ -412,10 +412,10 @@ cases:
     equals: queued
   review_required: false
   status: runnable
-  bru: 01-鍒涘缓浠诲姟鎴愬姛.bru
+  bru: 01-创建任务成功.bru
 - id: CREATETASK_POST_TASKS_TASK_CREATE_CONFLICT
-  title: Create a task鎴愬姛 - 璁捐瑙勫垯 TASK_CREATE_CONFLICT
-  description: 楠岃瘉璁捐瑙勫垯 CREATETASK_POST_TASKS
+  title: 创建任务幂等冲突
+  description: 验证创建任务幂等冲突场景，预期结果按本用例现有契约核对。
   endpoint_id: CREATETASK_POST_TASKS
   request:
     headers:
@@ -459,10 +459,10 @@ cases:
     equals: IDEMPOTENCY_CONFLICT
   review_required: false
   status: runnable
-  bru: 02-鍒涘缓浠诲姟骞傜瓑鍐茬獊.bru
+  bru: 02-创建任务幂等冲突.bru
 - id: LISTTASKS_GET_TASKS_TASK_LIST_PAGE
-  title: List tasks鎴愬姛 - 璁捐瑙勫垯 TASK_LIST_PAGE
-  description: 楠岃瘉璁捐瑙勫垯 LISTTASKS_GET_TASKS
+  title: 任务列表分页
+  description: 验证任务列表分页场景，预期结果按本用例现有契约核对。
   endpoint_id: LISTTASKS_GET_TASKS
   request:
     query:
@@ -508,10 +508,10 @@ cases:
     equals: 1
   review_required: false
   status: runnable
-  bru: 03-浠诲姟鍒楄〃鍒嗛〉.bru
+  bru: 03-任务列表分页.bru
 - id: LISTTASKS_GET_TASKS_TASK_LIST_EMPTY
-  title: List tasks鎴愬姛 - 璁捐瑙勫垯 TASK_LIST_EMPTY
-  description: 楠岃瘉璁捐瑙勫垯 LISTTASKS_GET_TASKS
+  title: 任务列表结果为空
+  description: 验证任务列表结果为空场景，预期结果按本用例现有契约核对。
   endpoint_id: LISTTASKS_GET_TASKS
   request:
     query:
@@ -561,10 +561,10 @@ cases:
     equals: 0
   review_required: false
   status: runnable
-  bru: 04-浠诲姟鍒楄〃绌虹粨鏋?bru
+  bru: 04-任务列表结果为空.bru
 - id: GETTASK_GET_TASKS_TASKID_TASK_GET_OWNED
-  title: Get a task鎴愬姛 - 璁捐瑙勫垯 TASK_GET_OWNED
-  description: 楠岃瘉璁捐瑙勫垯 GETTASK_GET_TASKS_TASKID
+  title: 查询所属任务
+  description: 验证查询所属任务场景，预期结果按本用例现有契约核对。
   endpoint_id: GETTASK_GET_TASKS_TASKID
   request:
     path_parameters:
@@ -615,10 +615,10 @@ cases:
     equals: queued
   review_required: false
   status: runnable
-  bru: 05-鏌ヨ鎵€灞炰换鍔?bru
+  bru: 05-查询所属任务.bru
 - id: GETTASK_GET_TASKS_TASKID_TASK_GET_MISSING
-  title: Get a task鎴愬姛 - 璁捐瑙勫垯 TASK_GET_MISSING
-  description: 楠岃瘉璁捐瑙勫垯 GETTASK_GET_TASKS_TASKID
+  title: 查询任务不存在
+  description: 验证查询任务不存在场景，预期结果按本用例现有契约核对。
   endpoint_id: GETTASK_GET_TASKS_TASKID
   request:
     path_parameters:
@@ -658,10 +658,10 @@ cases:
     equals: TASK_NOT_FOUND
   review_required: false
   status: runnable
-  bru: 06-鏌ヨ浠诲姟涓嶅瓨鍦?bru
+  bru: 06-查询任务不存在.bru
 - id: CANCELTASK_POST_TASKS_TASKID_CANCEL_TASK_CANCEL_QUEUED
-  title: Request cancellation鎴愬姛鍙楃悊 - 璁捐瑙勫垯 TASK_CANCEL_QUEUED
-  description: 楠岃瘉璁捐瑙勫垯 CANCELTASK_POST_TASKS_TASKID_CANCEL
+  title: 取消排队任务
+  description: 验证取消排队任务场景，预期结果按本用例现有契约核对。
   endpoint_id: CANCELTASK_POST_TASKS_TASKID_CANCEL
   request:
     path_parameters:
@@ -713,10 +713,10 @@ cases:
     equals: cancelling
   review_required: false
   status: runnable
-  bru: 07-鍙栨秷鎺掗槦浠诲姟.bru
+  bru: 07-取消排队任务.bru
 - id: CANCELTASK_POST_TASKS_TASKID_CANCEL_TASK_CANCEL_RUNNING
-  title: Request cancellation鎴愬姛鍙楃悊 - 璁捐瑙勫垯 TASK_CANCEL_RUNNING
-  description: 楠岃瘉璁捐瑙勫垯 CANCELTASK_POST_TASKS_TASKID_CANCEL
+  title: 拒绝取消运行中任务
+  description: 验证拒绝取消运行中任务场景，预期结果按本用例现有契约核对。
   endpoint_id: CANCELTASK_POST_TASKS_TASKID_CANCEL
   request:
     path_parameters:
@@ -759,4 +759,4 @@ cases:
     equals: TASK_NOT_CANCELLABLE
   review_required: false
   status: runnable
-  bru: 08-鎷掔粷鍙栨秷杩愯涓换鍔?bru
+  bru: 08-拒绝取消运行中任务.bru

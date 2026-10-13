@@ -281,7 +281,7 @@ decision:
 ```yaml
 generation:
   mode: delegated
-  owner: <subagent-task-id>
+  owner: <actual-child-agent-id>
   write_scope: scenarios/<中文业务名称>
   degradation_reason: null
 ```

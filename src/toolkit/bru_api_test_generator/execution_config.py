@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Load the minimal QA config and the extended Bruno environment format."""
+"""Load shared-CLI execution config and the extended Bruno environment format."""
 
 from __future__ import annotations
 
@@ -60,27 +60,6 @@ BRUNO_JSON_TEMPLATE = {
     "type": "collection",
     "ignore": ["node_modules", ".git"],
 }
-
-RUN_BAT_TEMPLATE = r"""@echo off
-setlocal
-rem Optional PATH hints: set BRUNO_NODE_HOME and/or BRUNO_NPM_BIN before running.
-if defined BRUNO_NODE_HOME set "PATH=%BRUNO_NODE_HOME%;%PATH%"
-if defined BRUNO_NPM_BIN set "PATH=%BRUNO_NPM_BIN%;%PATH%"
-rem Usage: run.bat runs all modules; add --module "users" or --cli-timeout 90 as needed.
-devflow bru-api run --qa-root "%~dp0.." %*
-exit /b %errorlevel%
-"""
-
-RUN_SH_TEMPLATE = """#!/usr/bin/env sh
-set -eu
-# Optional PATH hints: export BRUNO_NODE_HOME and/or BRUNO_NPM_BIN before running.
-if [ -n "${BRUNO_NODE_HOME:-}" ]; then PATH="$BRUNO_NODE_HOME:$PATH"; fi
-if [ -n "${BRUNO_NPM_BIN:-}" ]; then PATH="$BRUNO_NPM_BIN:$PATH"; fi
-export PATH
-# Usage: ./run.sh runs all modules; add --module "users" or --cli-timeout 90 as needed.
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec devflow bru-api run --qa-root "$SCRIPT_DIR/.." "$@"
-"""
 
 SHARED_RUN_BAT_TEMPLATE = r"""@echo off
 setlocal
@@ -164,12 +143,15 @@ completion.
 
 ```mermaid
 sequenceDiagram
-    participant R as 执行入口
-    participant B as Bruno
+    autonumber
+    actor R as 执行入口
+    actor B as Bruno
     participant A as API
     R->>B: 启动测试集合
     B->>A: 发送接口请求
+    activate A
     A-->>B: 返回 HTTP 响应
+    deactivate A
     B-->>R: 返回执行结果
     R->>R: 写入 latest.md
 ```
@@ -408,21 +390,6 @@ def _write_if_missing(path: Path, content: str, newline: str = "\n") -> bool:
     return True
 
 
-def render_execution_config(config: dict[str, Any]) -> str:
-    sign = config["sign"]
-    lines = [
-        f"active_environment: {config['active_environment']}",
-        f"tooling: {config['tooling']}",
-        f"coverage_profile: {config['coverage_profile']}",
-        f"cli_timeout: {float(config.get('cli_timeout', DEFAULT_CLI_TIMEOUT)):g}",
-        "sign:",
-        f"  provider: {sign['provider']}",
-    ]
-    if sign.get("version"):
-        lines.append(f"  version: {sign['version']}")
-    return "\n".join(lines) + "\n"
-
-
 def render_headers_block(document: dict[str, dict[str, str]]) -> str:
     headers = document.get("headers", {})
     if not headers:
@@ -432,40 +399,31 @@ def render_headers_block(document: dict[str, dict[str, str]]) -> str:
     ) + "}\n"
 
 
-def _tooling_mode(path: Path, requested_local_scripts: bool | None) -> bool:
-    return False
-
-
-def initialize_execution_layout(qa_root: Path, local_scripts: bool | None = None) -> list[Path]:
+def initialize_execution_layout(qa_root: Path) -> list[Path]:
     """Create reusable execution assets and lightweight shared-CLI launchers."""
 
     qa_root = qa_root.resolve()
     changed: list[Path] = []
-    contracts_root = qa_root / CONTRACTS
     bruno_root = qa_root / BRUNO
     execution_root = qa_root / EXECUTION
     new_environments = execution_root / "env"
     config_path = execution_root / "config.yaml"
-    qa_config_path = qa_root / "qa.yaml"
-    tooling_source = qa_config_path if qa_config_path.is_file() else config_path
-    local_scripts = _tooling_mode(
-        tooling_source,
-        local_scripts,
-    )
-    tooling = "shared-cli"
+    unsupported = [path for path in (
+        qa_root / "qa.yaml", execution_root / "plans.yaml",
+        qa_root / CONTRACTS / "request-auth.yaml", qa_root / CONTRACTS / "request-context.yaml",
+    ) if path.exists() or path.is_symlink()]
+    if unsupported:
+        raise ValueError("unsupported execution asset(s): " + ", ".join(path.relative_to(qa_root).as_posix() for path in unsupported))
+    if config_path.exists():
+        load_execution_config(config_path)
     new_environments.mkdir(parents=True, exist_ok=True)
     (qa_root / REPORTS).mkdir(parents=True, exist_ok=True)
 
-    if qa_config_path.is_file():
-        qa_config_path.unlink()
-        changed.append(qa_config_path)
-    run_bat_template = RUN_BAT_TEMPLATE if local_scripts else SHARED_RUN_BAT_TEMPLATE
-    run_sh_template = RUN_SH_TEMPLATE if local_scripts else SHARED_RUN_SH_TEMPLATE
     files = (
         (config_path, DEFAULT_CONFIG_TEMPLATE, "\n"),
         (new_environments / "local.bru", DEFAULT_ENVIRONMENT_TEMPLATE, "\n"),
-        (execution_root / "run.bat", run_bat_template, "\r\n"),
-        (execution_root / "run.sh", run_sh_template, "\n"),
+        (execution_root / "run.bat", SHARED_RUN_BAT_TEMPLATE, "\r\n"),
+        (execution_root / "run.sh", SHARED_RUN_SH_TEMPLATE, "\n"),
         (execution_root / "generate-mock-data.bat", MOCK_DATA_GENERATE_BAT_TEMPLATE, "\r\n"),
         (execution_root / "generate-mock-data.sh", MOCK_DATA_GENERATE_SH_TEMPLATE, "\n"),
         (execution_root / "clean-mock-data.bat", MOCK_DATA_CLEAN_BAT_TEMPLATE, "\r\n"),
@@ -476,39 +434,6 @@ def initialize_execution_layout(qa_root: Path, local_scripts: bool | None = None
     )
     for path, content, newline in files:
         if _write_if_missing(path, content, newline):
-            changed.append(path)
-    readme_path = execution_root / "README.md"
-    current_readme = readme_path.read_text(encoding="utf-8", errors="strict")
-    if any(token in current_readme for token in ("--plan", "--all", "--confirm-")):
-        readme_path.write_text(EXECUTION_README_TEMPLATE, encoding="utf-8")
-        changed.append(readme_path)
-    config = load_execution_config(config_path)
-    if config["tooling"] != tooling:
-        config["tooling"] = tooling
-        config_path.write_text(render_execution_config(config), encoding="utf-8")
-        changed.append(config_path)
-    plans_path = execution_root / "plans.yaml"
-    if plans_path.is_file():
-        plans_path.unlink()
-        changed.append(plans_path)
-    for path, desired, known in (
-        (execution_root / "run.bat", run_bat_template.replace("\n", "\r\n"), {
-            RUN_BAT_TEMPLATE.replace("\n", "\r\n"),
-            SHARED_RUN_BAT_TEMPLATE.replace("\n", "\r\n"),
-            RUN_BAT_TEMPLATE.replace('rem Usage: run.bat runs all modules; run.bat --module "users" runs one module.\n', "").replace("\n", "\r\n"),
-            SHARED_RUN_BAT_TEMPLATE.replace('rem Usage: run.bat runs all modules; run.bat --module "users" runs one module.\n', "").replace("\n", "\r\n"),
-        }),
-        (execution_root / "run.sh", run_sh_template, {
-            RUN_SH_TEMPLATE,
-            SHARED_RUN_SH_TEMPLATE,
-            RUN_SH_TEMPLATE.replace('# Usage: ./run.sh runs all modules; ./run.sh --module "users" runs one module.\n', ""),
-            SHARED_RUN_SH_TEMPLATE.replace('# Usage: ./run.sh runs all modules; ./run.sh --module "users" runs one module.\n', ""),
-        }),
-    ):
-        current = path.read_text(encoding="utf-8", errors="strict")
-        normalized_known = {value.replace("\r\n", "\n") for value in known}
-        if current in normalized_known and current != desired.replace("\r\n", "\n"):
-            path.write_text(desired, encoding="utf-8", newline="")
             changed.append(path)
     collection_path = bruno_root / "collection.bru"
     if collection_path.is_file():
@@ -525,8 +450,4 @@ def initialize_execution_layout(qa_root: Path, local_scripts: bool | None = None
     config = load_execution_config(config_path)
     load_bruno_environment_document(environment_file(config_path, config))
 
-    for obsolete in (contracts_root / "request-auth.yaml", contracts_root / "request-context.yaml"):
-        if obsolete.is_file():
-            obsolete.unlink()
-            changed.append(obsolete)
     return list(dict.fromkeys(changed))

@@ -27,10 +27,12 @@ class ProjectScanner:
     def __init__(self, registry):
         self.registry = registry
 
-    def snapshot(self, context: ProjectContext) -> SourceSnapshot:
+    def snapshot(self, context: ProjectContext, *, committed=True) -> SourceSnapshot:
+        # Windows temporary roots may use 8.3 aliases; keep relative paths on one identity.
+        context = replace(context, project=context.project.resolve(), assets=context.assets.resolve())
         git = shutil.which("git")
         commit, dirty = "", True
-        if git and (context.project / ".git").exists():
+        if committed and git and (context.project / ".git").exists():
             arguments = [git, "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-C", str(context.project)]
             head = subprocess.run([*arguments, "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10, check=False)
             status = subprocess.run([*arguments, "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True, timeout=10, check=False)

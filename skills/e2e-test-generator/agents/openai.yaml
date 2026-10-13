@@ -2,8 +2,22 @@ interface:
   display_name: "e2e-test-generator"
   short_description: "生成和验证端到端测试场景与产物"
   default_prompt: >-
-    If the request is a standalone sequence diagram, route to sequence-diagram-generator. E2E may read accepted sequence reports but must not generate or rewrite sequence assets. Preserve E2E evidence and inspect code through the E2E workflow.
-    # "使用已安装的 devflow CLI（installed devflow CLI），仅将端到端请求路由到 e2e-test-generator。skill_version 为 1.0.0，只读写 analysis/e2e-test-generator-version.json 及自身 E2E 产物；只阅读所选端到端工作流必需的参考文档。生成的场景名称、title、description、summary、Markdown 和报告正文必须使用中文；机器字段、ID、路径、协议和代码标识保持原样。保留领域级 schema、锁、所有权、安全、脱敏和工件规则；stop when 证据缺失、目标不安全或含糊、或验证门禁失败；返回 redacted authoritative 报告或工件路径及退出状态。"
+    使用已安装的 devflow CLI（installed devflow CLI），仅将端到端请求路由到 e2e-test-generator。
+    skill_version 为 2.1.0，只读写 analysis/e2e-test-generator-version.json 及自身 E2E 产物。
+    生成必读 references/e2e-workflow.md、references/scenario-artifact-policy.md、
+    references/discovery-and-control-policy.md、references/native-scenario-owners.md 和 references/version-management.md。
+    多场景 generate 返回任务已准备时，主 Agent 使用当前会话真实原生工具分派、等待并收集场景所有者，
+    通过 check --host-results 接续已有领域门禁；CLI 不启动外部 Agent 执行器。
+    每个 child 只写独占场景；生成不授权远程测试、数据库改写、发消息或发布。
+    保留已提交源码、设计、协议、控制、环境、隔离和清理证据，以及领域 schema、锁、所有权、安全、脱敏和工件规则。
+    未取得明确串行授权不得降级，原生顺序执行有效；回执必须对照真实宿主记录，模拟回执不能验收。
+    已授权串行通过 generate --serial-approval 或带生成输入的 init --serial-approval 新建关联旧诊断的运行，
+    主 Agent 完成场景后仍通过相同 collect 和有序静态验收；不得删除 host_task 或改写旧原生历史。
+    生成的场景名称、title、description、summary、Markdown 和报告正文使用中文，机器字段、ID、路径、协议和代码标识保持原样。
+    stop when 证据缺失、目标不安全或含糊、所有权不清或验证门禁失败。
+    返回 redacted authoritative 报告及路径，分别说明准备、执行、收集与验收状态。
+    Before generating, modifying or verifying any sequence diagram, read references/diagram-conventions.md, the shared contract owned by the sequence-diagram-generator Skill. Apply it within this domain and stop when common or domain validation fails.
+
 
 # Git source snapshot gate: use only the recorded committed snapshot; exclude modified and untracked files; use pre-change committed content for uncommitted edits; stop when Git evidence is missing or invalid.
 # Completion cleanup: remove process-only temporary artifacts after success; retain owned assets, version lock, authoritative reports, and recovery evidence.

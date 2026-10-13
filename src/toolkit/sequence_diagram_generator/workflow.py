@@ -8,10 +8,11 @@ from pathlib import Path
 from .. import __version__
 from ..core.artifacts import ProjectDomainLock, require_version_file, write_version_file, version_file
 from ..core.errors import DevflowError, ExitCode
+from . import SCHEMA_VERSION, SKILL_VERSION
 from .models import (AcceptedBaseline, CommitJournal, DiscoveryCatalog, DocumentBundle, DomainCommandResult, FlowModel,
                      HostSubmission, RequirementSnapshot, RunManifest, RunState, SemanticAnnotations, SourceSnapshot,
-                     TaskPackage, ValidationReport, VerificationRecord, AnalysisScope, PublicationManifest)
-from .repository import digest, from_dict, now, to_dict
+                     TaskPackage, ValidationReport, VerificationRecord, AnalysisScope, PublicationManifest, ArtifactDigest, WorkspaceGuard)
+from .repository import bytes_digest, confined, digest, from_dict, now, to_dict
 
 
 class SequenceWorkflow:
@@ -29,7 +30,7 @@ class SequenceWorkflow:
 
     def _load(self, context, run_id):
         manifest = self.repository.load(context, run_id)
-        if (manifest.skill_version, manifest.schema_version, manifest.tool_version) != ("2.0.0", 2, __version__):
+        if (manifest.skill_version, manifest.schema_version, manifest.tool_version) != (SKILL_VERSION, SCHEMA_VERSION, __version__):
             raise DevflowError("GATE_FAILED", "run was created by a different runtime contract", ExitCode.GATE_FAILED)
         self.repository.validate_artifacts(context, manifest)
         return manifest
@@ -46,9 +47,9 @@ class SequenceWorkflow:
             except DevflowError as exc:
                 if not exc.details_path:
                     exc.details_path = self._path(context, run_id)
-                if fail_run and exc.exit_code not in {ExitCode.ARGUMENT, ExitCode.NOT_FOUND, ExitCode.AMBIGUOUS}:
+                if exc.exit_code not in {ExitCode.ARGUMENT, ExitCode.NOT_FOUND, ExitCode.AMBIGUOUS}:
                     latest = self.repository.load(context, run_id)
-                    failed = replace(latest, state=RunState.FAILED, operation_errors=latest.operation_errors + (str(exc),))
+                    failed = replace(latest, state=RunState.FAILED if fail_run else latest.state, operation_errors=latest.operation_errors + (str(exc),))
                     self.repository.save(context, failed)
                 raise
 
@@ -64,7 +65,7 @@ class SequenceWorkflow:
         if scratch.exists():
             shutil.rmtree(scratch, ignore_errors=True)
 
-    def _recheck(self, context, manifest):
+    def _recheck(self, context, manifest, *, check_assets=True):
         snapshot = self.scanner.snapshot(context)
         requirements = self._requirements(context, manifest)
         report = self.validator.validate_sources(manifest.source_fingerprint, snapshot.fingerprint, manifest.adapter_fingerprint,
@@ -73,7 +74,25 @@ class SequenceWorkflow:
             raise DevflowError("GATE_FAILED", "bound input snapshot changed; start a new discover", ExitCode.GATE_FAILED)
         if not report.passed:
             raise DevflowError("GATE_FAILED", "source, adapter or bound requirement snapshot changed; start a new discover", ExitCode.GATE_FAILED)
+        if manifest.state in {RunState.PREPARED, RunState.COLLECTED, RunState.VERIFIED}:
+            guard = self.repository.read_artifact(context, manifest.run_id, "workspace-guard.json", WorkspaceGuard)
+            current = self._workspace_guard(context)
+            if guard.baseline_digest != current.baseline_digest:
+                raise DevflowError("GATE_FAILED", "parent baseline advanced since prepare", ExitCode.GATE_FAILED)
+            if guard.source_worktree_fingerprint != current.source_worktree_fingerprint or check_assets and guard.assets != current.assets:
+                raise DevflowError("GATE_FAILED", "read-only workspace or protected business assets changed (user file or edited asset); preserve changes and start a new run", ExitCode.GATE_FAILED)
         return snapshot, requirements
+
+    def _workspace_guard(self, context):
+        assets = []
+        if context.assets.exists():
+            for path in sorted(context.assets.rglob("*")):
+                resolved = confined(path, context.project)
+                if path.is_symlink() or hasattr(path, "is_junction") and path.is_junction():
+                    raise DevflowError("GATE_FAILED", "protected asset alias is not permitted", ExitCode.GATE_FAILED)
+                if resolved.is_file():
+                    assets.append(ArtifactDigest(path.relative_to(context.project).as_posix(), bytes_digest(resolved.read_bytes())))
+        return WorkspaceGuard(self.scanner.snapshot(context, committed=False).fingerprint, tuple(assets), digest(self.committer.baseline(context)))
 
     def init(self, request):
         context = request.project
@@ -110,7 +129,7 @@ class SequenceWorkflow:
             run_id = self.repository.new_id()
             source_kind = "requirement" if request.intent == "proposal" else "description" if request.intent == "description" else "code"
             manifest = RunManifest(run_id, context.identity, str(context.project), request.intent, "", "", RunState.DISCOVERED,
-                __version__, "2.0.0", 2, snapshot.fingerprint, digest(requirements) if requirements else "", self.scanner.registry.fingerprint(),
+                __version__, SKILL_VERSION, SCHEMA_VERSION, snapshot.fingerprint, digest(requirements) if requirements else "", self.scanner.registry.fingerprint(),
                 digest(baseline), tuple(selected), (), (), now(), source_kind, digest(requirements) if requirements else "", tuple(s.segment_id for s in requirements.segments) if requirements else ())
             self.repository.create(context, manifest)
             for name, value in (("source-snapshot.json", snapshot), ("discovery.json", catalog)):
@@ -157,16 +176,20 @@ class SequenceWorkflow:
             model = self.scanner.analyze(snapshot, tuple(AnalysisScope(symbol, symbol.symbol_id) for symbol in selected))
             manifest = replace(manifest, selected_ids=tuple(s.symbol_id for s in selected), selected_segment_ids=tuple(selected_segments), execution_mode=request.execution_mode,
                                execution_approval=request.execution_approval, expected_baseline_digest=digest(self.committer.baseline(context)), state=RunState.PREPARED)
-            package = self.handoff.prepare(manifest, model, requirements)
-            for name, value in (("flow-model.json", model), ("task-package.json", package)):
+            handoff_root = self.repository.artifact_path(context, request.run_id, "handoff")
+            package = self.handoff.prepare(manifest, model, requirements, source_commit=snapshot.git_commit, handoff_root=str(handoff_root))
+            for name, value in (("flow-model.json", model), ("task-package.json", package), ("workspace-guard.json", self._workspace_guard(context))):
                 manifest = self.repository.record(context, manifest, name, value)
             self.repository.save(context, manifest)
             return self._result(context, manifest, "task-package.json", tasks=len(package.tasks), package_hash=digest(package),
-                                execution_mode=manifest.execution_mode, execution_evidence="host_attested", critical_gaps=sum(g.critical for s in model.scopes for g in s.gaps))
+                                execution_mode=manifest.execution_mode, handoff_state="tasks_prepared", host_capability="unknown",
+                                next_action="Execute the frozen task package using the current session's native tools, then collect.",
+                                execution_evidence="not_started", critical_gaps=sum(g.critical for s in model.scopes for g in s.gaps))
 
     def collect(self, request):
         context = request.project
-        with self._operation(context, request.run_id, (RunState.PREPARED, RunState.COLLECTED)) as manifest:
+        with self._operation(context, request.run_id, (RunState.PREPARED, RunState.COLLECTED), fail_run=False) as manifest:
+            confined(request.results_path, self.repository.run_path(context, request.run_id))
             try:
                 if request.results_path.stat().st_size > 10 * 1024 * 1024:
                     raise DevflowError("GATE_FAILED", "host submission exceeds 10MiB", ExitCode.GATE_FAILED)
@@ -176,22 +199,38 @@ class SequenceWorkflow:
             except (OSError, ValueError, UnicodeError) as exc:
                 raise DevflowError("GATE_FAILED", "host results are not readable UTF-8 JSON", ExitCode.GATE_FAILED) from exc
             submission = from_dict(HostSubmission, value)
+            self._recheck(context, manifest)
             if manifest.state == RunState.COLLECTED:
                 previous = self.repository.read_artifact(context, request.run_id, "host-submission.json", HostSubmission)
                 if digest(previous) != digest(submission):
                     raise DevflowError("GATE_FAILED", "different host result requires a new run", ExitCode.GATE_FAILED)
                 return self._result(context, manifest, "document-bundle.json", idempotent=True)
-            self._recheck(context, manifest)
             package = self.repository.read_artifact(context, request.run_id, "task-package.json", TaskPackage)
-            annotations = self.handoff.validate(package, submission)
+            try:
+                history = [rejected.name for rejected in sorted(self.repository.run_path(context, request.run_id).glob("rejected-*.json"))]
+                if any(artifact.name == "host-submission.json" for artifact in manifest.artifacts):
+                    history.append("host-submission.json")
+                for name in history:
+                    previous = self.repository.read_artifact(context, request.run_id, name, HostSubmission)
+                    self.handoff.validate_attempt_history(package, submission, previous)
+            except DevflowError:
+                self.repository.write_artifact(context, request.run_id, "attempt-history-conflict-" + digest(submission)[:24] + ".json", submission)
+                raise
+            try:
+                annotations = self.handoff.validate(package, submission)
+            except DevflowError:
+                self.repository.write_artifact(context, request.run_id, "rejected-" + digest(submission)[:24] + ".json", submission)
+                raise
+            execution = self.handoff.execution_report(package, submission)
             report = self.mapper.evaluate((package.requirements, annotations.requirements), annotations.links, package.facts,
-                                          manifest.intent, annotations.excluded_segments, annotations.proposed_steps, annotations.proposed_controls)
+                                          manifest.intent, annotations.excluded_segments, annotations.proposed_steps, annotations.proposed_controls,
+                                          selected_segment_ids=manifest.selected_segment_ids)
             bundle = self.renderer.build(package.facts, annotations, manifest.intent, report)
             reports = (self.validator.validate_model(package.facts), report.validation,
                        self.validator.validate_bundle(bundle, package.facts, annotations, manifest.intent, self.renderer))
             validation = ValidationReport(tuple(r for report in reports for r in report.rules), tuple(g for report in reports for g in report.gaps))
             render = self.renderer.render(bundle, "mmdc", self.repository.run_path(context, request.run_id) / "tmp" / "render")
-            for name, value in (("host-submission.json", submission), ("annotations.json", annotations), ("document-bundle.json", bundle),
+            for name, value in (("host-submission.json", submission), ("host-execution-report.json", execution), ("annotations.json", annotations), ("document-bundle.json", bundle),
                                 ("validation.json", validation), ("render-report.json", render)):
                 manifest = self.repository.record(context, manifest, name, value)
             self.repository.save(context, manifest)
@@ -201,7 +240,10 @@ class SequenceWorkflow:
             manifest = replace(manifest, state=RunState.COLLECTED)
             self.repository.save(context, manifest)
             self._cleanup_process_artifacts(context, request.run_id)
-            return self._result(context, manifest, "document-bundle.json", render_status=render.status, implementation_consistency=report.implementation_consistency)
+            return self._result(context, manifest, "document-bundle.json", render_status=render.status, implementation_consistency=report.implementation_consistency,
+                                execution_report=self._path(context, request.run_id, "host-execution-report.json"), mode=execution.mode,
+                                parallel=execution.parallel, completed_child_agents=execution.completed_child_agents,
+                                execution_evidence=execution.record_origin, trust_boundary=execution.trust_boundary)
 
     def check(self, request):
         context = request.project
@@ -232,7 +274,8 @@ class SequenceWorkflow:
             bundle = self.repository.read_artifact(context, request.run_id, "document-bundle.json", DocumentBundle)
             rebuilt = self.scanner.analyze(snapshot, tuple(scope.scope for scope in model.scopes))
             report = self.mapper.evaluate((requirements, annotations.requirements), annotations.links, rebuilt, manifest.intent,
-                                          annotations.excluded_segments, annotations.proposed_steps, annotations.proposed_controls)
+                                          annotations.excluded_segments, annotations.proposed_steps, annotations.proposed_controls,
+                                          selected_segment_ids=manifest.selected_segment_ids)
             rebuilt_bundle = self.renderer.build(rebuilt, annotations, manifest.intent, report)
             validation = self.validator.validate_model(rebuilt)
             document_validation = self.validator.validate_bundle(rebuilt_bundle, rebuilt, annotations, manifest.intent, self.renderer)
@@ -277,7 +320,7 @@ class SequenceWorkflow:
                 raise DevflowError("GATE_FAILED", "accept document gate failed", ExitCode.GATE_FAILED)
             plan = self.committer.plan(context, manifest, bundle, verification, self.committer.baseline(context))
             try:
-                baseline = self.committer.commit(context, plan, lambda: self._recheck(context, manifest))
+                baseline = self.committer.commit(context, plan, lambda: self._recheck(context, manifest, check_assets=False))
             except OSError as exc:
                 raise DevflowError("GATE_FAILED", "commit file operation failed; retry accept explicitly to recover", ExitCode.GATE_FAILED,
                                    details_path=str(journal_path)) from exc

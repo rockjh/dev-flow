@@ -19,8 +19,8 @@ def success(command: str, data: Any, artifact_path: str = "") -> dict[str, Any]:
     })
 
 
-def failure(command: str, error: DevflowError) -> dict[str, Any]:
-    return redact({
+def failure(command: str, error: DevflowError, data: Any = None) -> dict[str, Any]:
+    document = {
         "ok": False,
         "tool": "devflow",
         "command": command,
@@ -30,7 +30,10 @@ def failure(command: str, error: DevflowError) -> dict[str, Any]:
             "hint": error.hint,
             "details_path": error.details_path,
         },
-    })
+    }
+    if data is not None:
+        document["data"] = data
+    return redact(document)
 
 
 def render(document: dict[str, Any], *, markdown: bool) -> str:

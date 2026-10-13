@@ -77,7 +77,7 @@ class ForwardProjectTests(unittest.TestCase):
                 '{"test":{"query":{"key":"${TEST_QUERY_KEY}","kind":"source-confirmed"}}}\n', encoding="utf-8"
             )
             (scenario / "业务流程图.md").write_text(
-                "# 读取证据\n\n1. 查询证据。\n2. 验证结果。\n\n```mermaid\nsequenceDiagram\n    participant A as 调用方\n    participant B as 证据系统\n    A->>B: 查询\n    B-->>A: 返回结果\n```\n",
+                "# 读取证据\n\n1. 查询证据。\n2. 验证结果。\n\n```mermaid\nsequenceDiagram\n    autonumber\n    actor A as 调用方\n    participant B as 证据系统\n    A->>B: 查询\n    activate B\n    B-->>A: 返回结果\n    deactivate B\n```\n",
                 encoding="utf-8",
             )
             (scenario / "步骤.py").write_text(self._scenario_steps(), encoding="utf-8")

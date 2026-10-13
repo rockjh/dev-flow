@@ -5,19 +5,10 @@ import subprocess
 
 from toolkit.biz_flow_doc_generator import cli
 from toolkit.biz_flow_doc_generator import git
-from toolkit.biz_flow_doc_generator.documents import _branch_matrix, write_discovery, write_entry_directory, build_index, render_module, _markdown_coverage
-from toolkit.biz_flow_doc_generator.models import EntryPoint, ScanResult, GitInfo, EntryReview, FlowStep
-from toolkit.biz_flow_doc_generator.validation import validate_branch_coverage
+from toolkit.biz_flow_doc_generator.documents import write_discovery, write_entry_directory
+from toolkit.biz_flow_doc_generator.models import EntryPoint, ScanResult, GitInfo
 
 
-def test_business_branch_labels_match_diagram_and_matrix():
-    branch = {"branch_id": "B-status", "business_relevant": True, "reachability": "reachable",
-              "condition": 'return "active"', "label": "返回套餐生效状态",
-              "outcomes": ["active"], "outcome_labels": ["套餐已生效"], "effects": []}
-    entry = EntryPoint("entry", "url", "GET /plans", "query", "Plan.java", 1, "套餐", "Plan.java",
-                       agent_branches=[branch])
-    diagram = '```mermaid\nsequenceDiagram\nautonumber\n%% devflow:branch id="B-status"\n系统-->>用户: 返回套餐生效状态，套餐已生效\n```\n'
-    assert validate_branch_coverage({"branches": [branch]}, diagram + _branch_matrix(entry)) == []
 
 
 def test_empty_git_head_cannot_turn_worktree_into_a_historical_snapshot(tmp_path, monkeypatch):
@@ -83,30 +74,6 @@ def test_windows_git_capture_preserves_commit_dirty_and_failure_details(tmp_path
         git.working_tree_paths(tmp_path)
 
 
-def test_agent_controls_use_branch_evidence_and_action_text_has_one_limit(tmp_path):
-    branch = {"branch_id": "B-status", "business_relevant": True, "reachability": "reachable",
-              "condition": "enabled", "label": "检查账号可用性", "outcomes": ["可用", "不可用"],
-              "outcome_labels": ["允许登录", "拒绝登录"], "effects": [], "source_file": "app.py", "source_line": 1}
-    entry = EntryPoint("entry", "url", "POST /auth", "login", "app.py", 1, "用户认证", "app.py",
-                       business_name="用户登录", caller="用户", agent_branches=[branch])
-    entry.review = EntryReview("entry", "登录请求", "验证登录资格", "登录凭据", "返回认证结果", "拒绝无效凭据",
-                               [FlowStep("alt", "检查账号可用性，允许登录", "app.py:1", branch_ids=["B-status"]),
-                                FlowStep("action", "保存当前用户登录会话" * 15, "app.py:2"),
-                                FlowStep("action", "允许登录", "app.py:3", "用户", response=True),
-                                FlowStep("else", "拒绝登录", "app.py:1"),
-                                FlowStep("action", "拒绝登录", "app.py:4", "用户", response=True),
-                                FlowStep("end", "", "app.py:4")], "confirmed", "agent:test")
-    result = ScanResult(tmp_path, GitInfo("main", "a" * 40, "a" * 40, False, False),
-                        ["Python"], [], [entry], [], [], "b" * 64)
-    mapping = {"name": "用户认证", "file": "00-用户认证.md", "display_name": "用户认证",
-               "responsibility": "用户登录", "entry_ids": ["entry"]}
-    text = render_module("用户认证", [entry], result.git, result, comparison="current", module_meta=mapping)
-    (tmp_path / mapping["file"]).write_text(text, encoding="utf-8")
-    index = build_index(result, tmp_path, {"用户认证": mapping["file"]}, comparison="current")
-    coverage = _markdown_coverage(result, index, tmp_path)
-    assert coverage["markdown_diagram_mismatches"] == []
-    assert validate_branch_coverage({"branches": [branch]}, text) == []
-    assert validate_branch_coverage({"branches": [branch]}, text.replace('%% devflow:branch id="B-status"', ""))
 
 
 def test_domain_titles_do_not_split_actions_and_regroup_only_generated_skeletons(tmp_path):
@@ -121,7 +88,7 @@ def test_domain_titles_do_not_split_actions_and_regroup_only_generated_skeletons
     mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
     assert len(mapping["modules"]) == 1
     assert mapping["modules"][0]["display_name"] == "套餐"
-    assert mapping["modules"][0]["file"] == "00-套餐履约.md"
+    assert mapping["modules"][0]["file"] == "00-套餐.md"
     stale = tmp_path / "99-套餐查询.md"
     stale.write_text("<!-- biz-flow-module: 旧查询 -->\n# 套餐查询\n\n<!-- devflow:entry-directory -->\n旧入口\n<!-- /devflow:entry-directory -->\n", encoding="utf-8")
     manual = tmp_path / "98-人工说明.md"
@@ -165,9 +132,9 @@ def test_entry_directory_is_complete_without_behavior_analysis(tmp_path, monkeyp
         subprocess.run(["git", *args], cwd=tmp_path, check=True)
 
     def forbidden(*args, **kwargs):
-        raise AssertionError("入口目录阶段不得启动代理")
+        raise AssertionError("入口目录阶段不得展开行为事实")
 
-    monkeypatch.setattr(cli, "create_run_manifest", forbidden)
+    monkeypatch.setattr(cli, "rebuild_verified", forbidden)
     args = ["--project", str(tmp_path)]
     assert cli.init_command(args) == 0
     assert cli.discover_command(args) == 0
@@ -179,8 +146,12 @@ def test_entry_directory_is_complete_without_behavior_analysis(tmp_path, monkeyp
     modules = [path for path in docs.glob("*.md") if path.name != "业务流程覆盖总览.md"]
     assert len(modules) == 1
     content = modules[0].read_text(encoding="utf-8")
-    assert "HTTP：GET /users" in content
-    assert "HTTP：POST /users" in content
+    overview = docs / "业务流程覆盖总览.md"
+    inventory = overview.read_text(encoding="utf-8")
+    assert "HTTP：GET /users" in inventory
+    assert "HTTP：POST /users" in inventory
+    assert "业务范围与入口" not in content
+    assert "HTTP：" not in content
     assert "```mermaid" not in content
     assert cli.check_command([*args, "--stage", "entries"]) == 0
     assert {path.suffix for path in docs.iterdir()} == {".md", ".json"}
@@ -194,10 +165,10 @@ def test_entry_directory_is_complete_without_behavior_analysis(tmp_path, monkeyp
     assert before == {path.name: path.read_bytes() for path in docs.glob("*.md")}
 
     # 清单被改漏以及源码改变都必须被第一阶段门禁发现。
-    modules[0].write_text(content.replace("HTTP：POST /users", "HTTP：POST /users").replace(
-        next(line for line in content.splitlines() if "HTTP：POST /users" in line), ""), encoding="utf-8")
+    overview.write_text(inventory.replace(
+        next(line for line in inventory.splitlines() if "HTTP：POST /users" in line), ""), encoding="utf-8")
     assert cli.check_command([*args, "--stage", "entries"]) == 1
-    modules[0].write_text(content, encoding="utf-8")
+    overview.write_text(inventory, encoding="utf-8")
     with (tmp_path / "app.py").open("a", encoding="utf-8") as stream:
         stream.write("\n# 删除用户资料\n@app.delete('/users')\ndef delete_user(): return True\n")
     # Uncommitted source is outside the generation snapshot and does not alter

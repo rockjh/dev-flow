@@ -33,12 +33,15 @@ meta:
   participants: [<participant-service-a>, <participant-service-b>]
   actor: <业务参与者>
 
-# 生成职责：多场景时每个场景必须有独立 delegated owner；降级时如实记录原因。
+# 生成职责：独立原生场景任务；owner 和 host_task 由 CLI 校验收集后写入。
 generation:
   mode: delegated
-  owner: <subagent-task-id>
+  owner: <actual-child-agent-id>
   write_scope: scenarios/<中文业务名称>
   degradation_reason: null
+  host_task:
+    run_id: <frozen-run-id>
+    task_id: <frozen-task-id>
 
 # 就绪判定：四项状态共同决定 meta.status，blockers 只写缺口而不写敏感值。
 readiness:

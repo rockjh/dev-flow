@@ -35,6 +35,7 @@ class ReleaseContractTests(unittest.TestCase):
             "biz-flow-doc-generator": "biz-flow-doc-generator-version.json",
             "bru-api-test-generator": "bru-api-test-generator-version.json",
             "e2e-test-generator": "e2e-test-generator-version.json",
+            "sequence-diagram-generator": "sequence-diagram-generator-version.json",
         }
         for skill, filename in expected.items():
             canonical = ROOT / "skills" / skill
@@ -48,6 +49,19 @@ class ReleaseContractTests(unittest.TestCase):
                 self.assertEqual(1, len(canonical_versions))
                 relative = canonical_versions[0].relative_to(canonical)
                 self.assertEqual(canonical_versions[0].read_bytes(), (payload / relative).read_bytes())
+
+    def test_npm_skill_payload_matches_all_canonical_files(self) -> None:
+        names = {"biz-flow-doc-generator", "bru-api-test-generator", "e2e-test-generator", "sequence-diagram-generator"}
+        self.assertEqual(names, {path.name for path in (NPM / "skills").iterdir() if path.is_dir()})
+        for name in names:
+            canonical = ROOT / "skills" / name
+            payload = NPM / "skills" / name
+            expected = {path.relative_to(canonical): path.read_bytes() for path in canonical.rglob("*")
+                        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"}
+            actual = {path.relative_to(payload): path.read_bytes() for path in payload.rglob("*") if path.is_file()}
+            self.assertEqual(expected.keys(), actual.keys(), name)
+            for relative in expected:
+                self.assertEqual(expected[relative], actual[relative], f"{name}/{relative}")
 
     @unittest.skipUnless(shutil.which("node"), "node is required to verify the npm runtime")
     def test_npm_runtime_resolves_the_pipx_executable_without_path_lookup(self) -> None:

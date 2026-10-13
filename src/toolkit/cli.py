@@ -65,6 +65,9 @@ def _project_relative_path(arguments: list[str], name: str, project: Path, defau
 
 
 def _prepare_lock(domain: str, command: str, arguments: list[str]) -> None:
+    if domain == "biz-flow" and command in {"clean", "check", "verify"}:
+        # The domain's check/verify preflight emits structured gate failures.
+        return
     if domain == "bru-api":
         root = _option_path(arguments, "--qa-root", "qa")
     elif domain == "biz-flow":
@@ -122,23 +125,19 @@ def _artifact_path(domain: str, command: str, arguments: list[str], stdout: str)
             "design-rules.yaml" if command == "generate" else "discovery.json"
         )
         return str(path) if path.is_file() else ""
-    if domain == "biz-flow" and command in {"discover", "prepare", "collect", "accept", "review", "generate", "update"}:
+    if domain == "biz-flow":
+        for line in reversed(stdout.splitlines()):
+            try:
+                result = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(result, dict) and result.get("manifest"):
+                return str(result["manifest"])
         project = _option_path(arguments, "--project", ".")
         docs_root = _project_relative_path(arguments, "--docs-root", project, "docs/biz-flow")
-        if command == "review":
-            for line in reversed(stdout.splitlines()):
-                if "run_manifest=" in line:
-                    return line.rsplit("run_manifest=", 1)[1].split()[0]
-        filename = "biz-flow-discovery.json" if command == "discover" else "biz-flow-report.json"
-        path = docs_root / filename
-        if path.is_file():
-            return str(path)
         overview = docs_root / "业务流程覆盖总览.md"
         if overview.is_file():
             return str(overview)
-        for line in reversed(stdout.splitlines()):
-            if "run_manifest=" in line:
-                return line.rsplit("run_manifest=", 1)[1].split()[0]
         return ""
     for line in reversed(stdout.splitlines()):
         if " ledger=" in line:
@@ -200,13 +199,19 @@ def _run_domain(domain: str, arguments: list[str], *, full: bool) -> tuple[dict[
         message_lines = [line for line in diagnostics.splitlines() if line.strip()]
         message_lines.extend(line for line in output.splitlines() if line.strip())
         message = "\n".join(message_lines[:5]) or f"{domain}.{command} failed"
-        if domain == "biz-flow" and command == "review" and (overview := _biz_flow_overview(output)):
-            message += "\n\n" + overview
         error = classify_failure(f"{domain}.{command}", message, code)
         error.details_path = artifact
-        return failure(f"{domain}.{command}", error), int(error.exit_code)
+        gate_data = None
+        if domain == "biz-flow" and command in {"check", "verify"} and output.strip():
+            try:
+                result = json.loads(output.splitlines()[-1])
+                if isinstance(result, dict) and "gates" in result:
+                    gate_data = result
+            except json.JSONDecodeError:
+                pass
+        return failure(f"{domain}.{command}", error, gate_data), int(error.exit_code)
     data = _summary(output, diagnostics, full=full)
-    if domain == "biz-flow" and command in {"discover", "prepare", "collect", "accept", "review", "generate", "update"}:
+    if domain == "biz-flow":
         overview = _biz_flow_overview(output)
         if overview:
             data["overview"] = overview
@@ -215,9 +220,11 @@ def _run_domain(domain: str, arguments: list[str], *, full: bool) -> tuple[dict[
             data = json.loads(output.splitlines()[-1])
         except json.JSONDecodeError:
             pass
-    if domain == "biz-flow" and command == "check" and output.strip():
+    if domain == "biz-flow" and output.strip():
         try:
-            data = json.loads(output.splitlines()[-1])
+            result = json.loads(output.splitlines()[-1])
+            if isinstance(result, dict):
+                data.update(result)
         except json.JSONDecodeError:
             pass
     return success(f"{domain}.{command}", data, artifact), int(ExitCode.OK)

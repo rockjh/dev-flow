@@ -1,8 +1,8 @@
-# 缁傝崵鍤庨懢宄板絿娑撳氦袙閺?Swagger/OpenAPI
+# 离线 Swagger/OpenAPI 获取与解析
 
 The generator always parses a local specification. A checked-in file is preferred. When it is missing, an already-running target application may be queried on loopback once to create that local file; this is not permission to use a remote contract or to keep the application as a live source of truth.
 
-## 閼惧嘲褰囨い鍝勭碍
+## 获取顺序
 
 1. Use the user-provided local path.
 2. Search the target repository for the checked-in names below.
@@ -20,7 +20,7 @@ Do not stop at step 2 with a "provide or check in an offline specification" mess
 
 The helper does not start the application, send authentication credentials, follow redirects away from loopback, or contact a remote host. Exit code `2` means no local listener was found without an explicit candidate; exit code `3` means no valid document could be fetched or written at the supplied/discovered candidates. Either result is a blocker and must include the helper output in the handoff.
 
-## 閺傚洣娆㈤崣鎴犲箛
+## 文件发现
 
 Use the user-provided path first. If none is supplied, look for checked-in files with these names or extensions:
 
@@ -35,7 +35,7 @@ openapi.yaml
 
 If multiple files exist, list them and ask which one is the contract for the target application or select the one identified by the repository's build/configuration. Do not merge unrelated specifications silently. A file produced by the loopback helper is preferred over an unrelated checked-in specification only when its URL and target application are clear.
 
-## 閺堚偓鐏忓繗袙閺嬫劕顨栫痪?
+## 最小解析契约
 
 Support OpenAPI 2.0 and OpenAPI 3.x in JSON. Support YAML only when an existing YAML parser such as `PyYAML` is available. Extract, for every operation under `paths`:
 

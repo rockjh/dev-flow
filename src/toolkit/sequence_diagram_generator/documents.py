@@ -5,6 +5,7 @@ import subprocess
 
 from .models import DiagramPosition, DocumentBundle, FlowStep, RenderReport, SceneDocument, SequenceArm, SequenceBlock, SequenceStep
 from .repository import digest, stable_id
+from ..core.sequence import Activations, TECHNICAL_ROLES, participant_declaration
 
 
 def mermaid_text(value):
@@ -24,74 +25,92 @@ def _wrap(value, width=28):
 
 
 class SequenceRenderer:
-    def _diagram(self, tree, steps, labels, filename, view, block_evidence):
-        names = sorted({name for step in steps.values() for name in (step.sender, step.receiver)})
+    def _diagram(self, tree, steps, labels, filename, view, block_evidence, root_name=None):
+        roles = {}
+        for step in steps.values():
+            for name, role in ((step.sender, step.sender_role), (step.receiver, step.receiver_role)):
+                if name in roles and roles[name] != role:
+                    if {roles[name], role} <= {"external", "service"}:
+                        role = "service"  # The source declaration refines a dependency boundary.
+                    else:
+                        raise ValueError(f"PARTICIPANT_ROLE_CONFLICT: {name}")
+                roles[name] = role
+        if root_name:
+            roles[root_name] = "service"
+        names = sorted(roles)
         participants = {name: f"P{index}" for index, name in enumerate(names)}
-        lines = ['%%{init: {"sequence": {"wrap": true, "actorMargin": 120, "diagramMarginX": 20, "activationWidth": 14, "messageMargin": 44, "boxMargin": 12}}}%%', "sequenceDiagram", "autonumber"] + [f"participant {alias} as {_wrap(mermaid_text(name))}" for name, alias in participants.items()]
+        lines = ['%%{init: {"sequence": {"wrap": true, "actorMargin": 120, "diagramMarginX": 20, "activationWidth": 14, "messageMargin": 44, "boxMargin": 12}}}%%', "sequenceDiagram", "autonumber"]
+        lines += [participant_declaration(alias, _wrap(mermaid_text(name)), roles[name]) for name, alias in participants.items()]
+        activations = Activations(lines, {participants[name] for name in names if roles[name] in TECHNICAL_ROLES})
+        root_name = root_name or next((step.sender for step in steps.values() if roles[step.sender] in TECHNICAL_ROLES), None)
+        root_name = root_name or next((name for name in names if roles[name] in TECHNICAL_ROLES), None)
+        if not root_name:
+            raise ValueError("TECHNICAL_PARTICIPANT_REQUIRED")
+        root = participants[root_name]
+        activations.open("root", root)
         positions = []
-        active = {}
+        paired = {dependency for step in steps.values() if step.kind == "call_return" for dependency in step.dependencies}
+
         def items(values, path):
+            if not values:
+                lines.append(f"Note over {root}: 此条件内无业务动作")
             for index, item in enumerate(values):
                 location = path + f"/{index}"
                 if isinstance(item, SequenceBlock):
                     visit(item, location)
-                else:
-                    step = steps[item.step_id]
-                    arrow = "-->>" if step.kind in {"call_return", "return", "await", "wait"} else "->>"
-                    caption = _wrap(mermaid_text(labels.get(step.step_id, step.label)))
-                    if view == "proposal":
-                        caption = "[需求方案] " + caption
-                    sender, receiver = (step.receiver, step.sender) if step.kind == "call_return" else (step.sender, step.receiver)
-                    lines.append(f"{participants[sender]}{arrow}{participants[receiver]}: {caption}")
-                    if step.kind == "call_return":
-                        dependency = next((item for item in step.dependencies if item in active), None)
-                        if dependency:
-                            target = active.pop(dependency)
-                            lines.append(f"deactivate {participants[target]}")
-                        elif active:
-                            key = next(reversed(active))
-                            target = active.pop(key)
-                            lines.append(f"deactivate {participants[target]}")
-                    elif step.kind in {"return", "await", "wait"}:
-                        target = next((key for key in tuple(active) if active[key] == receiver), None)
-                        if target:
-                            active.pop(target, None)
-                            lines.append(f"deactivate {participants[receiver]}")
-                    else:
-                        active[step.step_id] = receiver
-                        lines.append(f"activate {participants[receiver]}")
-                    positions.append(DiagramPosition(step.step_id, filename, location, step.evidence_ids))
+                    continue
+                step = steps[item.step_id]
+                arrow = "-->>" if step.kind in {"call_return", "return", "await", "wait"} else "-)" if step.kind == "dispatch" else "->>"
+                caption = _wrap(mermaid_text(labels.get(step.step_id, step.label)))
+                if view == "proposal":
+                    caption = "[需求方案] " + caption
+                sender, receiver = (step.receiver, step.sender) if step.kind == "call_return" else (step.sender, step.receiver)
+                lines.append(f"{participants[sender]}{arrow}{participants[receiver]}: {caption}")
+                if step.kind == "call_return":
+                    for dependency in step.dependencies:
+                        activations.close(dependency)
+                elif arrow != "-->>" and roles[receiver] in TECHNICAL_ROLES:
+                    if step.kind == "call" or participants[receiver] not in activations.active.values():
+                        activations.open(step.step_id, participants[receiver])
+                        if step.kind == "dispatch" or step.kind == "call" and step.step_id not in paired:
+                            activations.boundary(set(activations.active) - {step.step_id})
+                positions.append(DiagramPosition(step.step_id, filename, location, step.evidence_ids))
+
         def arm_position(block, arm, location):
             if arm.exit_id:
                 positions.append(DiagramPosition(arm.exit_id, filename, location, block_evidence.get(block.block_id, ())))
+
+        def arm(block, value, location):
+            retained = set(activations.active)
+            arm_position(block, value, location)
+            items(value.items, location)
+            activations.boundary(retained)
+
         def visit(block, path):
             if block.kind == "sequence":
-                for index, arm in enumerate(block.arms):
-                    items(arm.items, path + f"/arm:{index}")
+                for index, value in enumerate(block.arms):
+                    items(value.items, path + f"/arm:{index}")
                 return
             positions.append(DiagramPosition(block.block_id, filename, path, block_evidence.get(block.block_id, ())))
             if block.kind == "loop":
                 lines.append("loop " + mermaid_text(block.label))
-                first = block.arms[0]
-                arm_position(block, first, path + "/iteration")
-                items(first.items, path + "/iteration")
+                arm(block, block.arms[0], path + "/iteration")
                 lines.append("end")
-                for index, arm in enumerate(block.arms[1:]):
-                    lines.append(("alt " if index == 0 else "else ") + mermaid_text(arm.label))
-                    arm_position(block, arm, path + f"/exit:{index}")
-                    items(arm.items, path + f"/exit:{index}")
+                for index, value in enumerate(block.arms[1:]):
+                    lines.append(("alt " if index == 0 else "else ") + mermaid_text(value.label))
+                    arm(block, value, path + f"/exit:{index}")
                 if len(block.arms) > 1:
                     lines.append("end")
                 return
-            for index, arm in enumerate(block.arms):
+            for index, value in enumerate(block.arms):
                 directive = block.kind if index == 0 else "and" if block.kind == "par" else "else"
-                lines.append(directive + " " + mermaid_text(arm.label or block.label))
-                arm_position(block, arm, path + f"/arm:{index}")
-                items(arm.items, path + f"/arm:{index}")
+                lines.append(directive + " " + mermaid_text(value.label or block.label))
+                arm(block, value, path + f"/arm:{index}")
             lines.append("end")
+
         visit(tree, "root")
-        for receiver in reversed(tuple(active.values())):
-            lines.append(f"deactivate {participants[receiver]}")
+        activations.boundary({"root"})
+        activations.close("root")
         return "\n".join(lines) + "\n", tuple(positions)
 
     def build(self, model, annotations, intent, requirement_report):
@@ -101,7 +120,7 @@ class SequenceRenderer:
             steps = {step.step_id: step for step in scope.steps}
             block_evidence = {c.control_id: c.evidence_ids for c in scope.controls}
             filename = f"{index:02d}-{scope.scope.entry_id}-implementation.md"
-            mermaid, positions = self._diagram(scope.sequence, steps, labels, filename, "implementation", block_evidence)
+            mermaid, positions = self._diagram(scope.sequence, steps, labels, filename, "implementation", block_evidence, root_name=scope.scope.symbol.qualified_name)
             by_step = {position.target_id: position for position in positions}
             positions += tuple(DiagramPosition(operation.operation_id, filename, by_step[operation.call_site_id].tree_path,
                                               operation.evidence_ids) for operation in scope.external
@@ -116,7 +135,8 @@ class SequenceRenderer:
             for proposed in annotations.proposed_steps:
                 evidence = tuple(proposed.source_ids) or tuple(segment for rid in proposed.requirement_ids if rid in by_requirement for segment in by_requirement[rid].segment_ids)
                 step = FlowStep(proposed.step_id, "requirement-plan", proposed.kind, proposed.sender, proposed.receiver,
-                                proposed.label + " [" + ", ".join(proposed.requirement_ids) + "]", "", evidence)
+                                proposed.label + " [" + ", ".join(proposed.requirement_ids) + "]", "", evidence,
+                                sender_role=proposed.sender_role, receiver_role=proposed.receiver_role)
                 steps[step.step_id] = step
                 seq.append(SequenceStep(step.step_id))
             tree = annotations.proposed_sequence or SequenceBlock(stable_id("B", "proposal", tuple(steps)), "sequence", "拟议流程", (SequenceArm("", "", tuple(seq)),))

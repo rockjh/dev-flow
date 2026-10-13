@@ -188,6 +188,14 @@ class GenericCapabilityTests(unittest.TestCase):
             self.assertTrue(definition["isolation"]["owned_resources"])
             self.assertEqual("pending_environment", definition["meta"]["status"])
 
+            from toolkit.e2e_test_generator.materialize import materialize_scenarios
+            from toolkit.e2e_test_generator.static_checks import _yaml_comment_errors
+            written, _ = materialize_scenarios(root, {"rules": [rule]}, protocols, {
+                "scenarios": [{"design_rule_ids": ["CREATE_ITEM"]}],
+            })
+            definition_path = next(path for path in written if path.name == "场景定义.yaml")
+            self.assertEqual([], _yaml_comment_errors(definition_path))
+
             rule["protocol_refs"] = ["create"]
             _, blocked, _, _ = _definition(root, rule, {"operations": protocols["operations"][:1]}, owner="test")
             self.assertEqual("contract_blocked", blocked["meta"]["status"])

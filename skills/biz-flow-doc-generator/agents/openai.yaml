@@ -1,51 +1,31 @@
 interface:
   display_name: "biz-flow-doc-generator"
-  short_description: "全量归纳业务入口，再并行分析生成有源码证据的业务时序图和覆盖报告"
+  short_description: "归纳业务入口，以冻结源码事实和原生代理解释生成流程图及覆盖报告"
   default_prompt: >-
-    Use $biz-flow-doc-generator with the installed devflow CLI, routing only
-    through devflow biz-flow with an explicit --project. If the request is a standalone sequence diagram, route to sequence-diagram-generator; otherwise inspect project code and registered entries through biz-flow. Follow SKILL.md and
-    references/analysis-policy.md in two stages. First scan the whole project for
-    registered business entries, including supported doExecute/doServe receivers;
-    registration evidence is required, and thread pools or internal helpers are not
-    separate entries. Use the read-only entry inventory: run discover and check --stage entries without an agent executor
-    or deep call-chain analysis. Reconcile every candidate as included, evidence-backed
-    excluded, or unresolved. Group by the project's broad business domains: one domain,
-    one Markdown file, with all scenarios and channels retained in entry chapters;
-    cross-domain entries belong only to the domain of their primary business result.
-    Name files naturally with business objects and their core responsibility,
-    relationship or lifecycle; existing project business-document names guide style,
-    not a hardcoded naming dictionary. Use functional families for broad domains,
-    avoid concatenated action verbs and do not enforce “处理”, “业务” or “流程”
-    suffixes. Describe actual business capabilities using Swagger @Tag.description,
-    @Operation.summary/description and source comments, independently of filename summaries.
-    Merge related interfaces, including list/detail and CRUD, while retaining distinct
-    actions such as opening and closing a plan. Allow semicolons and multiple sentences;
-    remove client/HTML metadata and limit shared descriptions to module-owned entries.
-    Do not prefix a filename summary with “负责” or enumerate every endpoint. Keep the complete entry list
-    separately. Show the complete three-column module overview, exclusion counts/reasons
-    and entry-identification uncertainties directly in the conversation. Resolve
-    source-checkable facts before asking for classification once; honor existing
-    authorization without asking again. After authorization run prepare --confirm,
-    then collect under references/agent-orchestration.md with native host entry
-    agents and one writer per module. Preserve core_capabilities as fully qualified
-    declaring package/class, method and parameter-type identities with declaration
-    evidence, never bare doExecute/doServe names or caller locations. Ordered review.steps
-    drives source-backed call/return order, nested branches, storage, external effects,
-    async boundaries and outcomes. Use business-language sequenceDiagram with autonumber;
-    entry sections follow business title, trigger, function summary, diagram and branch
-    matrix. Old review/generate/update executor paths are unsupported and cannot block the first-stage
-    inventory. Preserve Git commit, dirty state, source/mapping fingerprints, incremental
-    changes, locks, ownership and redaction. Markdown and the sole version file
-    docs/biz-flow/biz-flow-doc-generator-version.json are durable project assets;
-    skill_version is 3.0.0, and manifests remain outside the project. Follow
-    references/requirements-matrix.md, references/verification.md and
-    references/version-management.md; run check and two consecutive verify calls,
-    advancing the source baseline only after acceptance. Never fabricate parallelism
-    or silently degrade when no executor is available. For affected entries or modules,
-    stop when evidence is missing, ownership is ambiguous, paths are unsafe or gates
-    fail; retain completed work without claiming overall success. Respond in Chinese
-    with the complete overview, redacted authoritative manifest/report paths, exit
-    status, coverage, per-entry unresolved counts and stability.
+    Use $biz-flow-doc-generator with the installed devflow CLI, routing only through
+    devflow biz-flow with an explicit --project. Follow SKILL.md and its required
+    references. First inventory the whole project with discover and check --stage
+    entries, show the complete business overview and resolve source-checkable doubts.
+    Honor existing classification authorization. Then prepare, execute the frozen
+    tasks with current-session native agents under references/agent-orchestration.md,
+    and collect evidence-bound analysis or typed evidence requests under
+    references/behavior-evidence.md. Read only the task commit snapshot. Reanalyze
+    replacement runs with new receipts; never copy facts, invent success or clear
+    gaps by prose. Frozen flow determines the sequenceDiagram with autonumber and
+    branch matrix. Keep business scope, the complete entry inventory and analysis
+    status only in the overview; module files contain titles and entry flows. Preserve core contracts, locks, ownership, redaction and the sole
+    version file docs/biz-flow/biz-flow-doc-generator-version.json. Run check, two
+    verify calls and accept before advancing the baseline. Return Chinese business
+    summaries and redacted authoritative report paths, source/coverage/phase status;
+    stop when paths are unsafe, ownership is ambiguous, evidence is missing or
+    validation fails. Report unsupported semantics and partial completion accurately.
+    Use explicitly authorized serial analysis only under the Skill's fallback rules.
+    Keep the fixed target commit, persistent module mapping and confirmation signature.
+    Use source-proven resolutions under references/behavior-evidence.md; never waive unknown IO.
+    Resume pending tasks with original receipts for reusable results; record batch_id.
+    Report each gate's executed/passed status and partial module acceptance accurately.
+    Before generating, modifying or verifying any sequence diagram, read references/diagram-conventions.md, the shared contract owned by the sequence-diagram-generator Skill. Apply it within this domain and stop when common or domain validation fails.
 
-# Git source snapshot gate: use only the recorded committed snapshot; exclude modified and untracked files; use pre-change committed content for uncommitted edits; stop when Git evidence is missing or invalid.
-# Completion cleanup: remove process-only temporary artifacts after success; retain owned assets, version lock, authoritative reports, and recovery evidence.
+
+# Git source snapshot gate: target committed snapshot only; dirty and untracked source is excluded. Missing Git evidence stops analysis.
+# Completion cleanup: remove process-only temporary artifacts; retain owned business assets, version lock and authoritative reports/recovery evidence.

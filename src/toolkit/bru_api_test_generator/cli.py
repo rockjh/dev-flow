@@ -68,14 +68,6 @@ def qa_root_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--qa-root", type=Path, default=Path("qa"))
 
 
-def shared_cli_mode(qa_root: Path) -> bool:
-    return True
-
-
-def script_bundle_errors(qa_root: Path) -> list[str]:
-    return []
-
-
 def run_child(command: list[str], *, relay_summary: bool = True) -> int:
     completed = subprocess.run(
         command,
@@ -143,23 +135,7 @@ def init_command(argv: list[str]) -> int:
     if not args.design_root and not args.design_file and len(design.candidates) > 1:
         print("ERROR: multiple design roots found; choose one with --design-root:\n" + candidates, file=sys.stderr)
         return 2
-    changed = initialize_execution_layout(qa_root, local_scripts=False)
-    # Remove legacy execution by-products. Formal contracts and Bruno assets
-    # are left intact; only known transient/report directories are cleaned.
-    for obsolete in (
-        qa_root / "artifacts", qa_root / "qa-temp",
-        qa_root / REPORTS / "global", qa_root / REPORTS / "modules", qa_root / REPORTS / "logs",
-    ):
-        if obsolete.is_dir():
-            shutil.rmtree(obsolete, ignore_errors=True)
-            changed.append(obsolete)
-    reports_root = qa_root / REPORTS
-    if reports_root.is_dir():
-        for pattern in ("*.log", "*-evidence.json", "*-result.json", "generate-errors*.txt"):
-            for transient in reports_root.rglob(pattern):
-                if transient.is_file():
-                    transient.unlink(missing_ok=True)
-                    changed.append(transient)
+    changed = initialize_execution_layout(qa_root)
     ensure_rule_library(qa_root)
     (qa_root / CONTRACTS / "modules").mkdir(parents=True, exist_ok=True)
     (qa_root / FIXTURES).mkdir(parents=True, exist_ok=True)
@@ -300,7 +276,7 @@ def _design_report(
                     "scenario": str(case.get("scenario", "")),
                     "source": str(case.get("source", "")),
                     "design_rule_ids": list(case.get("design_rule_ids", [])) if isinstance(case.get("design_rule_ids"), list) else [],
-                    "bru": str(case.get("bru", case.get("bru_file", case.get("file_name", "")))),
+                    "bru": str(case.get("bru", "")),
                 }
                 if waiting:
                     record["reason"] = case.get("review_reason") or case.get("manual_confirmation")
@@ -463,7 +439,7 @@ def generate_command(argv: list[str]) -> int:
         print("ERROR: multiple design roots found; biz-flow source is ambiguous:\n" + candidates, file=sys.stderr)
         _design_report(qa_root, {}, status="blocked", failures=["multiple design roots require an explicit selector"])
         return 2
-    initialize_execution_layout(qa_root, local_scripts=False)
+    initialize_execution_layout(qa_root)
     ensure_rule_library(qa_root)
     version_code = version_gate(qa_root, "--phase", "before-generate")
     if version_code:
@@ -677,14 +653,9 @@ def coverage_command(argv: list[str], reconcile: bool) -> int:
         (path for path in (contracts / "openapi.json", contracts / "openapi.yaml", contracts / "openapi.yml") if path.is_file()),
         contracts / "openapi.json",
     )
-    try:
-        script_errors = script_bundle_errors(qa_root)
-    except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
     lock_errors = check_qa_lock(contracts)
-    if script_errors or lock_errors:
-        for error in [*script_errors, *lock_errors]:
+    if lock_errors:
+        for error in lock_errors:
             print(f"ERROR: {error}", file=sys.stderr)
         return 1
     command = [
@@ -721,15 +692,6 @@ def run_command(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--qa-root", type=Path, default=Path("qa"))
     known, remaining = parser.parse_known_args(extra)
-    try:
-        errors = script_bundle_errors(known.qa_root.resolve())
-    except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    if errors:
-        for error in errors:
-            print(f"ERROR: {error}", file=sys.stderr)
-        return 1
     extra = ["--qa-root", str(known.qa_root.resolve()), *remaining]
     return run_child([sys.executable, "-m", "toolkit.bru_api_test_generator.run_bruno", *extra])
 
@@ -779,28 +741,49 @@ def worker_command(argv: list[str], start: bool) -> int:
     command = "worker-start" if start else "worker-check"
     parser = argparse.ArgumentParser(prog=f"devflow bru-api {command}")
     qa_root_argument(parser)
-    parser.add_argument("--module", required=True)
-    if not start:
-        parser.add_argument(
-            "--stage",
-            choices=("generation", "materialization", "pre-execution", "post-execution"),
-            default="generation",
-        )
+    parser.add_argument("--module", required=True, action="append")
+    parser.add_argument("--stage", choices=("generation", "materialization", "pre-execution", "post-execution"), default="generation")
+    if start:
+        parser.add_argument("--delegate", action="store_true")
+        parser.add_argument("--execution-mode", choices=("native", "serial"), default="native")
+        parser.add_argument("--execution-approval", default="")
+    else:
+        parser.add_argument("--run-id")
+        parser.add_argument("--receipt", type=Path)
     args = parser.parse_args(argv)
+    if (not start or not args.delegate) and len(args.module) != 1:
+        parser.error("multiple modules require worker-start --delegate")
+    if not start and bool(args.run_id) != bool(args.receipt):
+        parser.error("delegated worker-check requires both --run-id and --receipt")
+    if start and not args.delegate and (args.execution_mode != "native" or args.execution_approval):
+        parser.error("execution mode/approval requires explicit --delegate")
     ensure_rule_library(args.qa_root)
+    if start and args.delegate or not start and args.run_id:
+        from .host import prepare_workers, check_worker
+        try:
+            if start:
+                result = prepare_workers(args.qa_root, args.module, mode=args.execution_mode, approval=args.execution_approval, stage=args.stage)
+            else:
+                result = check_worker(args.qa_root, args.module[0], args.run_id, args.receipt, args.stage)
+        except (ValueError, OSError, DevflowError) as exc:
+            print(f"ERROR: {redact(str(exc))}", file=sys.stderr)
+            return 1
+        print(json.dumps(redact(result), ensure_ascii=False))
+        print("result_report=" + result.get("authority", result.get("task_package", "")))
+        return 0
     if start:
         try:
-            path = write_worker_snapshot(args.qa_root, args.module)
+            path = write_worker_snapshot(args.qa_root, args.module[0])
         except ValueError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 1
         print(f"created module-worker snapshot: {path}")
         return 0
-    errors = validate_worker_snapshot(args.qa_root, args.module, args.stage)
+    errors = validate_worker_snapshot(args.qa_root, args.module[0], args.stage)
     for error in errors:
         print(f"ERROR: {error}", file=sys.stderr)
     if not errors:
-        print(f"module-worker boundary passed: module={args.module} stage={args.stage}")
+        print(f"module-worker boundary passed: module={args.module[0]} stage={args.stage}")
     return 1 if errors else 0
 
 
@@ -819,15 +802,6 @@ def preflight_command(argv: list[str]) -> int:
         contracts / "openapi.json",
     )
     config = qa_root / EXECUTION / "config.yaml"
-    try:
-        script_errors = script_bundle_errors(qa_root)
-    except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    if script_errors:
-        for error in script_errors:
-            print(f"ERROR: {error}", file=sys.stderr)
-        return 1
     lock_errors = check_qa_lock(contracts)
     if lock_errors:
         for error in lock_errors:

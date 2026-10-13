@@ -4,9 +4,10 @@ from .validation import target_evidence
 
 
 class RequirementMapper:
-    def evaluate(self, requirements, links, model, intent, excluded_segments=(), proposed_steps=(), proposed_controls=()):
+    def evaluate(self, requirements, links, model, intent, excluded_segments=(), proposed_steps=(), proposed_controls=(), *, selected_segment_ids=None):
         snapshot, items = requirements if requirements else (None, ())
-        candidates = {s.segment_id for s in snapshot.segments} if snapshot else set()
+        available = {s.segment_id for s in snapshot.segments} if snapshot else set()
+        candidates = available if selected_segment_ids is None else set(selected_segment_ids)
         evidence = {e.evidence_id for s in model.scopes for e in s.evidence}
         targets = {s.step_id for scope in model.scopes for s in scope.steps}
         targets.update(c.control_id for scope in model.scopes for c in scope.controls)
@@ -27,6 +28,8 @@ class RequirementMapper:
                 proposal_requirements[target] = set(proposed.requirement_ids)
         evidence.update(candidates)
         processed, rules = set(), []
+        if not candidates <= available:
+            rules.append(RuleResult("requirement.selected_segments", False, "selected input segments are outside the frozen snapshot"))
         identifiers = [item.requirement_id for item in items]
         rules.append(RuleResult("requirement.unique_ids", len(set(identifiers)) == len(identifiers), "unique R IDs"))
         by_id = {link.requirement_id: link for link in links}

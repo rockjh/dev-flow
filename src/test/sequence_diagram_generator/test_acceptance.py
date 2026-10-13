@@ -14,7 +14,7 @@ from test_workflow import context, prepare, submission
 def verified(context):
     flow, run_id, package = prepare(context)
     flow.renderer.render = lambda *args: RenderReport("not_run", "", "", (), ("transaction test does not require renderer",))
-    path = context.project.parent / (run_id + ".json")
+    path = flow.repository.artifact_path(context, run_id, "result.json")
     path.write_text(json.dumps(to_dict(submission(package))), encoding="utf-8")
     flow.collect(CollectRequest(context, run_id, path))
     flow.verify(VerifyRequest(context, run_id))
@@ -115,8 +115,8 @@ def test_manual_change_during_interrupted_commit_blocks_recovery(context, monkey
 
 def test_malformed_collect_records_failure(context):
     flow, run_id, _ = prepare(context)
-    path = context.project.parent / "broken.json"
+    path = flow.repository.artifact_path(context, run_id, "broken.json")
     path.write_text("{", encoding="utf-8")
     with pytest.raises(DevflowError):
         flow.collect(CollectRequest(context, run_id, path))
-    assert flow.repository.load(context, run_id).state == RunState.FAILED
+    assert flow.repository.load(context, run_id).state == RunState.PREPARED

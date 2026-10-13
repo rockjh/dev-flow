@@ -18,12 +18,13 @@ from test_workflow import context, submission
 def publication(context, native):
     (context.project / "app.py").write_text("def flow(x):\n if x: return True\n return False\n", encoding="utf-8")
     workflow = build_workflow(context)
+    workflow.handoff.allow_fixtures = True
     workflow.renderer.render = lambda *args: RenderReport("not_run", "", "", (), ("synthetic publication protocol test",))
     workflow.init(InitRequest(context))
     run = workflow.discover(DiscoverRequest(context, "code", "implementation")).data["run_id"]
     workflow.prepare(PrepareRequest(context, run, (), True, True, "serial", "synthetic-test-approval"))
     package = workflow.repository.read_artifact(context, run, "task-package.json", TaskPackage)
-    results = context.project.parent / "synthetic-host.json"
+    results = workflow.repository.artifact_path(context, run, "synthetic-host.json")
     results.write_text(json.dumps(to_dict(submission(package))), encoding="utf-8")
     workflow.collect(CollectRequest(context, run, results))
     workflow.verify(VerifyRequest(context, run))
@@ -93,7 +94,7 @@ def next_accepted(context, workflow, changed=True):
     run = workflow.discover(DiscoverRequest(context, "code", "implementation")).data["run_id"]
     workflow.prepare(PrepareRequest(context, run, (), True, True, "serial", "synthetic-test-approval"))
     package = workflow.repository.read_artifact(context, run, "task-package.json", TaskPackage)
-    results = context.project.parent / "synthetic-next-host.json"
+    results = workflow.repository.artifact_path(context, run, "synthetic-next-host.json")
     results.write_text(json.dumps(to_dict(submission(package))), encoding="utf-8")
     workflow.collect(CollectRequest(context, run, results))
     workflow.verify(VerifyRequest(context, run))

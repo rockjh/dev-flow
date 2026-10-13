@@ -66,10 +66,13 @@
 
 ```mermaid
 sequenceDiagram
-    participant C as 自动化用例
+    autonumber
+    actor C as 自动化用例
     participant A as API
     C->>A: 发送接口请求
+    activate A
     A-->>C: 返回 HTTP 响应
+    deactivate A
     C->>C: 校验状态码和响应字段
 ```
 

@@ -170,6 +170,8 @@ class FlowStep:
     evidence_ids: tuple[str, ...]
     dependencies: tuple[str, ...] = ()
     completion: str = "not_observed"
+    sender_role: str = "service"
+    receiver_role: str = "service"
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,6 +290,8 @@ class ProposedStep:
     label: str
     kind: str = "proposed"
     source_ids: tuple[str, ...] = ()
+    sender_role: str = "service"
+    receiver_role: str = "service"
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,6 +329,7 @@ class HostTask:
     scope_ids: tuple[str, ...]
     segment_ids: tuple[str, ...]
     questions: tuple[str, ...]
+    result_path: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,6 +343,10 @@ class TaskPackage:
     scope_fingerprint: str
     facts: FlowModel
     requirements: RequirementSnapshot | None
+    source_project: str = ""
+    source_commit: str = ""
+    handoff_root: str = ""
+    protocol_version: int = 4
     submission_contract: str = "sequence-diagram-generator.host-submission"
     stop_conditions: tuple[str, ...] = (
         "Unbound facts or evidence queries require a new discover run.",
@@ -362,6 +371,11 @@ class HostReceipt:
     degraded: bool
     parallel: bool
     child_count: int
+    attempt: int = 1
+    time_source: str = "unavailable"
+    reclaim_state: str = "not_observed"
+    record_origin: str = "host-attested"
+    error: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -370,6 +384,17 @@ class HostTaskResult:
     annotations: SemanticAnnotations
     evidence_queries: tuple[str, ...]
     diagnostics: tuple[str, ...]
+    attempt: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class HostActiveObservation:
+    observed_at: str
+    active_task_ids: tuple[str, ...]
+    tool_reference: str
+    time_source: str = "coordinator_observed"
+    active_attempts: tuple[int, ...] = ()
+    active_child_agent_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,6 +403,25 @@ class HostSubmission:
     package_hash: str
     receipts: tuple[HostReceipt, ...]
     results: tuple[HostTaskResult, ...]
+    completed_child_agents: int = 0
+    active_observations: tuple[HostActiveObservation, ...] = ()
+    permission_enforcement: str = "shared_workspace_instructions"
+
+
+@dataclass(frozen=True, slots=True)
+class HostExecutionReport:
+    run_id: str
+    package_hash: str
+    mode: str
+    degraded: bool
+    parallel: bool
+    completed_child_agents: int
+    child_agent_ids: tuple[str, ...]
+    completed_tasks: int
+    attempts: int
+    record_origin: str
+    trust_boundary: str
+    permission_enforcement: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -461,6 +505,13 @@ class ArtifactDigest:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkspaceGuard:
+    source_worktree_fingerprint: str
+    assets: tuple[ArtifactDigest, ...]
+    baseline_digest: str
+
+
+@dataclass(frozen=True, slots=True)
 class RunManifest:
     run_id: str
     project_identity: str
@@ -502,7 +553,7 @@ class AcceptedBaseline:
     verified_digest: str
     generated_assets: tuple[GeneratedAsset, ...]
     skill: str = "sequence-diagram-generator"
-    skill_version: str = "2.0.0"
+    skill_version: str = "3.1.0"
     artifact_root: str = "docs/sequence-diagram"
 
 

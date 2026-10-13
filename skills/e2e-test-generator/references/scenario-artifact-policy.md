@@ -28,6 +28,16 @@ scenarios/<中文业务名称>/
 
 场景子代理只能创建或修改分配给它的 `scenarios/<中文业务名称>/` 目录。不得编辑 `common/`、`config/`、`scripts/`、发现工件、其他场景或项目依赖文件。需要公共变更时，向主代理报告源码锚点和预期调用点；主代理决定是否确实可复用，应用共享变更并检查场景间隔离。
 
+`configuration/`、目标源码及权威锁同样只读。原生所有者按 `native-scenario-owners.md` 的冻结任务执行，
+`generation.owner` 由 CLI 收集后写入实际 child ID，`generation.host_task` 绑定 run/task。
+独占的是场景任务及目录；空闲代理可按新的 task/attempt 复用，但同一目录不得有两个活动写入者。
+宿主无法强制文件系统隔离时主 Agent 可按风险采用已有工作树或暂存补丁，并对照真实工具记录核验写入者；
+CLI 校验目录及输入摘要不能替代这一宿主事实。
+
+明确授权的串行运行通过 `generate --serial-approval <state授权JSON>` 准备；主 Agent 同样仅写任务场景。
+收集后 `generation.mode=sequential_degraded`、`owner=main-agent`，保留真实 `host_task`、原因和
+`serial_approval={reference,scope}`。手填授权或删除 host_task 不能绕过收集、所有权及有序静态验收。
+
 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
 ## 测试入口
@@ -86,22 +96,29 @@ def test_业务链路():
 4. 恢复场景拥有的数据。
 
 ```mermaid
-本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
-本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+sequenceDiagram
     autonumber
-    participant P1 as 业务调用方
+    actor P1 as 业务调用方
     participant P2 as 入口模块
     participant P3 as 下游模块
     participant P4 as 证据系统
 
     P1->>P2: 发起业务动作
+    activate P2
     P2->>P3: 执行正式协议定义的下游调用
+    activate P3
     alt 满足设计业务规则
         P3->>P4: 写入或发布业务证据
+        activate P4
+        Note over P4: 完成状态由证据确认，不从投递推断
+        deactivate P4
         P3-->>P2: 返回业务成功响应
     else 不满足设计业务规则
-        P3-->>P2: 返回设计错误码 <DESIGN_ERROR_CODE>
+        P3-->>P2: 返回设计定义的错误码
     end
+    deactivate P3
+    P2-->>P1: 返回对应分支的协议结果
+    deactivate P2
 ```
 ````
 
@@ -141,3 +158,5 @@ def test_业务链路():
 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
 
 本节规定端到端测试的业务流程、证据要求和安全校验；具体字段与命令必须以项目契约和实际证据为准。
+
+所有场景内嵌时序图遵守本 Skill 的 [公共时序图规范](diagram-conventions.md)，并通过 E2E 文档门禁；场景调用、分支及协议名称仍由本领域设计和协议证据约束。

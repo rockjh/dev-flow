@@ -5,15 +5,15 @@ Use module manifests as the source of truth. The global index is generated from 
 ## Version Lock
 
 Keep `bru-api-test-generator-version.json` and `qa-lock.yaml` at the contracts root. The first
-records a current-workspace source digest excluding `qa/**`; the second records
+binds the selected committed source and its digest excluding `qa/**`; the second records
 OpenAPI, module, case, and generation-state fingerprints. A stale lock is not a
 passing state.
 
     version: 1
     business:
       repo: /path/to/business-repository
-      commit: filesystem:0123456789abcdef
-      ref: filesystem
+      commit: <selected-committed-sha>
+      ref: <selected-committed-ref>
       source_digest: 0123456789abcdef...
       impact_review: non-api
 
@@ -48,15 +48,16 @@ are review metadata only and never choose ownership:
 
     modules:
       - id: system-user
-        name: 閻劍鍩涚粻锛勬倞
-        directory: 閻劍鍩涚粻锛勬倞
-        business_scope: 閻劍鍩涚拹锕€褰块惃鍕灡瀵ゆ亽鈧焦鐓＄拠顫偓浣锋叏閺€骞库偓浣稿灩闂勩倕鎷伴悩鑸碘偓浣烘樊閹?        swagger_tags:
-          - 閻劍鍩涚粻锛勬倞
-      - id: system-role
-        name: 鐟欐帟澹婄粻锛勬倞
-        directory: 鐟欐帟澹婄粻锛勬倞
+        name: 用户管理
+        directory: 用户管理
+        business_scope: 用户账号的创建、查询、修改、删除和状态维护
         swagger_tags:
-          - 鐟欐帟澹婄粻锛勬倞
+          - 用户管理
+      - id: system-role
+        name: 角色管理
+        directory: 角色管理
+        swagger_tags:
+          - 角色管理
 
 If an operation declares more than one Tag, add an explicit `primary_tags`
 mapping keyed by endpoint ID, `operationId`, or `METHOD /path`. An operation
@@ -103,7 +104,7 @@ request:
 ```
 
 See [execution-config.md](execution-config.md) for the schema, Header format,
-signing behavior, execution scope, and script/shared-CLI modes.
+signing behavior and execution scope. Only installed shared-CLI mode is supported.
 
 ## Request and response payloads
 
@@ -133,7 +134,9 @@ Cases link back to an endpoint and optionally to design logic. Assertions must i
     module: system-user
     cases:
       - id: USER_CREATE_OK
-        title: 閸掓稑缂撻悽銊﹀煕閹存劕濮?        description: 妤犲矁鐦夐崥鍫熺《閻劍鍩涚挧鍕灐閼宠棄顧勯崚娑樼紦閹存劕濮涢獮鎯扮箲閸ョ偞鏌婇悽銊﹀煕娣団剝浼呴妴?        endpoint_id: USER_CREATE
+        title: 创建用户成功
+        description: 验证合法用户资料能够创建成功并返回新用户信息。
+        endpoint_id: USER_CREATE
         scenarios:
           success: {applicable: true, status: confirmed}
           authentication: {applicable: true, status: inferred}
@@ -141,7 +144,7 @@ Cases link back to an endpoint and optionally to design logic. Assertions must i
           authorization: {applicable: false, status: confirmed, reason: "endpoint has no role or tenant guard"}
         logic_ids:
           - USER_CREATE_NORMAL_LOGIC
-        bru: 01-閸掓稑缂撻悽銊﹀煕閹存劕濮?bru
+        bru: 01-创建用户成功.bru
         expected:
           http_status: 200
           business_code: 0
@@ -152,24 +155,26 @@ Cases link back to an endpoint and optionally to design logic. Assertions must i
             exists: true
 
       - id: USER_CREATE_DUPLICATE
-        title: 閻劍鍩涢崥宥夊櫢婢跺秵妞傞崚娑樼紦婢惰精瑙?        description: 妤犲矁鐦夐柌宥咁槻閻劍鍩涢崥宥堫潶娑撴艾濮熺憴鍕灟閹锋帞绮烽獮鎯扮箲閸ョ偞妲戠涵顔藉絹缁€鎭掆偓?        endpoint_id: USER_CREATE
+        title: 用户名重复时创建失败
+        description: 验证重复用户名被业务规则拒绝并返回明确提示。
+        endpoint_id: USER_CREATE
         logic_ids:
           - USER_CREATE_DUPLICATE_LOGIC
-        bru: 02-閻劍鍩涢崥宥夊櫢婢跺秵妞傞崚娑樼紦婢惰精瑙?bru
+        bru: 02-用户名重复时创建失败.bru
         expected:
           http_status: 200
           business_code: 601
         assertions:
           - path: $.msg
-            contains: "瀹告彃鐡ㄩ崷?
+            contains: "已存在"
 
 Do not create two case records with the same
 `endpoint_id + scenario + request + assertions` fingerprint. A different case
 ID does not make an identical request/assertion pair independent coverage.
 
 Every registered request uses `<two-or-more-digit sequence>-<sanitized Chinese
-case.title>.bru`. Explicit `bru`, legacy `bru_file`, and legacy `file_name`
-must match the same deterministic name. Tag, summary, stable ID, and hash
+case.title>.bru`. An explicit `bru` must match the same deterministic name.
+`bru_file`, `file_name`, and `seq` are unsupported fields and must be rejected. Tag, summary, stable ID, and hash
 fallbacks are forbidden; collisions block generation. English IDs remain only
 in `meta.name`, manifests, and execution evidence.
 
@@ -190,18 +195,25 @@ Example flow-required case block:
 
 ````markdown
 <!-- CASE_START: USER_CREATE_OK -->
-### 閸掓稑缂撻悽銊﹀煕閹存劕濮?
-缁犫偓閻厽寮挎潻甯窗妤犲矁鐦夐崥鍫熺《閻劍鍩涚挧鍕灐閼宠棄顧勯崚娑樼紦閹存劕濮涢獮鎯扮箲閸ョ偞鏌婇悽銊﹀煕娣団剝浼呴妴?
+### 创建用户成功
+
+简短描述：验证合法用户资料能够创建成功并返回新用户信息。
+
 ```mermaid
 sequenceDiagram
-    participant C as 閼奉亜濮╅崠鏍暏娓?    participant A as API
+    autonumber
+    actor C as 自动化用例
+    participant A as API
     C->>A: POST /system/user
-    A-->>C: 鏉╂柨娲?HTTP 200
-    C->>C: 閺嶏繝鐛欓悩鑸碘偓浣虹垳閵嗕椒绗熼崝锛勭波閺嬫粌鎷伴崫宥呯安鐎涙顔?```
+    activate A
+    A-->>C: 返回 HTTP 200
+    deactivate A
+    C->>C: 校验状态码、业务结果和响应字段
+```
 <!-- CASE_END: USER_CREATE_OK -->
 ````
 
-Run `materialize_missing_bru.py` after changing `cases.yaml`; it updates the
+Run `devflow bru-api materialize --qa-root qa` after changing `cases.yaml`; it updates the
 generated case section without replacing manual module notes. The coverage
 checker rejects a missing contracts README, missing module document, unknown
 or duplicate documented case ID, a case block without its title and brief
@@ -246,7 +258,7 @@ confirmation report and are never converted into business expectations.
         status: confirmed
         source: design
         design_rule_id: USER_CREATE_NORMAL_LOGIC
-        source_symbol: docs/biz-flow/users.md:12
+        source_symbol: docs/design/users.md:12
         condition: username is unique and required data is valid
         expected_http_status: 200
         case_ids:
@@ -255,7 +267,7 @@ confirmation report and are never converted into business expectations.
         status: confirmed
         source: design
         design_rule_id: USER_CREATE_DUPLICATE_LOGIC
-        source_symbol: docs/biz-flow/users.md:28
+        source_symbol: docs/design/users.md:28
         condition: username already exists
         expected_http_status: 200
         expected_business_code: 601
@@ -321,7 +333,7 @@ Generate this file; do not hand-edit it:
       swagger_sha256: ...
     modules:
       - id: system-user
-        name: 閻劍鍩涚粻锛勬倞
+        name: 用户管理
         swagger_tag: sys-user-controller
         endpoints_file: modules/system-user/endpoints.yaml
         parameters_file: modules/system-user/parameters.yaml
@@ -340,3 +352,5 @@ Generate this file; do not hand-edit it:
 The global checker compares the union of module endpoints with the offline OpenAPI inventory and verifies that every endpoint, design logic path, support finding, case, and flow is accounted for. JSON request bodies are extracted as complete brace-balanced blocks, parsed with `json.loads()`, and compared structurally; malformed JSON reports its parse location.
 
 The checker should also reject duplicate IDs, duplicate case-to-file mappings, unregistered Bruno files, unknown case endpoint references, and missing scenario decisions when strict matrix validation is enabled. Pass the saved offline document explicitly (`--openapi qa/contracts/openapi.json`) so a manifest cannot validate against itself.
+
+所有内嵌时序图遵守本 Skill 的 [公共时序图规范](diagram-conventions.md)，并通过 bru-api 文档门禁；接口、用例及响应仍由本领域证据和 QA 锁约束。

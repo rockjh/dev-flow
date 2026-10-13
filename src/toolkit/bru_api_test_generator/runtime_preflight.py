@@ -221,17 +221,6 @@ def bruno_cli_probe(executable: str, timeout: float = DEFAULT_CLI_TIMEOUT) -> di
     return result
 
 
-def bruno_cli_version(
-    executable: str, timeout: float = DEFAULT_CLI_TIMEOUT,
-) -> tuple[tuple[int, int, int] | None, str]:
-    """Compatibility wrapper for callers that only need the parsed version."""
-
-    check = bruno_cli_probe(executable, timeout)
-    version = check["version"]
-    parsed = tuple(int(value) for value in version.split(".")) if version else None
-    return parsed, check["stdout"] or check["stderr"]
-
-
 def node_runtime_version(timeout: float = 10.0) -> tuple[str | None, str | None]:
     resolved = resolve_executable("node")
     if not resolved:

@@ -10,67 +10,25 @@ import re
 import shutil
 import sys
 import uuid
+from subprocess import SubprocessError
 from collections import Counter
-from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 
-from ..core.artifacts import require_version_file, write_json, write_version_file, state_root
+from ..core.artifacts import ProjectDomainLock, require_version_file, write_json, write_version_file, state_root
 from ..core.errors import DevflowError
 from ..core.redaction import redact
-from ..core.schema import BIZ_FLOW_SCHEMA_VERSION, BIZ_FLOW_HANDOFF_SCHEMA, validate_schema
+from ..core.schema import BIZ_FLOW_SCHEMA_VERSION, BIZ_FLOW_HANDOFF_SCHEMA, BIZ_FLOW_ENTRY_FACTS_SCHEMA, validate_schema
 from .discovery import scan
-from .documents import apply_module_map, write_artifacts, write_discovery, write_entry_directory, readable_inventory, module_overview, registration_overview, exclusion_categories, _split_entry_ids, _display, _validate_mermaid, _is_chinese_module_filename, render_module, _review_from_dict
-from .evidence import collect_evidence
-from .git import changed_paths, working_tree_paths
-from .models import BehaviorEvidence, EntryPoint, ErrorEvidence, GitInfo, ScanResult
-from .orchestration import create_run_manifest, fail_run, finish_run, write_module
-from .validation import validate_run, validate_markdown_structure, parse_diagram_ids, parse_matrix_ids, validate_entry_analysis, digest
+from .supplement import rebuild_verified
+from .documents import write_discovery, write_entry_directory, readable_inventory, module_overview, registration_overview, exclusion_categories, _split_entry_ids, _display, _is_chinese_module_filename, render_module, confirmation_signature, confirmation_valid, validate_inventory, analysis_status_overview
+from .evidence import ADAPTER_VERSION, digest
+from .models import EntryPoint, GitInfo, ScanResult
+from .orchestration import FileWriteGuard
+from .host import PROTOCOL_VERSION, run_path, snapshot_sources, protected_hashes, validate_package, validate_execution
+from .validation import validate_markdown_structure, validate_entry_analysis, validate_evidence_request, digest
 
 
 _PROTECTED_NAMES = {"prod", "prd", "live", "production"}
-
-
-@contextmanager
-def _run_lock(docs_root: Path):
-    """Prevent overlapping writers while leaving a recoverable stale lock."""
-    docs_root.mkdir(parents=True, exist_ok=True)
-    lock_path = docs_root / "biz-flow-run.lock"
-    payload = {"pid": os.getpid(), "created_at": datetime.now(timezone.utc).isoformat()}
-    owned = False
-    for attempt in range(2):
-        try:
-            with lock_path.open("x", encoding="utf-8") as stream:
-                json.dump(payload, stream, ensure_ascii=False)
-            owned = True
-            break
-        except FileExistsError:
-            stale = False
-            try:
-                current = json.loads(lock_path.read_text(encoding="utf-8"))
-                pid = int(current.get("pid", 0)) if isinstance(current, dict) else 0
-                if pid and pid != os.getpid():
-                    try:
-                        os.kill(pid, 0)
-                    except OSError:
-                        stale = True
-            except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
-                stale = True
-            if stale and attempt == 0:
-                try:
-                    lock_path.unlink()
-                except OSError:
-                    pass
-                continue
-            raise RuntimeError(f"another biz-flow writer is active: {lock_path}")
-    try:
-        yield
-    finally:
-        if owned:
-            try:
-                lock_path.unlink()
-            except OSError:
-                pass
 
 
 def _command_paths(argv: list[str]) -> tuple[Path, Path]:
@@ -86,27 +44,31 @@ def _command_paths(argv: list[str]) -> tuple[Path, Path]:
     return project, _docs_root(project, docs)
 
 
-def _locked(argv: list[str], action, *, init: bool = False):
+def _locked(argv: list[str], action, *, init: bool = False, report_input_gates: bool = False):
     if any(value in {"-h", "--help"} for value in argv):
         return action()
+    def fail(error):
+        if report_input_gates:
+            print(json.dumps({"gates": _failed_input_report(error), "errors": [str(error)]}, ensure_ascii=False))
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 8
     try:
         project, docs_root = _command_paths(argv)
         if error := _write_scope_error(project, docs_root):
-            print(f"ERROR: {error}", file=sys.stderr)
-            return 8
+            return fail(error)
         if init and not (project / ".git").exists():
             return action()
         if not init and not docs_root.is_dir():
-            print(f"ERROR: biz-flow is not initialized: {docs_root}", file=sys.stderr)
-            return 8
-        with _run_lock(docs_root):
+            return fail(f"biz-flow is not initialized: {docs_root}; run devflow biz-flow init --project {project}")
+        if not init:
+            require_version_file(project, "biz-flow")
+        with ProjectDomainLock(project, "biz-flow"):
             try:
                 return action()
             finally:
                 _remove_transient_artifacts(docs_root)
-    except (RuntimeError, ValueError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 8
+    except (RuntimeError, ValueError, DevflowError) as exc:
+        return fail(exc)
 
 
 def _write_scope_error(project: Path, docs_root: Path) -> str | None:
@@ -140,38 +102,19 @@ def _restore_markdown_snapshot(docs_root: Path, snapshot: dict[str, bytes]) -> N
         temporary.replace(docs_root / name)
 
 
-def _safe_write_artifacts(result: ScanResult, docs_root: Path, snapshot: dict[str, bytes], **kwargs):
-    try:
-        return write_artifacts(result, docs_root, **kwargs)
-    except Exception:
-        _restore_markdown_snapshot(docs_root, snapshot)
-        _remove_transient_artifacts(docs_root)
-        raise
-
-
-def _scan_for_run(
-    project: Path,
-    docs_root: Path,
-    target: str | None,
-) -> tuple[ScanResult | None, bool, int, str | None]:
-    try:
-        return scan(project, target), False, 0, None
-    except Exception as exc:
-        return None, False, 0, f"biz-flow scan failed: {exc}"
-
-
-def _progress(*_args: object, **_kwargs: object) -> None:
-    """Retained as a no-op for callers; progress is process-local state."""
-    return None
-
-
 def _project(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--project", type=Path, default=Path("."))
     parser.add_argument("--docs-root", type=Path, default=Path("docs/biz-flow"))
 
 
 def _docs_root(project: Path, value: Path) -> Path:
+    project = project.resolve()
+    for path in (project / "docs", project / "docs" / "biz-flow"):
+        if path.is_symlink() or hasattr(path, "is_junction") and path.is_junction():
+            raise ValueError(f"DOCS_PATH_UNSAFE: business asset directories cannot be aliases: {path}")
     canonical = (project / "docs" / "biz-flow").resolve()
+    if not canonical.is_relative_to(project):
+        raise ValueError("DOCS_PATH_UNSAFE: business assets must stay inside the project")
     requested = (value if value.is_absolute() else project / value).resolve()
     if requested != canonical:
         raise ValueError(f"biz-flow docs root is fixed at {canonical}")
@@ -197,13 +140,6 @@ def _init_command_unlocked(argv: list[str]) -> int:
     lock = _version_lock_path(docs_root)
     if lock.exists():
         if _version_lock_error(lock):
-            previous = _read_json(lock)
-            source = previous.get("source", {})
-            commit = source.get("git_commit") if isinstance(source, dict) else False
-            valid_previous = (previous.get("skill") == "biz-flow-doc-generator"
-                              and previous.get("artifact_root") == "docs/biz-flow"
-                              and isinstance(source, dict) and "git_commit" in source
-                              and (commit is None or isinstance(commit, str) and re.fullmatch(r"[0-9a-fA-F]{40}", commit)))
             print(f"ERROR: unsupported biz-flow version lock: {lock}; archive the old project and run init again", file=sys.stderr)
             return 8
     else:
@@ -216,20 +152,14 @@ _VERSION_LOCK_NAME = "biz-flow-doc-generator-version.json"
 
 
 def _remove_transient_artifacts(docs_root: Path) -> None:
-    """Keep JSON/index/progress data process-local; Markdown and the version file persist."""
-    for path in docs_root.glob("*.json"):
-        if path.name == _VERSION_LOCK_NAME:
-            continue
+    """Remove only transient names owned by this workflow."""
+    for name in ("biz-flow-discovery.json", "biz-flow-modules.json"):
+        path = docs_root / name
         try:
             path.unlink()
         except FileNotFoundError:
             pass
-    for path in docs_root.glob("*.tmp"):
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
-    for name in {"biz-flow-failures.log", "biz-flow-run.lock"}:
+    for name in {"biz-flow-failures.log"}:
         try:
             (docs_root / name).unlink()
         except FileNotFoundError:
@@ -244,7 +174,7 @@ def _overview_confirmed(docs_root: Path) -> bool:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
             continue
-        if "<!-- devflow:module-confirmed -->" in text:
+        if confirmation_valid(text):
             return True
     return False
 
@@ -254,8 +184,10 @@ def _overview_source_matches(docs_root: Path, result: ScanResult) -> bool:
     path = docs_root / "业务流程覆盖总览.md"
     if not path.is_file():
         return False
-    fingerprint = re.search(r'<!-- devflow:source-fingerprint value="([^"]+)" -->', path.read_text(encoding="utf-8"))
-    return bool(fingerprint and fingerprint.group(1) == result.source_fingerprint)
+    text = path.read_text(encoding="utf-8")
+    fingerprint = re.search(r'<!-- devflow:source-fingerprint value="([^"]+)" -->', text)
+    return bool(fingerprint and fingerprint.group(1) == result.source_fingerprint
+                and f"Git 版本：{result.git.target}\n" in text)
 
 
 def _confirm_overview(docs_root: Path) -> None:
@@ -265,20 +197,11 @@ def _confirm_overview(docs_root: Path) -> None:
     text = text.replace("请在生成前确认模块边界。确认后将本节改为 `模块划分状态：已确认`，或使用 CLI 的显式确认选项。", "确认人：CLI 显式确认")
     if "<!-- devflow:module-confirmed -->" not in text:
         text += "\n<!-- devflow:module-confirmed -->\n"
+    text = re.sub(r'<!-- devflow:confirmation value="[^"]+" -->\n?', "", text)
+    text = text.rstrip() + f'\n<!-- devflow:confirmation value="{confirmation_signature(text)}" -->\n'
     path.write_text(text, encoding="utf-8")
 
 
-def _clear_confirmation_marker(docs_root: Path) -> None:
-    for path in docs_root.glob("*.md"):
-        if re.match(r"^\d+-", path.name):
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-            updated = text.replace("<!-- devflow:module-confirmed -->", "")
-            if updated != text:
-                path.write_text(updated, encoding="utf-8")
-        except (OSError, UnicodeError):
-            continue
 
 
 def _apply_overview_mapping(
@@ -368,9 +291,6 @@ def _apply_overview_mapping(
         old.setdefault("display_name", _display(str(item["name"])))
         old.setdefault("rationale", f"依据入口归属和源码调用关系确认模块边界：{item['name']}。")
         old.setdefault("responsibility", f"{old['display_name']}：处理已确认的业务入口。")
-        old.setdefault("objects", [])
-        old.setdefault("partners", [])
-        old.setdefault("questions", [])
         rebuilt.append(old)
     document["modules"] = rebuilt
     document["exclusions"] = exclusion_values
@@ -381,69 +301,11 @@ def _apply_overview_mapping(
     return []
 
 
-def _write_overview_report(docs_root: Path, result: ScanResult, report: dict[str, object]) -> None:
-    """Render a complete readable overview from the source-owned candidate set."""
-    overview = next((item for item in docs_root.glob("*.md") if not re.match(r"^\d+-", item.name)), None)
-    if overview is None:
-        raise ValueError("business-flow overview is missing")
-    current = overview.read_text(encoding="utf-8")
-    mapping = _read_json(docs_root / "biz-flow-modules.json")
-    candidates = list(result.all_entries or result.entries)
-    exclusions = [item for item in mapping.get("exclusions", []) if isinstance(item, dict)]
-    records = {str(item.get("name")): item for item in mapping.get("modules", []) if isinstance(item, dict) and item.get("name")}
-    modules = sorted(records)
-    directives = re.findall(r"<!--\s*devflow:(?:module|exclude)\s+[^>]+-->", current)
-
-    def clean(value: object) -> str:
-        return str(redact(value if value is not None else "")).replace("|", "\\|").replace("\n", " ").strip()
-
-    lines = ["# \u4e1a\u52a1\u6d41\u7a0b\u8986\u76d6\u603b\u89c8", "",
-             f"Git \u7248\u672c\uff1a`{clean(result.git.target)}`", "",
-             f"工作区状态：{'包含未提交变更' if result.git.includes_uncommitted else '指定提交快照'}", "",
-             f'<!-- devflow:source-fingerprint value="{result.source_fingerprint}" -->', "",
-             "\u6a21\u5757\u5212\u5206\u72b6\u6001\uff1a\u5df2\u786e\u8ba4", "",
-             *readable_inventory(result, mapping)]
-    reconciliation = report.get("entry_reconciliation") if isinstance(report, dict) else None
-    status_text = "\u901a\u8fc7" if not isinstance(reconciliation, dict) or reconciliation.get("matches", False) else "\u5931\u8d25"
-    unresolved_business = sum(e.business_name == "\u5f85\u786e\u8ba4" and e.scope_status == "business" for e in candidates)
-    unresolved_excluded = sum(e.business_name == "\u5f85\u786e\u8ba4" and e.scope_status == "excluded" for e in candidates)
-    lines.extend(["", "## \u8986\u76d6\u7edf\u8ba1", "", f"- \u5019\u9009\u5165\u53e3\uff1a{len(candidates)}", f"- \u5df2\u786e\u8ba4\u4e1a\u52a1\u5165\u53e3\uff1a{sum(e.scope_status == 'business' for e in candidates)}", f"- \u5df2\u6392\u9664\u5165\u53e3\uff1a{len(exclusions)}", f"- \u5f85\u786e\u8ba4\u4e1a\u52a1\u540d\u79f0\uff08\u4e1a\u52a1\u8303\u56f4\uff09\uff1a{unresolved_business}", f"- \u5f85\u786e\u8ba4\u4e1a\u52a1\u540d\u79f0\uff08\u6392\u9664\u5019\u9009\uff09\uff1a{unresolved_excluded}", f"- \u5165\u53e3\u6e05\u5355\u4e0e\u673a\u5668\u6620\u5c04\u5bf9\u8d26\uff1a{status_text}", "", "## \u6a21\u5757\u5217\u8868", ""])
-    lines.extend(f"- {clean(module)}: {clean(records.get(module, {}).get('responsibility', '\u6309\u6e90\u7801\u8bc1\u636e\u5904\u7406\u4e1a\u52a1\u5165\u53e3'))}\uff1afile `{clean(records.get(module, {}).get('file', ''))}`" for module in modules)
-    lines.extend(["", "## \u5165\u53e3\u660e\u7ec6", "", "| \u5165\u53e3 ID | \u4e1a\u52a1\u63cf\u8ff0 | \u5165\u53e3 | \u5f52\u5c5e | \u5165\u53e3\u7c7b\u578b | \u6e90\u7801\u4f4d\u7f6e |", "| --- | --- | --- | --- | --- | --- |"])
-    for entry in candidates:
-        lines.append(f"| `{clean(entry.entry_id)}` | {clean(entry.business_name or '\u5f85\u786e\u8ba4')} | {clean(entry.trigger_summary or entry.identifier)} | `{clean(records.get(entry.module, {}).get('file', ''))}` | {clean(entry.kind)} | `{clean(entry.file)}:{entry.line}` |")
-    lines.extend(["", "## \u6392\u9664\u9879", ""])
-    lines.extend(f"- {clean(item.get('candidate'))}\uff1a{clean(item.get('reason'))}" for item in exclusions)
-    if not exclusions:
-        lines.append("- None\uff1a\u65e0\uff1a")
-    lines.extend(["", "## \u9a8c\u6536\u7ed3\u679c", "", "- \u6a21\u5757\u5212\u5206\uff1a\u5df2\u786e\u8ba4", "- \u5165\u53e3\u5f52\u5c5e\uff1a\u552f\u4e00", "- Markdown \u751f\u6210\uff1a\u901a\u8fc7", "- Mermaid \u6821\u9a8c\uff1a\u901a\u8fc7"])
-    if result.unresolved:
-        lines.extend(["", "## \u672a\u89e3\u51b3\u8bc1\u636e", "", *[f"- {clean(item)}" for item in result.unresolved]])
-    if directives:
-        lines.extend(["", "<!-- devflow:machine-map -->", *directives])
-    if "<!-- devflow:module-confirmed -->" in current:
-        lines.append("<!-- devflow:module-confirmed -->")
-    rendered = "\n".join(lines).rstrip() + "\n"
-    temporary = overview.with_name(overview.name + ".tmp")
-    temporary.write_text(rendered, encoding="utf-8")
-    temporary.replace(overview)
 
 def _version_lock_path(docs_root: Path) -> Path:
     return docs_root / _VERSION_LOCK_NAME
 
 
-def _recorded_commit(docs_root: Path) -> str | None:
-    """Read the documented-source revision from the skill version file."""
-    path = _version_lock_path(docs_root)
-    if _version_lock_error(path):
-        return None
-    try:
-        value = require_version_file(docs_root.parent.parent, "biz-flow", path=path)
-    except DevflowError:
-        return None
-    source = value.get("source")
-    commit = source.get("git_commit") if isinstance(source, dict) else None
-    return commit if isinstance(commit, str) else None
 
 
 def _version_lock_error(path: Path) -> bool:
@@ -472,58 +334,21 @@ def _read_json(path: Path) -> dict[str, object]:
     return data if isinstance(data, dict) else {}
 
 
-def _manifest_matches(path: Path, source_fingerprint: str, project: Path, docs_root: Path) -> bool:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return False
-    return (
-        isinstance(value, dict)
-        and value.get("source_fingerprint") == source_fingerprint
-        and Path(str(value.get("project_root", ""))).resolve() == project.resolve()
-        and Path(str(value.get("docs_root", ""))).resolve() == docs_root.resolve()
-    )
+def _read_manifest(path: Path) -> dict[str, object]:
+    value = _read_json(path)
+    if not value:
+        raise ValueError(f"RUN_MANIFEST_UNAVAILABLE: {path}; choose a run listed by devflow biz-flow clean, or prepare a new run")
+    return value
 
 
-def _previous_success_manifest(source_fingerprint: str, project: Path, docs_root: Path) -> dict[str, object] | None:
-    """Return the latest validated run for this source and document scope."""
-    root = state_root() / "biz-flow"
-    candidates = sorted(root.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True) if root.is_dir() else []
-    for path in candidates:
-        if not _manifest_matches(path, source_fingerprint, project, docs_root):
-            continue
-        try:
-            value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            continue
-        if isinstance(value, dict) and value.get("status") == "success" and not validate_run(value):
-            return value
-    return None
 
 
-def _refresh_map_for_non_source_update(project: Path, docs_root: Path, result: ScanResult) -> None:
-    """Keep a confirmed map usable when an update only changes prose files."""
-    path = docs_root / "biz-flow-modules.json"
-    old_commit = _recorded_commit(docs_root)
-    if not old_commit or not path.is_file():
-        return
-    changes, error = changed_paths(project, old_commit, result.git.target)
-    if error or not changes:
-        return
-    source_suffixes = {".py", ".java", ".kt", ".go", ".js", ".ts", ".tsx", ".jsx", ".cs", ".rb", ".php", ".rs", ".toml", ".yaml", ".yml", ".xml", ".properties", ".json"}
-    paths = [item.rsplit("\t", 1)[-1].split(" -> ")[-1].strip('"') for item in changes]
-    paths = [item for item in paths if item.replace("\\", "/").casefold() != "docs/biz-flow" and not item.replace("\\", "/").casefold().startswith("docs/biz-flow/")]
-    if any(Path(item).suffix.casefold() in source_suffixes for item in paths):
-        return
-    document = _read_json(path)
-    if document.get("confirmed") is not True:
-        return
-    document["source_fingerprint"] = result.source_fingerprint
-    document["effective_git"] = result.git.target
-    path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 
 
 def discover_command(argv: list[str]) -> int:
+    print("progress stage=discover", file=sys.stderr)
     return _locked(argv, lambda: _discover_command_unlocked(argv))
 
 
@@ -594,484 +419,6 @@ def _discover_command_unlocked(argv: list[str]) -> int:
     return 8 if directory_errors or result.unresolved else 0
 
 
-def review_command(argv: list[str]) -> int:
-    """第二阶段可选的只读审核，不写时序图也不改变模块归属。"""
-    return _locked(argv, lambda: _review_command_unlocked(argv))
-
-
-def _review_command_unlocked(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="devflow biz-flow review")
-    _project(parser)
-    parser.add_argument("--commit")
-    args = parser.parse_args(argv)
-    project = args.project.resolve()
-    docs_root = _docs_root(project, args.docs_root)
-    if not _overview_confirmed(docs_root):
-        print("ERROR: confirm the business entry directory before optional flow review", file=sys.stderr)
-        return 8
-    directory_scan = scan(project, args.commit, entry_only=True)
-    if not _overview_source_matches(docs_root, directory_scan):
-        print("ERROR: business entry directory is stale; rerun discover before flow review", file=sys.stderr)
-        return 8
-    text = (docs_root / "业务流程覆盖总览.md").read_text(encoding="utf-8")
-    entry_ids = {entry_id for raw in re.findall(r'<!--\s*devflow:module\s+name="[^"]+"\s+file="[^"]+"\s+entries="([^"]*)"\s*-->', text) for entry_id in _split_entry_ids(raw)}
-    result = scan(project, args.commit, entry_ids=entry_ids)
-    _, module_path = write_discovery(result, docs_root)
-    try:
-        errors = _apply_overview_mapping(docs_root, module_path, result)
-        errors.extend(apply_module_map(result, module_path, require_entry_reviews=False))
-        if errors:
-            for error in errors:
-                print(f"ERROR: {error}", file=sys.stderr)
-            print(_conversation_overview(result, _read_json(module_path), docs_root))
-            return 8
-        manifest = create_run_manifest(result, _read_json(module_path), project_root=project, docs_root=docs_root)
-        manifest_path = state_root() / "biz-flow" / f"{manifest['run_id']}.json"
-        if manifest.get("status") == "running" and not manifest.get("errors"):
-            errors = validate_run(manifest, prepared=True)
-            if result.unresolved:
-                errors.extend(f"SOURCE_UNRESOLVED: {finding}" for finding in result.unresolved)
-            if errors:
-                fail_run(manifest, errors)
-            else:
-                manifest["status"] = "reviewed"
-        write_json(manifest_path, manifest)
-        # 审核结果只进入总览；不确认归属、不写模块文件、不推进源码版本基线。
-        from .documents import _review_from_dict
-        for entry in result.entries:
-            analysis = manifest.get("entry_analyses", {}).get(entry.entry_id, {})
-            if analysis.get("review"):
-                entry.review = _review_from_dict(analysis["review"], entry)
-        write_discovery(result, docs_root)
-        overview_path = docs_root / "业务流程覆盖总览.md"
-        with overview_path.open("a", encoding="utf-8") as stream:
-            stream.write(f"\n## CLI 源码审核结果\n\n执行记录：`{manifest_path}`\n\n")
-            stream.write("审核状态：" + ("失败" if manifest.get("errors") else "入口行为审核已完成") + "\n\n")
-            for error in manifest.get("errors", []):
-                stream.write(f"- {redact(error)}\n")
-        print(_conversation_overview(result, _read_json(module_path), docs_root))
-        print(f"reviewed entries={len(result.entries)} unresolved={len(result.unresolved)} run_manifest={manifest_path}")
-        if manifest.get("errors"):
-            for error in manifest["errors"]:
-                print(f"ERROR: {redact(error)}", file=sys.stderr)
-            return 8
-        return 0
-    finally:
-        _remove_transient_artifacts(docs_root)
-
-
-def _change_summary(project: Path, old: dict[str, object], entries: list[EntryPoint], target: str) -> dict[str, object]:
-    old_records = {
-        str(item.get("id")): item
-        for item in old.get("entries", [])
-        if isinstance(item, dict) and item.get("id")
-    }
-    old_entries = set(old_records)
-    new_entries = {entry.entry_id for entry in entries}
-    modules = {entry.module for entry in entries}
-
-    def current_signature(entry: EntryPoint) -> tuple[object, ...]:
-        return (
-            entry.kind, entry.identifier, entry.handler, entry.module, f"{entry.file}:{entry.line}",
-            entry.caller, entry.input_summary, tuple(entry.functions),
-            tuple((error.code, error.condition, f"{error.file}:{error.line}") for error in entry.errors),
-            tuple((behavior.kind, behavior.statement, f"{behavior.file}:{behavior.line}") for behavior in entry.behaviors),
-        )
-
-    def stored_signature(item: dict[str, object]) -> tuple[object, ...]:
-        return (
-            item.get("type"), item.get("identifier"), item.get("handler"), item.get("module"), item.get("source"),
-            item.get("caller"), item.get("input_summary"), tuple(item.get("core_capabilities", [])),
-            tuple(
-                (error.get("code"), error.get("condition"), error.get("source"))
-                for error in item.get("errors", []) if isinstance(error, dict)
-            ),
-            tuple(
-                (behavior.get("kind"), behavior.get("statement"), behavior.get("source"))
-                for behavior in item.get("behaviors", []) if isinstance(behavior, dict)
-            ),
-        )
-
-    semantic_changes = {
-        entry.entry_id
-        for entry in entries
-        if entry.entry_id in old_records and current_signature(entry) != stored_signature(old_records[entry.entry_id])
-    }
-    old_rationales = {
-        str(item.get("name")): str(item.get("rationale"))
-        for item in old.get("modules", [])
-        if isinstance(item, dict) and item.get("name")
-    }
-    semantic_changes.update(
-        entry.entry_id
-        for entry in entries
-        if old_rationales.get(entry.module) != entry.module_rationale
-    )
-    old_commit = str(old.get("effective_git", {}).get("commit")) if isinstance(old.get("effective_git"), dict) else ""
-    if not old_commit:
-        return {
-            "comparison": "unavailable",
-            "added_entries": sorted(new_entries),
-            "updated_entries": [],
-            "deleted_entries": [],
-            "version_only_documents": [],
-            "business_changed_documents": sorted(modules),
-        }
-    try:
-        changes, error = changed_paths(project, old_commit, target)
-    except Exception as exc:
-        changes, error = [], str(exc)
-    if error:
-        return {
-            "comparison": "old_version_unavailable",
-            "added_entries": sorted(new_entries - old_entries),
-            "updated_entries": [],
-            "deleted_entries": sorted(old_entries - new_entries),
-            "version_only_documents": [],
-            "business_changed_documents": sorted(modules),
-            "comparison_error": error,
-        }
-    config_markers = {
-        "pom.xml", "build.gradle", "build.gradle.kts", "package.json", "pyproject.toml", "requirements.txt",
-        "application.yml", "application.yaml", "application.properties", "package-lock.json", "pnpm-lock.yaml",
-        "yarn.lock", "tsconfig.json", "application.json", "routes.json", "config.json", ".yml", ".yaml",
-        ".properties", ".toml", ".xml",
-    }
-
-    def evidence_paths(item: dict[str, object]) -> set[str]:
-        paths: set[str] = set()
-
-        def add_source(value: object) -> None:
-            if not isinstance(value, str) or not value:
-                return
-            source = value.split(":", 1)[0].replace("\\", "/").lower()
-            if source:
-                paths.add(source)
-
-        add_source(item.get("source"))
-        for field in ("errors", "behaviors"):
-            values = item.get(field, [])
-            if isinstance(values, list):
-                for value in values:
-                    if isinstance(value, dict):
-                        add_source(value.get("source"))
-        capabilities = item.get("core_capabilities", [])
-        if isinstance(capabilities, list):
-            for capability in capabilities:
-                if isinstance(capability, str) and ":" in capability:
-                    add_source(capability)
-        return paths
-
-    referenced_paths: set[str] = set()
-    for entry in entries:
-        referenced_paths.update(evidence_paths({
-            "source": f"{entry.file}:{entry.line}",
-            "core_capabilities": entry.functions,
-            "errors": [
-                {"source": f"{error.file}:{error.line}"}
-                for error in entry.errors
-            ],
-            "behaviors": [
-                {"source": f"{behavior.file}:{behavior.line}"}
-                for behavior in entry.behaviors
-            ],
-        }))
-    for item in old_records.values():
-        if isinstance(item, dict):
-            referenced_paths.update(evidence_paths(item))
-
-    def status_path(status: str) -> str:
-        value = status.rsplit("\t", 1)[-1].strip('"')
-        if len(value) > 3 and value[2].isspace():
-            value = value[3:].strip()
-        else:
-            value = value.strip()
-        return value.rsplit(" -> ", 1)[-1].strip('"').replace("\\", "/").lower()
-
-    def is_business_path(status: str) -> bool:
-        path = status_path(status)
-        if path.endswith("/" + _VERSION_LOCK_NAME) or path == _VERSION_LOCK_NAME:
-            return False
-        if path in referenced_paths:
-            return True
-        filename = path.rsplit("/", 1)[-1]
-        return (
-            filename in config_markers
-            or path.endswith(tuple(marker for marker in config_markers if marker.startswith(".")))
-            or "/config/" in path
-            or path.startswith("config/")
-        )
-
-    business_changes = [item for item in changes if is_business_path(item)]
-    dirty_changes = [f"WORKTREE\t{item}" for item in working_tree_paths(project) if is_business_path(item)]
-    business_changes.extend(dirty_changes)
-    changed_business = bool(business_changes or semantic_changes or new_entries != old_entries)
-    return {
-        "comparison": "business_changed" if changed_business else "version_only",
-        "added_entries": sorted(new_entries - old_entries),
-        "updated_entries": sorted((new_entries & old_entries) if business_changes else semantic_changes),
-        "deleted_entries": sorted(old_entries - new_entries),
-        "version_only_documents": [] if changed_business else sorted(modules),
-        "business_changed_documents": sorted(modules) if changed_business else [],
-        "changed_paths": changes,
-        "business_changed_paths": business_changes,
-    }
-
-
-def generate_command(argv: list[str], *, incremental: bool = False) -> int:
-    return _locked(argv, lambda: _generate_command_unlocked(argv, incremental=incremental))
-
-
-def _generate_command_unlocked(argv: list[str], *, incremental: bool = False) -> int:
-    command = "update" if incremental else "generate"
-    parser = argparse.ArgumentParser(prog=f"devflow biz-flow {command}")
-    _project(parser)
-    parser.add_argument("--module")
-    parser.add_argument("--commit", help="Git commit or ref; defaults to HEAD")
-    parser.add_argument("--confirm", action="store_true", help="Explicitly confirm the proposed module partition")
-    parser.add_argument("--allow-degraded", action="store_true", help="Explicitly allow serial execution without child agents")
-    args = parser.parse_args(argv)
-    project = args.project.resolve()
-    docs_root = _docs_root(project, args.docs_root)
-    if not _version_lock_path(docs_root).is_file():
-        _remove_transient_artifacts(docs_root)
-        print(
-            f"ERROR: biz-flow is not initialized; run biz-flow init first ({_version_lock_path(docs_root)})",
-            file=sys.stderr,
-        )
-        return 8
-    try:
-        result = scan(project, args.commit, entry_only=True)
-    except Exception as exc:
-        _remove_transient_artifacts(docs_root)
-        print(f"ERROR: biz-flow entry scan failed: {exc}", file=sys.stderr)
-        return 8
-    resumed, cache_entries = False, 0
-    if (docs_root / "业务流程覆盖总览.md").is_file() and not _overview_source_matches(docs_root, result):
-        print("ERROR: business entry directory is stale; rerun discover before confirming or generating flows", file=sys.stderr)
-        _remove_transient_artifacts(docs_root)
-        return 8
-    if args.confirm:
-        if not (docs_root / "biz-flow-modules.json").is_file():
-            write_discovery(result, docs_root)
-        _confirm_overview(docs_root)
-    if not _overview_confirmed(docs_root):
-        print(
-            "ERROR: module partition is awaiting user confirmation; review "
-            f"{docs_root / '业务流程覆盖总览.md'} after explicit user confirmation",
-            file=sys.stderr,
-        )
-        _remove_transient_artifacts(docs_root)
-        return 8
-    if not (docs_root / "biz-flow-modules.json").is_file():
-        write_discovery(result, docs_root)
-    mapping_errors = _apply_overview_mapping(
-        docs_root,
-        docs_root / "biz-flow-modules.json",
-        result,
-        allow_partition_change=args.confirm,
-    )
-
-    if mapping_errors:
-        for error in mapping_errors:
-            print(f"ERROR: {error}", file=sys.stderr)
-        _remove_transient_artifacts(docs_root)
-        return 8
-    if incremental:
-        _refresh_map_for_non_source_update(project, docs_root, result)
-    module_errors = apply_module_map(result, docs_root / "biz-flow-modules.json", require_entry_reviews=False)
-    if module_errors:
-        for error in module_errors:
-            print(f"ERROR: {error}", file=sys.stderr)
-        _remove_transient_artifacts(docs_root)
-        return 8
-    if args.module and not any(entry.module == args.module for entry in result.entries):
-        parser.error(f"business module does not exist in source: {args.module}")
-    # 仅对已归属的业务入口追踪行为；技术候选及无关方法不进入行为未决统计。
-    mapping = _read_json(docs_root / "biz-flow-modules.json")
-    entry_ids = {entry_id for module in mapping.get("modules", []) for entry_id in module["entry_ids"]
-                 if not args.module or module["name"] == args.module}
-    result = scan(project, args.commit, entry_ids=entry_ids)
-    module_errors = apply_module_map(result, docs_root / "biz-flow-modules.json", require_entry_reviews=False)
-    if module_errors:
-        for error in module_errors:
-            print(f"ERROR: {error}", file=sys.stderr)
-        _remove_transient_artifacts(docs_root)
-        return 8
-    try:
-        mapping = _read_json(docs_root / "biz-flow-modules.json")
-        if args.module:
-            mapping = {
-                **mapping,
-                "modules": [item for item in mapping.get("modules", [])
-                            if isinstance(item, dict) and str(item.get("name")) == args.module],
-            }
-        previous_run = _previous_success_manifest(result.source_fingerprint, project, docs_root)
-        manifest = create_run_manifest(
-            result, mapping, allow_degraded=args.allow_degraded,
-            project_root=project, docs_root=docs_root, module_filter=args.module,
-            previous_run=previous_run,
-        )
-    except Exception as exc:
-        _remove_transient_artifacts(docs_root)
-        print(f"ERROR: delegation/evidence setup failed: {exc}", file=sys.stderr)
-        return 8
-    manifest_path = state_root() / "biz-flow" / f"{manifest['run_id']}.json"
-    write_json(manifest_path, manifest)
-    if manifest.get("errors") or manifest.get("status") != "running":
-        code = "DELEGATION_UNAVAILABLE" if any("DELEGATION_UNAVAILABLE" in str(error) for error in manifest.get("errors", [])) else "AGENT_EXECUTION_FAILED"
-        print(f"ERROR: {code}; run_manifest={manifest_path}", file=sys.stderr)
-        _remove_transient_artifacts(docs_root)
-        return 8
-    analyses = manifest.get("entry_analyses", {})
-    for entry in result.entries:
-        analysis = analyses.get(entry.entry_id, {}) if isinstance(analyses, dict) else {}
-        if isinstance(analysis, dict):
-            entry.agent_branches = list(analysis.get("branches", []))
-            entry.agent_persistence = list(analysis.get("persistence_actions", []))
-    if result.unresolved:
-        fail_run(manifest, [f"SOURCE_UNRESOLVED: {finding}" for finding in result.unresolved])
-        write_json(manifest_path, manifest)
-        for finding in result.unresolved:
-            print(f"ERROR: unresolved source evidence: {finding}", file=sys.stderr)
-        _remove_transient_artifacts(docs_root)
-        return 8
-    previous: dict[str, object] = {}
-    comparison_base = _recorded_commit(docs_root) or ""
-    comparison_index = dict(previous)
-    if comparison_base:
-        effective_git = dict(comparison_index.get("effective_git", {}))
-        effective_git["commit"] = comparison_base
-        comparison_index["effective_git"] = effective_git
-    changes = _change_summary(project, comparison_index, result.entries, result.git.target)
-    markdown_snapshot = _markdown_snapshot(docs_root)
-    def write_module_artifact(module: str, path: Path, content: str) -> None:
-        write_module(manifest, module, path, content)
-
-    try:
-        index_path, report_path, report = _safe_write_artifacts(
-            result, docs_root, markdown_snapshot,
-            comparison=str(changes.get("comparison", "current")),
-            old_commit=comparison_base or None, changed=changes,
-            module_filter=args.module, module_writer=write_module_artifact,
-            module_contents={module: value["markdown"] for module, value in manifest["module_results"].items()},
-        )
-    except Exception as exc:
-        fail_run(manifest, [str(exc)])
-        write_json(manifest_path, manifest)
-        print(f"ERROR: module write failed; run_manifest={manifest_path}", file=sys.stderr)
-        return 8
-    markdown_agent_errors: list[str] = []
-    for module, spec in manifest.get("modules", {}).items():
-        module_path = docs_root / str(spec.get("file", ""))
-        if module_path.is_file():
-            module_analyses = {
-                entry_id: manifest.get("entry_analyses", {}).get(entry_id, {})
-                for entry_id in spec.get("entry_ids", [])
-                if entry_id in manifest.get("entry_analyses", {})
-            }
-            markdown_agent_errors.extend(
-                f"{module}: {error}"
-                for error in validate_markdown_structure(module_path.read_text(encoding="utf-8"), module_analyses)
-            )
-    if markdown_agent_errors:
-        fail_run(manifest, markdown_agent_errors)
-        write_json(manifest_path, manifest)
-        _restore_markdown_snapshot(docs_root, markdown_snapshot)
-        print("ERROR: Markdown evidence coverage failed: " + "; ".join(markdown_agent_errors), file=sys.stderr)
-        _remove_transient_artifacts(docs_root)
-        return 8
-    coverage_failures = [
-        name for name, value in report["coverage"].items()
-        if isinstance(value, list) and value
-    ]
-    if coverage_failures:
-        fail_run(manifest, coverage_failures)
-        write_json(manifest_path, manifest)
-        _restore_markdown_snapshot(docs_root, markdown_snapshot)
-        print(
-            "ERROR: generated biz-flow coverage failed: " + ", ".join(coverage_failures),
-            file=sys.stderr,
-        )
-        _remove_transient_artifacts(docs_root)
-        return 8
-    expected_branches = {
-        branch["branch_id"]
-        for inventory in manifest.get("inventories", {}).values()
-        for branch in inventory.get("source_branch_inventory", [])
-        if branch.get("business_relevant") is True and branch.get("reachability") != "unreachable"
-    }
-    expected_persistence = {
-        action["persistence_id"]
-        for inventory in manifest.get("inventories", {}).values()
-        for action in inventory.get("persistence_inventory", [])
-    }
-    actual_branches: set[str] = set()
-    actual_persistence: set[str] = set()
-    for spec in manifest.get("modules", {}).values():
-        module_path = docs_root / str(spec.get("file", ""))
-        if module_path.is_file():
-            markdown = module_path.read_text(encoding="utf-8")
-            actual_branches |= parse_diagram_ids(markdown, "branch") & parse_matrix_ids(markdown, "branch")
-            actual_persistence |= parse_diagram_ids(markdown, "persistence") & parse_matrix_ids(markdown, "persistence")
-    branch_coverage = (len(actual_branches & expected_branches) / len(expected_branches)) if expected_branches else 1.0
-    persistence_coverage = (len(actual_persistence & expected_persistence) / len(expected_persistence)) if expected_persistence else 1.0
-    critical_unresolved = sum(
-        1 for inventory in manifest.get("inventories", {}).values()
-        for item in inventory.get("unresolved", [])
-        if item.get("critical", True)
-    )
-    report.update({
-        "module_tasks": sum(task.get("role") == "module" for task in manifest["tasks"]),
-        "entry_tasks": sum(task.get("role") == "entry" for task in manifest["tasks"]),
-        "parallel": bool(manifest.get("parallel")),
-        "degraded": bool(manifest.get("degraded")),
-        "branch_coverage": branch_coverage,
-        "persistence_coverage": persistence_coverage,
-        "critical_unresolved": critical_unresolved,
-        "stable": True,
-        "run_manifest": str(manifest_path),
-    })
-    manifest["report"] = {
-        key: report[key]
-        for key in (
-            "module_count", "entry_count", "module_tasks", "entry_tasks", "parallel", "degraded",
-            "branch_coverage", "persistence_coverage", "critical_unresolved", "stable",
-            "module_entry_lists", "business_name_unresolved_count",
-            "excluded_business_name_unresolved_count", "excluded_entry_details",
-            "entry_reconciliation", "adapter_evidence_coverage",
-        )
-        if key in report
-    }
-    manifest["report"]["git_commit"] = result.git.target
-    manifest["report"]["verification_runs"] = 0
-    write_json(report_path, report)
-    finish_run(manifest)
-    manifest["status"] = "success"
-    manifest["errors"] = validate_run(manifest)
-    if manifest["errors"]:
-        fail_run(manifest, manifest["errors"])
-        write_json(manifest_path, manifest)
-        print(f"ERROR: run validation failed: {manifest['errors']}; run_manifest={manifest_path}", file=sys.stderr)
-        _restore_markdown_snapshot(docs_root, markdown_snapshot)
-        _remove_transient_artifacts(docs_root)
-        return 8
-    write_json(manifest_path, manifest)
-    _write_overview_report(docs_root, result, report)
-    print(_conversation_overview(result, mapping, docs_root))
-    _remove_transient_artifacts(docs_root)
-    print(
-        f"generated modules={report['module_count']} entries={report['entry_count']} "
-        f"module_tasks={report['module_tasks']} entry_tasks={report['entry_tasks']} "
-        f"parallel={report['parallel']} degraded={report['degraded']} "
-        f"branch_coverage={report['branch_coverage']} persistence_coverage={report['persistence_coverage']} "
-        f"critical_unresolved={report['critical_unresolved']} stable={report['stable']} "
-        f"error_codes={report['active_error_code_count']} run_manifest={manifest_path} "
-        f"overview={docs_root / '业务流程覆盖总览.md'}"
-    )
-    return 0
-
-
 def _check_entry_directory(project: Path, docs_root: Path, target: str | None) -> int:
     """第一阶段独立验收，不要求代理、时序图或已推进的版本基线。"""
     result = scan(project, target, entry_only=True)
@@ -1082,7 +429,7 @@ def _check_entry_directory(project: Path, docs_root: Path, target: str | None) -
     text = overview.read_text(encoding="utf-8")
     errors = list(result.unresolved)
     for registration in result.registration_audit:
-        if registration["status"] not in {"business", "excluded"}:
+        if registration["status"] not in {"business", "excluded"} and registration not in result.coverage_gaps:
             errors.append(f"注册候选尚未完成处理：{registration['file']}:{registration['line']}")
     fingerprint = re.search(r'<!-- devflow:source-fingerprint value="([^"]+)" -->', text)
     if not fingerprint or fingerprint.group(1) != result.source_fingerprint:
@@ -1100,9 +447,21 @@ def _check_entry_directory(project: Path, docs_root: Path, target: str | None) -
         if not reason.strip() or entry_id not in candidates or not separator or not line.isdigit() or not (1 <= int(line) <= result.source_lines.get(file, 0)):
             errors.append(f"排除记录没有有效源码证据：{entry_id}")
     assigned = []
+    try:
+        metadata = {item["name"]: item for raw in re.findall(r"<!-- devflow:module-meta (.+?) -->", text)
+                    for item in [json.loads(raw)]}
+    except (ValueError, KeyError, TypeError):
+        metadata = {}
+        errors.append("总览模块元数据格式无效")
+    modules = []
     for name, filename, raw in directives:
         ids = _split_entry_ids(raw)
         assigned.extend(ids)
+        module = metadata.get(name)
+        if not module or module.get("file") != filename or set(module.get("entry_ids", [])) != set(ids):
+            errors.append(f"总览模块元数据与归属不一致：{name}")
+        else:
+            modules.append(module)
         if not ids:
             errors.append(f"模块入口清单为空：{name}")
         if not _is_chinese_module_filename(filename):
@@ -1113,10 +472,14 @@ def _check_entry_directory(project: Path, docs_root: Path, target: str | None) -
             errors.append(f"模块清单缺失：{filename}")
             continue
         module_text = path.read_text(encoding="utf-8")
-        directory = re.search(r"(?s)<!-- devflow:entry-directory -->(.*?)<!-- /devflow:entry-directory -->", module_text)
-        rows = re.findall(r"(?m)^\|.*?\|.*?\| `([^`]+)` \|", directory.group(1) if directory else "")
-        if len(rows) != len(set(rows)) or set(rows) != set(ids):
-            errors.append(f"模块清单入口与总览不一致：{filename}")
+        if f"<!-- biz-flow-module: {name} -->" not in module_text:
+            errors.append(f"模块文件所有权与总览不一致：{filename}")
+        if "<!-- devflow:entry-directory -->" in module_text:
+            errors.append(f"业务范围及入口清单应集中在总览：{filename}")
+    if len(modules) == len(directives):
+        errors.extend(validate_inventory(result, text, {"modules": modules, "exclusions": [
+            {"candidate": entry_id, "reason": reason, "evidence": [proof]}
+            for entry_id, reason, proof in exclusions]}))
     if len(assigned) != len(set(assigned)):
         errors.append("业务入口存在多个模块所有者")
     if set(assigned) != set(candidates) - excluded or excluded - set(candidates):
@@ -1128,587 +491,680 @@ def _check_entry_directory(project: Path, docs_root: Path, target: str | None) -
     print(json.dumps({"stage": "entries", "git_commit": result.git.target,
                       "workspace_dirty": result.git.dirty, "module_count": len(directives),
                       "business_entry_count": len(set(assigned)), "excluded_count": len(excluded),
-                      "entry_reconciliation": not errors, "errors": errors}, ensure_ascii=False))
+                      "coverage_complete": not result.coverage_gaps, "coverage_gaps": result.coverage_gaps,
+                      "entry_reconciliation": not errors, "gates": _gate_report(errors),
+                      "errors": errors}, ensure_ascii=False))
     return 1 if errors else 0
 
 
-def _modern_manifest(project: Path) -> tuple[Path | None, dict[str, object] | None]:
-    for path in sorted((state_root() / "biz-flow").glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
-        try:
-            value = _read_json(path)
-        except Exception:
+def _current_manifest(project):
+    unsupported = False
+    for path in sorted((state_root() / "biz-flow").glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        if not re.fullmatch(r"[0-9a-f]{32}\.json", path.name):
             continue
-        if value.get("protocol_version") == "3.0" and value.get("project_root") == str(project):
+        value = _read_json(path)
+        # Only inspect protocol/version before reading business structures.
+        if value.get("protocol_version") != PROTOCOL_VERSION or value.get("schema_version") != int(BIZ_FLOW_SCHEMA_VERSION):
+            unsupported = True
+            continue
+        if value.get("project_root") == str(project) and value.get("status") != "superseded":
             return path, value
-    return None, None
+    raise ValueError("UNSUPPORTED_STORED_RUN: prepare a new run" if unsupported else "CURRENT_RUN_MISSING: run prepare/collect")
 
 
-def _validate_modern_manifest(project: Path, docs_root: Path, manifest: dict[str, object]) -> list[str]:
-    errors: list[str] = []
-    if manifest.get("schema_version") != int(BIZ_FLOW_SCHEMA_VERSION):
-        errors.append("UNSUPPORTED_PROTOCOL_SCHEMA")
-    if manifest.get("status") not in {"collected", "verified", "accepted"}:
-        errors.append("RUN_NOT_COLLECTED")
-    try:
-        result = scan(project, entry_only=True)
-    except Exception as exc:
-        return [f"SOURCE_SCAN_FAILED: {exc}"]
-    if result.source_fingerprint != manifest.get("source_fingerprint"):
-        errors.append("SOURCE_FINGERPRINT_MISMATCH")
-    expected = {str(task.get("entry_id")) for task in manifest.get("tasks", []) if isinstance(task, dict)}
-    results = manifest.get("results", {})
-    if not isinstance(results, dict) or set(results) != expected:
-        errors.append("RESULT_COVERAGE_MISMATCH")
-    for entry_id in expected:
-        if isinstance(results, dict) and entry_id in results:
-            if manifest.get("result_hashes", {}).get(entry_id) != digest(results[entry_id]):
-                errors.append(f"RESULT_HASH_MISMATCH: {entry_id}")
-            errors.extend(f"{entry_id}: {error}" for error in validate_entry_analysis(results[entry_id], manifest.get("inventories", {}).get(entry_id, {})))
-    mode = manifest.get("mode")
-    if mode == "serial":
-        if manifest.get("degraded") is not True or manifest.get("parallel") is not False or manifest.get("completed_child_agents") != 0:
-            errors.append("SERIAL_EXECUTION_FLAGS_INVALID")
-    elif mode == "native":
-        if manifest.get("degraded") is True:
-            errors.append("NATIVE_EXECUTION_DEGRADED")
-    else:
-        errors.append("EXECUTION_MODE_MISSING")
-    if manifest.get("purpose") == "generate":
-        docs = manifest.get("document_hashes", {})
-        if not isinstance(docs, dict) or not docs:
-            errors.append("DOCUMENT_HASHES_MISSING")
-        for filename, expected_hash in (docs.items() if isinstance(docs, dict) else ()):
-            path = docs_root / str(filename)
-            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash:
-                errors.append(f"DOCUMENT_HASH_MISMATCH: {filename}")
-        mapping = _read_json(docs_root / "biz-flow-modules.json")
-        for module in mapping.get("modules", []) if isinstance(mapping, dict) else ():
-            filename = str(module.get("file", ""))
-            path = docs_root / filename
-            analyses = {entry_id: results[entry_id] for entry_id in module.get("entry_ids", []) if isinstance(results, dict) and entry_id in results}
-            if path.is_file():
-                errors.extend(f"{module.get('name')}: {error}" for error in validate_markdown_structure(path.read_text(encoding="utf-8"), analyses))
-    return sorted(dict.fromkeys(errors))
+def _mapping_signature(mapping):
+    return sorted((m["name"], m["file"], tuple(sorted(m["entry_ids"]))) for m in mapping["modules"])
 
 
-def check_command(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="devflow biz-flow check")
-    _project(parser)
-    parser.add_argument("--module")
-    parser.add_argument("--commit")
-    parser.add_argument("--stage", choices=("entries", "flows"), default="flows")
-    args = parser.parse_args(argv)
-    if args.stage == "entries":
-        return _check_entry_directory(args.project.resolve(), _docs_root(args.project.resolve(), args.docs_root), args.commit)
-    _, modern_manifest = _modern_manifest(args.project.resolve())
-    if modern_manifest is not None:
-        modern_errors = _validate_modern_manifest(args.project.resolve(), _docs_root(args.project.resolve(), args.docs_root), modern_manifest)
-        print(json.dumps({"run_id": modern_manifest.get("run_id"), "status": modern_manifest.get("status"), "errors": modern_errors}, ensure_ascii=False))
-        return 1 if modern_errors else 0
+def _validate_mapping_surface(docs_root, manifest):
+    overview = (docs_root / "业务流程覆盖总览.md").read_text(encoding="utf-8")
+    directives = re.findall(r'<!--\s*devflow:module\s+name="([^"]+)"\s+file="([^"]+)"\s+entries="([^"]*)"\s*-->', overview)
+    signature = sorted((name, file, tuple(sorted(_split_entry_ids(raw)))) for name, file, raw in directives)
+    if signature != _mapping_signature(manifest["mapping"]) or not confirmation_valid(overview):
+        raise ValueError("MAPPING_CHANGED_AFTER_PREPARE")
+    exclusions = re.findall(r'<!--\s*devflow:exclude\s+id="([^"]+)"\s+reason="([^"]+)"\s+evidence="([^"]+)"\s*-->', overview)
+    if sorted(exclusions) != sorted((e["candidate"], e["reason"], e["evidence"][0]) for e in manifest["mapping"]["exclusions"]):
+        raise ValueError("EXCLUSIONS_CHANGED_AFTER_PREPARE")
+
+
+def _canonical(project, manifest):
+    ids = {t["entry_id"] for t in manifest["tasks"]}
+    shallow = scan(project, manifest["source_commit"], entry_only=True)
+    result = scan(project, manifest["source_commit"], entry_ids=ids)
+    if shallow.source_fingerprint != result.source_fingerprint or result.source_fingerprint != manifest["source_fingerprint"]:
+        raise ValueError(f"SOURCE_CHANGED_AFTER_PREPARE: SOURCE_FINGERPRINT_MISMATCH at target={manifest['source_commit']}; check committed exclude policy and .git/info/exclude, then discover/prepare again; checkout edits do not change this target")
+    source_ids = {e.entry_id for e in shallow.entries}
+    if not ids <= source_ids or {e.entry_id for e in result.entries} != ids:
+        raise ValueError("ENTRY_SCOPE_MISMATCH")
+    by_id = {e.entry_id: e for e in shallow.entries}
+    for entry in result.entries:
+        registered = by_id[entry.entry_id]
+        if (entry.handler, entry.source_evidence) != (registered.handler, registered.source_evidence):
+            raise ValueError("ENTRY_REGISTRATION_CHANGED")
+    facts = rebuild_verified(result, manifest["verified_evidence"])
+    if facts != manifest["entry_facts"]:
+        raise ValueError("CANONICAL_FACTS_MISMATCH")
+    if manifest["adapter_version"] != ADAPTER_VERSION:
+        raise ValueError("ADAPTER_VERSION_CHANGED")
+    return result, facts
+
+
+def _validate_manifest(project, docs_root, manifest, *, gates=None):
+    from .documents import _validate_mermaid
+    reports = [{"gate": name, "executed": False, "passed": False, "errors": []}
+               for name in ("input_contract", "entry_reconciliation", "business_copy", "markdown_structure", "mermaid_render")]
+    if gates is not None:
+        gates.extend(reports)
+    def concluded(name, findings):
+        report = next(item for item in reports if item["gate"] == name)
+        report.update(executed=True, passed=not findings, errors=list(findings))
+        return findings
+    errors = validate_schema(BIZ_FLOW_HANDOFF_SCHEMA, manifest)
+    if errors:
+        concluded("input_contract", errors)
+        return errors
     try:
-        # 行为证据已由指纹绑定的执行清单验收；复核注册清单与源码快照即可。
-        result = scan(args.project.resolve(), args.commit, entry_only=True)
-    except Exception as exc:
-        print(f"ERROR: biz-flow check scan failed: {exc}", file=sys.stderr)
-        return 8
-    try:
-        docs_root = _docs_root(args.project.resolve(), args.docs_root)
-    except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    recorded_commit = _recorded_commit(docs_root)
-    manifest_candidates = sorted((state_root() / "biz-flow").glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
-    run_manifest_path = next((path for path in manifest_candidates if path.is_file() and _manifest_matches(path, result.source_fingerprint, args.project.resolve(), docs_root)), None)
-    if run_manifest_path is None:
-        print("biz-flow execution manifest is missing for the current source fingerprint", file=sys.stderr)
-        return 1
-    try:
-        run_manifest = json.loads(run_manifest_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        print(f"biz-flow execution manifest is unreadable: {run_manifest_path}", file=sys.stderr)
-        return 1
-    manifest_errors = validate_run(run_manifest)
-    if manifest_errors:
-        print("biz-flow execution manifest failed: " + "; ".join(manifest_errors), file=sys.stderr)
-        return 1
-    # Re-run the evidence gate against the durable Markdown.  A successful
-    # generation manifest records what was written; check must reject edits
-    # made after that run instead of trusting the old in-memory validation.
-    markdown_errors: list[str] = []
-    for module, spec in run_manifest.get("modules", {}).items():
-        filename = str(spec.get("file", ""))
-        path = docs_root / filename
-        if not path.is_file():
-            markdown_errors.append(f"Markdown overview or module document is missing: {module}")
-            continue
-        expected_hash = run_manifest.get("document_hashes", {}).get(filename)
-        actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-        if expected_hash != actual_hash:
-            markdown_errors.append(f"{module}: Markdown hash differs from execution manifest")
-        analyses = {
-            entry_id: run_manifest.get("entry_analyses", {}).get(entry_id, {})
-            for entry_id in spec.get("entry_ids", [])
-        }
-        markdown_errors.extend(
-            f"{module}: {error}"
-            for error in validate_markdown_structure(path.read_text(encoding="utf-8"), analyses)
-        )
-    if markdown_errors:
-        print("biz-flow Markdown evidence gate failed: " + "; ".join(markdown_errors), file=sys.stderr)
-        return 1
-    if not _version_lock_path(docs_root).is_file() or _version_lock_error(_version_lock_path(docs_root)):
-        print(f"biz-flow version lock is invalid: {_version_lock_path(docs_root)}", file=sys.stderr)
-        return 1
-    forbidden_files = [
-        path.name for path in docs_root.iterdir()
-        if path.is_file()
-        and path.name != _VERSION_LOCK_NAME
-        and path.suffix.lower() != ".md"
-    ]
-    forbidden_dirs = [path.name for path in docs_root.iterdir() if path.is_dir()]
-    if forbidden_dirs:
-        print("biz-flow directory contains forbidden subdirectories: " + ", ".join(sorted(forbidden_dirs)), file=sys.stderr)
-        return 1
-    if forbidden_files:
-        print("biz-flow directory contains non-Markdown artifacts: " + ", ".join(sorted(forbidden_files)), file=sys.stderr)
-        return 1
-    # Durable projects contain Markdown and the single JSON version file.
-    # Validate that surface directly; JSON reports are intentionally not part
-    # of the runtime contract anymore.
-    durable_json = [
-        path for path in docs_root.glob("*.json")
-        if path.is_file() and path.name != _VERSION_LOCK_NAME
-    ]
-    if durable_json:
-        print("biz-flow directory contains forbidden JSON artifacts: " + ", ".join(path.name for path in durable_json), file=sys.stderr)
-        return 1
-    if not durable_json:
-        overview = docs_root / "业务流程覆盖总览.md"
-        documents = [path for path in docs_root.glob("*.md") if path.name != overview.name]
-        if not overview.is_file() or not documents:
-            print("biz-flow Markdown overview or module document is missing", file=sys.stderr)
-            return 1
-        failures: list[str] = []
-        overview_text = overview.read_text(encoding="utf-8") if overview.is_file() else ""
-        for heading in ("## 覆盖统计", "## 模块列表", "## 入口明细", "## 验收结果"):
-            if heading not in overview_text:
-                failures.append(f"overview: missing {heading}")
-        if "<!-- devflow:module-confirmed -->" not in overview_text and "模块划分状态：已确认" not in overview_text:
-            failures.append("overview: module partition is not confirmed")
-        module_directives = re.findall(
-            r'<!--\s*devflow:module\s+name="([^"]+)"\s+file="([^"]+)"\s+entries="([^"]*)"\s*-->',
-            overview_text,
-        )
-        exclusion_records = {
-            entry_id: (reason, evidence)
-            for entry_id, reason, evidence in re.findall(
-                r'<!--\s*devflow:exclude\s+id="([^"]+)"\s+reason="([^"]+)"\s+evidence="([^"]+)"\s*-->',
-                overview_text,
-            )
-        }
-        excluded_ids = set(exclusion_records)
-        assigned_ids = [entry_id for _, _, raw in module_directives for entry_id in _split_entry_ids(raw)]
-        if len(assigned_ids) != len(set(assigned_ids)):
-            failures.append("overview: an entry is assigned to multiple modules")
-        expected_ids = {entry.entry_id for entry in result.entries} - excluded_ids
-        expected_all_ids = {entry.entry_id for entry in result.entries}
-        if set(assigned_ids) != expected_ids:
-            failures.append("overview: module directives do not cover exactly the discovered entries")
-        # The same excluded ID is intentionally shown in both the suggested
-        # exclusion table and the complete readable list.  Reconcile against
-        # the dedicated entry-details table so that presentation duplication
-        # does not look like duplicate discovery evidence.
-        entry_details = re.search(
-            r"(?ms)^##\s+入口明细\s*$\n(.*?)(?=^##\s+|\Z)",
-            overview_text,
-        )
-        table_ids = re.findall(
-            r"^\|\s*`([^`]+)`\s*\|",
-            entry_details.group(1) if entry_details else "",
-            flags=re.M,
-        )
-        if set(table_ids) != expected_all_ids or len(table_ids) != len(set(table_ids)):
-            failures.append("overview: entry table does not cover each discovered entry exactly once")
-        complete_details = re.search(
-            r"(?ms)^##\s+完整入口清单\s*$\n(.*?)(?=^##\s+|\Z)",
-            overview_text,
-        )
-        readable_ids = []
-        if complete_details:
-            for line in complete_details.group(1).splitlines():
-                cells = [cell.strip().strip("`") for cell in line.strip().strip("|").split("|")]
-                if len(cells) >= 3 and cells[2] in expected_all_ids:
-                    readable_ids.append(cells[2])
-        if set(readable_ids) != expected_all_ids or len(readable_ids) != len(set(readable_ids)):
-            failures.append("overview: complete readable entry list does not cover each discovered entry exactly once")
-        readable_rows: dict[str, list[str]] = {}
-        if complete_details:
-            for line in complete_details.group(1).splitlines():
-                if not line.startswith("|") or "`" not in line:
+        require_version_file(project, "biz-flow")
+        _validate_version_input(docs_root, manifest)
+        if manifest["project_root"] != str(project) or manifest["docs_root"] != str(docs_root):
+            raise ValueError("PROJECT_SCOPE_MISMATCH")
+        if manifest["status"] not in {"collected", "verified", "accepted"}:
+            raise ValueError("RUN_NOT_COLLECTED")
+        errors.extend(validate_package(manifest))
+        submitted = {key: manifest[key] for key in ("protocol_version", "run_id", "source_fingerprint",
+            "mapping_hash", "package_hash", "mode", "parallel", "completed_child_agents", "serial_approval", "execution", "results")}
+        errors.extend(validate_execution(manifest, submitted))
+        if protected_hashes(project, docs_root) != manifest["protected_hashes"]:
+            raise ValueError("READ_ONLY_SCOPE_CHANGED")
+        _validate_mapping_surface(docs_root, manifest)
+        result, facts = _canonical(project, manifest)
+        inventory_errors = validate_inventory(scan(project, manifest["source_commit"], entry_only=True),
+            (docs_root / "业务流程覆盖总览.md").read_text(encoding="utf-8"), manifest["mapping"])
+        errors.extend(inventory_errors)
+        concluded("input_contract", list(errors))
+        concluded("entry_reconciliation", inventory_errors)
+        analyses = {}
+        analysis_errors = []
+        for entry_id, value in manifest["results"].items():
+            if value["kind"] != "analysis":
+                raise ValueError("FINAL_ANALYSIS_REQUIRED")
+            analyses[entry_id] = value["analysis"]
+            analysis_errors.extend(validate_entry_analysis(value["analysis"], facts[entry_id]))
+            if digest(value) != manifest["result_hashes"][entry_id]:
+                analysis_errors.append("RESULT_HASH_MISMATCH")
+        errors.extend(concluded("business_copy", analysis_errors))
+        document_errors, diagram_errors, diagrams = [], [], []
+        if manifest["purpose"] == "generate":
+            overview_path = docs_root / "业务流程覆盖总览.md"
+            if hashlib.sha256(overview_path.read_bytes()).hexdigest() != manifest["document_hashes"].get(overview_path.name):
+                document_errors.append("DOCUMENT_HASH_MISMATCH: 业务流程覆盖总览.md")
+            for module in manifest["mapping"]["modules"]:
+                ids = set(module["entry_ids"]) & set(facts)
+                if not ids:
                     continue
-                cells = [cell.replace("\x00", "|").strip() for cell in line.strip().strip("|").replace("\\|", "\x00").split("|")]
-                if len(cells) >= 6 and cells[2].strip("`") in expected_all_ids:
-                    readable_rows[cells[2].strip("`")] = cells[:6]
-        for entry in result.entries:
-            row = readable_rows.get(entry.entry_id)
-            if row is None:
-                continue
-            if not row[0] or not row[1] or not row[3] or row[3] == "``":
-                failures.append(f"overview: entry {entry.entry_id} is missing readable name, trigger, or source evidence")
-            if entry.entry_id in excluded_ids:
-                if row[4] != "excluded" or not row[5] or not exclusion_records[entry.entry_id][0] or not exclusion_records[entry.entry_id][1]:
-                    failures.append(f"overview: excluded entry {entry.entry_id} is missing status or exclusion evidence")
-            elif row[4] == "excluded":
-                failures.append(f"overview: business entry {entry.entry_id} is marked excluded without an exclusion directive")
-            elif row[0] == "待确认":
-                failures.append(f"overview: business entry {entry.entry_id} still has an unresolved business name")
-        directive_files = {filename for _, filename, _ in module_directives}
-        actual_files = {path.name for path in documents}
-        if directive_files != actual_files:
-            failures.append("overview: module file list does not match Markdown files")
-        for name, filename, _ in module_directives:
-            if not _is_chinese_module_filename(filename):
-                failures.append(f"overview: module {name} file is not a Chinese NN filename: {filename}")
-            if not re.search(rf"(?m)^-\s+{re.escape(name)}:.*file\s+`{re.escape(filename)}`", overview_text):
-                failures.append(f"overview: Module List file mismatch for {name}")
-        for path in documents:
-            text = path.read_text(encoding="utf-8")
-            if re.search(r"(?im)^>.*git.*`[0-9a-f]{7,64}`", text):
-                failures.append(f"{path.name}: Git version must be recorded only in {_VERSION_LOCK_NAME}")
-            diagrams = re.findall(r"```mermaid\s*\n(.*?)\n```", text, flags=re.S)
-            if not diagrams:
-                failures.append(f"{path.name}: missing Mermaid sequence diagram")
-            for diagram in diagrams:
-                failures.extend(f"{path.name}: {error}" for error in _validate_mermaid(diagram))
-            entry_markers = list(re.finditer(r"<!--\s*biz-flow-entry:\s*([^>]+?)\s*-->", text))
-            for marker_index, marker in enumerate(entry_markers):
-                entry_id = marker.group(1).strip()
-                section_end = entry_markers[marker_index + 1].start() if marker_index + 1 < len(entry_markers) else len(text)
-                section = text[marker.start():section_end]
-                if "title_unresolved" in section[:220]:
-                    failures.append(f"{path.name}:{entry_id}: title_unresolved requires human title")
-                paragraphs = [line[2:].strip() for line in section.splitlines() if line.startswith("- ")]
-                if any(len(value) > 50 for value in paragraphs):
-                    failures.append(f"{path.name}:{entry_id}: business description point exceeds 50 characters")
-                if any(marker in section for marker in ("pending business steps", "confirmed business steps", "执行已确认的业务步骤", "待补充业务步骤")):
-                    failures.append(f"{path.name}:{entry_id}: placeholder business text is forbidden")
-        mermaid_renderer = shutil.which("mmdc.cmd") or shutil.which("mmdc")
-        payload = {
-            "version_match": run_manifest.get("report", {}).get("git_commit", recorded_commit) == result.git.target,
-            "baseline_match": recorded_commit == result.git.target,
-            "markdown_documents": len(documents),
-            "mermaid_errors": failures,
-            "mermaid_parser": "mmdc" if mermaid_renderer else "fallback-structural",
-            "mermaid_parser_warning": "mmdc is not installed; only built-in structural validation was applied"
-            if not mermaid_renderer else "",
-        }
-        print(json.dumps(payload, ensure_ascii=False))
-        return 0 if payload["version_match"] and not failures else 1
-def verify_command(argv: list[str]) -> int:
-    """Repeat the durable gate and prove stable Markdown output."""
-    parser = argparse.ArgumentParser(prog="devflow biz-flow verify")
-    _project(parser)
-    args = parser.parse_args(argv)
-    project = args.project.resolve()
-    docs_root = _docs_root(project, args.docs_root)
-    modern = sorted((state_root() / "biz-flow").glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
-    for candidate in modern:
-        try:
-            current = _read_json(candidate)
-        except Exception:
-            continue
-        if current.get("protocol_version") != "3.0" or current.get("project_root") != str(project) or current.get("status") not in {"collected", "verified"}:
-            continue
-        errors = _validate_modern_manifest(project, docs_root, current)
-        if errors:
-            print("ERROR: modern biz-flow verification failed: " + "; ".join(errors), file=sys.stderr)
-            return 1
-        stable_payload = {"results": current.get("results", {}), "documents": current.get("document_hashes", {})}
-        stable_digest = digest(stable_payload)
-        if current.get("verify_digest") == stable_digest:
-            current["verification_runs"] = int(current.get("verification_runs", 0)) + 1
+                path = docs_root / module["file"]
+                if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != manifest["document_hashes"].get(path.name):
+                    document_errors.append(f"DOCUMENT_HASH_MISMATCH: {module['file']}; restore the collected document or prepare a new run")
+                if path.is_file():
+                    markdown = path.read_text(encoding="utf-8")
+                    document_errors.extend(validate_markdown_structure(markdown,
+                        {i: analyses[i] for i in ids}, {i: facts[i] for i in ids}))
+                    graphs = re.findall(r"```mermaid\s*\n(.*?)```", markdown, re.S)
+                    if len(graphs) != len(ids):
+                        document_errors.append("MERMAID_DIAGRAM_COUNT_MISMATCH: " + module["file"])
+                    for graph in graphs:
+                        document_errors.extend(_validate_mermaid(graph, render=False))
+                    diagrams.extend(graphs)
+            errors.extend(concluded("markdown_structure", document_errors))
+            if shutil.which("mmdc.cmd") or shutil.which("mmdc"):
+                if not diagrams:
+                    diagram_errors.append("MERMAID_DIAGRAM_MISSING")
+                for graph in diagrams:
+                    diagram_errors.extend(_validate_mermaid(graph))
+                errors.extend(concluded("mermaid_render", diagram_errors))
+            else:
+                reports[-1]["warning"] = "renderer unavailable; structural validation only"
+                print("WARNING: gate=mermaid_render executed=false; only structural validation", file=sys.stderr)
         else:
-            current["verify_digest"] = stable_digest
-            current["verification_runs"] = 1
-        current["status"] = "verified"
-        write_json(candidate, current)
-        print(json.dumps({"run_id": current.get("run_id"), "status": "verified",
-                          "verification_runs": current["verification_runs"],
-                          "stable": current["verification_runs"] >= 2}, ensure_ascii=False))
-        return 0
-
-    def snapshot() -> dict[str, str]:
-        return {
-            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-            for path in docs_root.glob("*.md") if path.is_file()
-        }
-
-    before = snapshot()
-    first = check_command(argv)
-    middle = snapshot()
-    second = check_command(argv)
-    after = snapshot()
-    if first or second:
-        print("ERROR: repeated biz-flow check did not pass", file=sys.stderr)
-        return 1
-    if before != middle or middle != after:
-        print("ERROR: repeated biz-flow check changed durable Markdown", file=sys.stderr)
-        return 1
-    if any(path.name.endswith(".tmp") for path in docs_root.iterdir()):
-        print("ERROR: temporary generation artifacts remain in docs/biz-flow", file=sys.stderr)
-        return 1
-    result = scan(project, entry_only=True)
-    candidates = sorted((state_root() / "biz-flow").glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
-    manifest_path = next((path for path in candidates if _manifest_matches(path, result.source_fingerprint, project, docs_root)), None)
-    if manifest_path is None:
-        print("ERROR: current execution manifest is missing", file=sys.stderr)
-        return 1
-    manifest = _read_json(manifest_path)
-    report = manifest["report"]
-    report["verification_runs"] = int(report.get("verification_runs", 0)) + 1
-    write_json(manifest_path, manifest)
-    advanced = report["verification_runs"] >= 2
-    if advanced:
-        _write_recorded_commit(docs_root, result.git.target)
-    print(json.dumps({"stable": True, "markdown_documents": len(after), "checks": 2,
-                      "verification_runs": report["verification_runs"], "baseline_advanced": advanced}, ensure_ascii=False))
-    return 0
+            reports[-2]["warning"] = "audit scope does not generate Markdown"
+            reports[-1]["warning"] = "audit scope does not generate diagrams"
+    except (OSError, ValueError, KeyError, RuntimeError, SubprocessError, DevflowError) as exc:
+        errors.append(str(exc))
+        if not reports[0]["executed"]:
+            concluded("input_contract", [str(exc)])
+    for report in reports:
+        if not report["executed"]:
+            report.setdefault("warning", "prerequisite failed; gate not executed")
+    return sorted(set(errors))
 
 
-def _unsupported_legacy_command(name: str, argv: list[str]) -> int:
-    """The 3.x protocol deliberately has no compatibility execution path."""
-    if any(value == "--allow-degraded" for value in argv) or name in {"generate", "update", "review"}:
-        print(f"ERROR: biz-flow {name} was removed; use prepare/collect/accept", file=sys.stderr)
-        return 8
-    print(f"ERROR: unsupported biz-flow command: {name}", file=sys.stderr)
-    return 8
+def _gate_report(errors: list[str]) -> list[dict[str, object]]:
+    return [{"gate": "entry_reconciliation", "executed": True,
+             "passed": not errors, "errors": sorted(set(errors))}]
 
 
-def _new_run_path(run_id: str) -> Path:
-    return state_root() / "biz-flow" / f"{run_id}.json"
+def _failed_input_report(error):
+    return [{"gate": name, "executed": name == "input_contract", "passed": False,
+             "errors": [str(error)] if name == "input_contract" else [],
+             "warning": "input contract failed; dependent gate not executed"}
+            for name in ("input_contract", "entry_reconciliation", "business_copy", "markdown_structure", "mermaid_render")]
 
 
-def prepare_command(argv: list[str]) -> int:
+def _version_hash(docs_root):
+    path = docs_root / _VERSION_LOCK_NAME
+    if path.is_symlink() or not path.resolve().is_relative_to(docs_root.resolve()):
+        raise ValueError("VERSION_PATH_UNSAFE")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _validate_version_input(docs_root, manifest):
+    expected = manifest["accepted_version_hash"] if manifest["status"] == "accepted" else manifest["version_input_hash"]
+    if _version_hash(docs_root) != expected:
+        raise ValueError("VERSION_CHANGED_AFTER_PREPARE")
+
+
+def _freeze_run(project, docs_root, result, mapping, *, purpose="generate", module=None, hints=(), supersedes=None):
+    run_id = uuid.uuid4().hex
+    facts = rebuild_verified(result, hints)
+    for item in facts.values():
+        errors = validate_schema(BIZ_FLOW_ENTRY_FACTS_SCHEMA, item)
+        if errors:
+            raise ValueError("ENTRY_FACTS_INVALID: " + "; ".join(errors))
+    snapshot, snapshot_hash = snapshot_sources(project, result.git.target, result.files, run_id)
+    owners = {i: m["name"] for m in mapping["modules"] for i in m["entry_ids"]}
+    by_id = {e.entry_id: e for e in result.entries}
+    tasks = []
+    for i, entry_id in enumerate(sorted(facts)):
+        destination = state_root() / "biz-flow" / run_id / "results" / f"{i}.json"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        task = {"task_id": f"entry:{entry_id}", "entry_id": entry_id, "module_id": owners[entry_id],
+            "registration_evidence": by_id[entry_id].source_evidence,
+            "reachable_analysis": ["calls", "branches", "persistence_actions", "effects", "outcomes", "flow"],
+            "unresolved_questions": facts[entry_id]["gaps"], "source_commit": result.git.target,
+            "source_snapshot": str(snapshot), "snapshot_hash": snapshot_hash, "input_hash": digest(facts[entry_id]),
+            "result_path": str(destination), "permissions": {"read_only_source": True,
+            "write_scope": str(destination), "enforcement": "coordinator_scope_check"},
+            "result_schema": "biz-flow.entry-result", "status": "pending"}
+        task["task_hash"] = digest(task)
+        tasks.append(task)
+    if not tasks:
+        raise ValueError("TASK_COVERAGE_INVALID")
+    mapping_hash = digest(mapping)
+    source_status = {"target_commit": result.git.target, "head_commit": result.git.head,
+        "workspace_dirty": result.git.dirty, "includes_uncommitted_changes": False}
+    package = {"protocol_version": PROTOCOL_VERSION, "domain": "biz-flow", "run_id": run_id,
+        "project_root": str(project), "source_commit": result.git.target,
+        "source_status": source_status,
+        "source_fingerprint": result.source_fingerprint, "mapping_hash": mapping_hash,
+        "adapter_version": ADAPTER_VERSION, "verified_evidence": list(hints),
+        "tasks": tasks, "entry_facts": facts, "result_schema": "biz-flow.entry-result",
+        "submission_schema": "biz-flow.submission", "version_input_hash": _version_hash(docs_root)}
+    manifest = {"protocol_version": PROTOCOL_VERSION, "schema_version": int(BIZ_FLOW_SCHEMA_VERSION),
+        "run_id": run_id, "project_root": str(project), "docs_root": str(docs_root),
+        "source_commit": result.git.target, "source_fingerprint": result.source_fingerprint,
+        "source_status": source_status,
+        "mapping_hash": mapping_hash, "mapping": mapping, "package_hash": digest(package),
+        "adapter_version": ADAPTER_VERSION, "verified_evidence": list(hints), "supersedes_run_id": supersedes,
+        "protected_hashes": protected_hashes(project, docs_root),
+        "version_input_hash": package["version_input_hash"],
+        "document_inputs": {name: hashlib.sha256(content).hexdigest() for name, content in _markdown_snapshot(docs_root).items()},
+        "purpose": purpose, "module_filter": module, "mode": None, "parallel": False, "degraded": False,
+        "status": "prepared", "host_capability": "unknown", "tasks": tasks, "completed_child_agents": 0,
+        "entry_facts": facts, "comparison": _source_comparison(project, result, facts, module=module),
+        "serial_approval": None, "execution": {"receipts": [], "active_observations": []},
+        "results": {}, "verification_runs": 0, "errors": []}
+    errors = validate_schema(BIZ_FLOW_HANDOFF_SCHEMA, manifest)
+    if errors:
+        raise ValueError("HANDOFF_INVALID: " + "; ".join(errors))
+    path = run_path(run_id)
+    package_path = path.with_suffix(".tasks.json")
+    write_json(package_path, package)
+    write_json(path, manifest)
+    return path, manifest
+
+
+def _prepared_output(path, manifest):
+    reusable = set(manifest["results"])
+    for rejected in manifest.get("rejected_submissions", []):
+        for entry_id, response in rejected.get("results", {}).items():
+            if entry_id in manifest["entry_facts"] and response.get("kind") == "analysis" and not validate_entry_analysis(response["analysis"], manifest["entry_facts"][entry_id]):
+                if rejected.get("mode") == "serial" or any(r.get("status") == "success" and r.get("result_hash") == digest(response)
+                        and r.get("task_id") == "entry:" + entry_id for r in rejected.get("execution", {}).get("receipts", [])):
+                    reusable.add(entry_id)
+    return {"run_id": manifest["run_id"], "status": manifest["status"], "manifest": str(path),
+        "task_package": str(path.with_suffix(".tasks.json")), "package_hash": manifest["package_hash"],
+        "host_capability": "unknown", "supersedes_run_id": manifest["supersedes_run_id"],
+        "source_status": manifest["source_status"], "comparison": manifest["comparison"],
+        "behavior_gaps": sum(len(f["gaps"]) for f in manifest["entry_facts"].values()),
+        "reusable_entry_ids": sorted(reusable), "pending_entry_ids": sorted(set(manifest["entry_facts"]) - reusable)}
+
+
+def _source_comparison(project, result, facts, *, module=None):
+    baseline = require_version_file(project, "biz-flow")["source"]["git_commit"]
+    current = set(facts)
+    if baseline is None:
+        return {"baseline_commit": None, "available": False, "reason": "no accepted baseline",
+            "added_entry_ids": sorted(current), "changed_entry_ids": [], "deleted_entry_ids": [],
+            "reuse": "none; every selected task requires new execution"}
+    try:
+        old = None
+        for path in sorted((state_root() / "biz-flow").glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            if not re.fullmatch(r"[0-9a-f]{32}\.json", path.name):
+                continue
+            value = _read_json(path)
+            if value.get("protocol_version") != PROTOCOL_VERSION or value.get("schema_version") != int(BIZ_FLOW_SCHEMA_VERSION):
+                continue
+            if value.get("project_root") != str(project) or value.get("status") != "accepted" or value.get("source_commit") != baseline:
+                continue
+            errors = validate_schema(BIZ_FLOW_HANDOFF_SCHEMA, value)
+            if errors or value["adapter_version"] != ADAPTER_VERSION:
+                raise ValueError("accepted baseline evidence is invalid or uses a different adapter")
+            prior_ids = {i for m in value["mapping"]["modules"] if module is None or m["name"] == module for i in m["entry_ids"]}
+            if not prior_ids or not prior_ids <= set(value["entry_facts"]):
+                continue
+            previous = scan(project, baseline, entry_ids=prior_ids)
+            old = rebuild_verified(previous, [r for r in value["verified_evidence"] if r["entry_id"] in prior_ids])
+            break
+        if old is None:
+            raise ValueError("accepted baseline scope and verified evidence unavailable")
+        def semantic(value):
+            value = {k: v for k,v in value.items() if k not in {"source_commit", "source_fingerprint"}}
+            value["sources"] = [{k:v for k,v in s.items() if k not in {"line", "end_line"}} for s in value["sources"]]
+            return digest(value)
+        return {"baseline_commit": baseline, "available": True, "reason": "source-rebuilt comparison; no receipt reuse",
+            "added_entry_ids": sorted(current - set(old)), "changed_entry_ids": sorted(i for i in current & set(old) if semantic(facts[i]) != semantic(old[i])),
+            "deleted_entry_ids": sorted(set(old) - current), "reuse": "none; every selected task requires new execution"}
+    except (OSError, ValueError, KeyError, RuntimeError, SubprocessError) as exc:
+        return {"baseline_commit": baseline, "available": False, "reason": redact(str(exc)),
+            "added_entry_ids": [], "changed_entry_ids": sorted(current), "deleted_entry_ids": [],
+            "reuse": "none; full selected scope requires new execution"}
+
+
+def _delivery_summary(manifest):
+    accepted = set()
+    docs = Path(manifest["docs_root"])
+    for path in (state_root() / "biz-flow").glob("*.json"):
+        if not re.fullmatch(r"[0-9a-f]{32}\.json", path.name):
+            continue
+        other = _read_json(path)
+        if (other.get("status") != "accepted" or other.get("project_root") != manifest["project_root"]
+                or other.get("source_commit") != manifest["source_commit"] or other.get("mapping_hash") != manifest["mapping_hash"]):
+            continue
+        for module in manifest["mapping"]["modules"]:
+            target = docs / module["file"]
+            if (set(module["entry_ids"]) <= set(other.get("results", {})) and target.is_file()
+                    and other.get("document_hashes", {}).get(target.name) == hashlib.sha256(target.read_bytes()).hexdigest()):
+                accepted.add(module["name"])
+    required = {module["name"] for module in manifest["mapping"]["modules"]}
+    blocked = [{"module": module["name"], "reason": "not accepted for this target and mapping",
+                "findings": [gap for i in module["entry_ids"] for gap in manifest["entry_facts"].get(i, {}).get("gaps", [])]}
+               for module in manifest["mapping"]["modules"] if module["name"] not in accepted]
+    return {"overall_status": "success" if accepted == required else "partial",
+            "accepted_modules": sorted(accepted), "blocked_modules": blocked}
+
+
+def prepare_command(argv):
+    print("progress stage=prepare", file=sys.stderr)
+    return _locked(argv, lambda: _prepare(argv))
+
+
+def _prepare(argv):
     parser = argparse.ArgumentParser(prog="devflow biz-flow prepare")
     _project(parser)
     parser.add_argument("--module")
+    parser.add_argument("--commit")
     parser.add_argument("--purpose", choices=("generate", "audit"), default="generate")
     parser.add_argument("--confirm", action="store_true")
+    parser.add_argument("--resume", metavar="RUN_ID")
     args = parser.parse_args(argv)
-    project, docs_root = args.project.resolve(), _docs_root(args.project.resolve(), args.docs_root)
-    if os.environ.get("DEVFLOW_AGENT_EXECUTOR", "").strip():
-        print("ERROR: DEVFLOW_AGENT_EXECUTOR was removed from biz-flow", file=sys.stderr)
-        return 8
-    if not args.confirm:
-        print("ERROR: prepare requires explicit classification confirmation", file=sys.stderr)
-        return 8
+    project = args.project.resolve()
+    docs_root = _docs_root(project, args.docs_root)
     try:
-        result = scan(project, entry_only=True)
+        if args.resume:
+            path = run_path(args.resume)
+            manifest = _read_manifest(path)
+            if manifest.get("project_root") != str(project) or manifest.get("docs_root") != str(docs_root):
+                raise ValueError("PROJECT_SCOPE_MISMATCH")
+            if args.module and args.module != manifest["module_filter"] or args.commit and args.commit != manifest["source_commit"]:
+                raise ValueError("RESUME_SCOPE_MISMATCH: reuse the prepared target and module")
+            if manifest["status"] not in {"prepared", "collected", "verified"}:
+                raise ValueError("RUN_NOT_RESUMABLE: prepare a new run")
+            errors = validate_package(manifest)
+            if errors:
+                raise ValueError("; ".join(errors))
+            _validate_mapping_surface(docs_root, manifest)
+            _validate_version_input(docs_root, manifest)
+            print(json.dumps(_prepared_output(path, manifest), ensure_ascii=False))
+            return 0
+        shallow = scan(project, args.commit, entry_only=True)
+        if shallow.unresolved and not args.module:
+            raise ValueError("ENTRY_CLASSIFICATION_UNRESOLVED: " + "; ".join(shallow.unresolved))
+        if not _overview_source_matches(docs_root, shallow):
+            raise ValueError("ENTRY_DIRECTORY_STALE: rerun discover")
+        if not args.confirm and not _overview_confirmed(docs_root):
+            raise ValueError("CLASSIFICATION_CONFIRMATION_REQUIRED: mapping or snapshot confirmation is missing/stale; review the overview and rerun prepare --confirm once")
         mapping_path = docs_root / "biz-flow-modules.json"
-        if not mapping_path.is_file():
-            write_discovery(result, docs_root)
-        if args.confirm:
-            _confirm_overview(docs_root)
-            mapping_errors = _apply_overview_mapping(docs_root, mapping_path, result)
-            if mapping_errors:
-                raise ValueError("; ".join(mapping_errors))
+        write_discovery(shallow, docs_root)
+        _confirm_overview(docs_root)
+        errors = _apply_overview_mapping(docs_root, mapping_path, shallow)
+        if errors:
+            raise ValueError("; ".join(errors))
         mapping = _read_json(mapping_path)
-        if not mapping or mapping.get("confirmed") is not True:
-            raise ValueError("module classification is not confirmed")
-        entries = [entry for module in mapping.get("modules", [])
-                   if not args.module or module.get("name") == args.module
-                   for entry in module.get("entry_ids", [])]
-        if args.module and not entries:
-            raise ValueError(f"business module does not exist: {args.module}")
-        run_id = uuid.uuid4().hex
-        mapping_hash = hashlib.sha256(mapping_path.read_bytes()).hexdigest()
-        by_id = {entry.entry_id: entry for entry in result.entries}
-        inventories = redact(collect_evidence(result))
-        tasks = []
-        for entry_id in entries:
-            entry = by_id.get(entry_id)
-            if entry is None:
-                raise ValueError(f"mapping references unknown entry: {entry_id}")
-            tasks.append({"task_id": f"entry:{entry_id}", "entry_id": entry_id,
-                          "module_id": next((m.get("name") for m in mapping.get("modules", []) if entry_id in m.get("entry_ids", [])), None),
-                          "registration_evidence": list(entry.source_evidence),
-                          "reachable_analysis": ["calls", "branches", "persistence", "external_calls", "async", "outcomes"],
-                          "unresolved_questions": [], "permissions": {"read_only_source": True},
-                          "result_schema": "biz-flow.entry-analysis", "status": "pending"})
-        manifest = {"protocol_version": "3.0", "schema_version": int(BIZ_FLOW_SCHEMA_VERSION),
-                    "run_id": run_id, "project_root": str(project), "docs_root": str(docs_root),
-                    "source_fingerprint": result.source_fingerprint, "mapping_hash": mapping_hash,
-                    "purpose": args.purpose, "module_filter": args.module, "mode": None, "parallel": False, "degraded": False,
-                    "status": "prepared", "host_capability": "unknown", "tasks": tasks, "completed_child_agents": 0,
-                    "inventories": {entry_id: inventories[entry_id] for entry_id in entries if entry_id in inventories},
-                    "serial_authorization": None, "execution": {"native_attempts": [], "evidence": []},
-                    "results": {}, "verification_runs": 0, "errors": []}
-        schema_errors = validate_schema(BIZ_FLOW_HANDOFF_SCHEMA, manifest)
-        if schema_errors:
-            raise ValueError("HANDOFF_SCHEMA_INVALID: " + "; ".join(schema_errors))
-        path = _new_run_path(run_id)
-        write_json(path, manifest)
-        package = {"protocol_version": "3.0", "run_id": run_id, "project_root": str(project),
-                   "source_fingerprint": result.source_fingerprint, "mapping_hash": mapping_hash,
-                   "tasks": tasks, "inventories": {entry_id: inventories[entry_id] for entry_id in entries if entry_id in inventories},
-                   "result_schema": "biz-flow.entry-analysis", "permissions": {"read_only_source": True}}
-        package_path = state_root() / "biz-flow" / f"{run_id}.tasks.json"
-        write_json(package_path, package)
-        print(json.dumps({"run_id": run_id, "status": manifest["status"],
-                          "task_package": str(package_path), "reason": "native host capability must be selected by the session"}, ensure_ascii=False))
+        ids = {i for m in mapping["modules"] if not args.module or m["name"] == args.module for i in m["entry_ids"]}
+        if args.module and not ids:
+            raise ValueError(f"MODULE_NOT_FOUND: {args.module}; choose a module name from the overview")
+        selected_entries = [entry for entry in shallow.entries if entry.entry_id in ids]
+        selected_errors = [finding for finding in shallow.unresolved if any(
+            entry.entry_id in finding or finding.startswith(f"{entry.file}:{entry.line}:") for entry in selected_entries)]
+        if selected_errors:
+            raise ValueError("ENTRY_CLASSIFICATION_UNRESOLVED: " + "; ".join(selected_errors))
+        result = scan(project, shallow.git.target, entry_ids=ids)
+        if result.source_fingerprint != shallow.source_fingerprint or {e.entry_id for e in result.entries} != ids:
+            raise ValueError("TWO_STAGE_SCOPE_MISMATCH")
+        path, manifest = _freeze_run(project, docs_root, result, mapping, purpose=args.purpose, module=args.module)
+        print(json.dumps(_prepared_output(path, manifest), ensure_ascii=False))
         return 0
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, KeyError, RuntimeError, SubprocessError) as exc:
         print(f"ERROR: prepare failed: {exc}", file=sys.stderr)
         return 8
 
 
-def collect_command(argv: list[str]) -> int:
+def _verify_requests(manifest, submitted, result):
+    """Only registered, source-rebuildable hints can alter the next run."""
+    tasks = {t["entry_id"]: t for t in manifest["tasks"]}
+    verified = list(manifest["verified_evidence"])
+    for entry_id, response in submitted["results"].items():
+        facts = manifest["entry_facts"][entry_id]
+        if response["kind"] == "analysis":
+            errors = validate_entry_analysis(response["analysis"], facts)
+            if errors:
+                raise ValueError("ENTRY_RESULT_INVALID: " + "; ".join(errors))
+            continue
+        for request in response["evidence_requests"]:
+            errors = validate_evidence_request(request, manifest, tasks[entry_id], facts)
+            if errors:
+                raise ValueError("EVIDENCE_REQUEST_INVALID: " + "; ".join(errors))
+            verified.append(request)
+    rebuilt = rebuild_verified(result, verified)
+    if rebuilt == manifest["entry_facts"]:
+        raise ValueError("EVIDENCE_REQUEST_NO_PROGRESS")
+    return verified
+
+
+def collect_command(argv):
+    print("progress stage=collect", file=sys.stderr)
+    return _locked(argv, lambda: _collect(argv))
+
+
+def _collect(argv):
     parser = argparse.ArgumentParser(prog="devflow biz-flow collect")
     _project(parser)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--results", type=Path, required=True)
     args = parser.parse_args(argv)
-    path = _new_run_path(args.run_id)
+    project, path, submitted = args.project.resolve(), None, None
     try:
-        manifest = _read_json(path)
-        if manifest.get("status") not in {"prepared", "awaiting_serial_choice", "collected"}:
+        path = run_path(args.run_id)
+        manifest = _read_manifest(path)
+        if manifest.get("protocol_version") != PROTOCOL_VERSION or manifest.get("schema_version") != int(BIZ_FLOW_SCHEMA_VERSION):
+            raise ValueError("UNSUPPORTED_PROTOCOL_SCHEMA")
+        manifest_errors = validate_schema(BIZ_FLOW_HANDOFF_SCHEMA, manifest)
+        if manifest_errors:
+            raise ValueError("HANDOFF_INVALID: " + "; ".join(manifest_errors))
+        if manifest["status"] not in {"prepared", "collected", "verified", "accepted"}:
             raise ValueError("RUN_NOT_COLLECTABLE")
+        docs_root = _docs_root(project, args.docs_root)
+        if manifest["project_root"] != str(project) or manifest["docs_root"] != str(docs_root):
+            raise ValueError("PROJECT_SCOPE_MISMATCH")
         submitted = json.loads(args.results.read_text(encoding="utf-8"))
-        if not isinstance(submitted, dict) or submitted.get("run_id") != args.run_id:
-            raise ValueError("RESULT_RUN_MISMATCH")
-        if submitted.get("source_fingerprint") != manifest.get("source_fingerprint") or submitted.get("mapping_hash") != manifest.get("mapping_hash"):
-            raise ValueError("STALE_FINGERPRINT")
-        current = scan(args.project.resolve(), entry_only=True)
-        if current.source_fingerprint != manifest.get("source_fingerprint"):
-            raise ValueError("SOURCE_CHANGED_AFTER_PREPARE")
-        mode = submitted.get("mode")
-        if mode not in {"native", "serial"}:
-            raise ValueError("INVALID_MODE")
-        if mode == "serial" and not submitted.get("serial_authorization"):
-            raise ValueError("SERIAL_AUTHORIZATION_REQUIRED")
-        submitted_results = submitted.get("results")
-        if not isinstance(submitted_results, dict):
-            raise ValueError("RESULTS_MISSING")
-        expected_ids = {str(task.get("entry_id")) for task in manifest.get("tasks", [])}
-        if set(submitted_results) != expected_ids:
-            missing = sorted(expected_ids - set(submitted_results))
-            extra = sorted(set(submitted_results) - expected_ids)
-            raise ValueError(f"RESULT_COVERAGE_MISMATCH missing={missing} extra={extra}")
-        inventories = manifest.get("inventories", {})
-        for entry_id in sorted(expected_ids):
-            errors = validate_entry_analysis(submitted_results[entry_id], inventories.get(entry_id, {}))
+        errors = validate_execution(manifest, submitted) + validate_package(manifest)
+        if errors:
+            raise ValueError("; ".join(errors))
+        if submitted != redact(submitted):
+            raise ValueError("RESULT_NOT_REDACTED")
+        if protected_hashes(project, docs_root) != manifest["protected_hashes"]:
+            raise ValueError("READ_ONLY_SCOPE_CHANGED")
+        _validate_version_input(docs_root, manifest)
+        _validate_mapping_surface(docs_root, manifest)
+        result, facts = _canonical(project, manifest)
+        submission_hash = digest(submitted)
+        if manifest.get("submission_hash"):
+            if submission_hash != manifest["submission_hash"]:
+                raise ValueError("COLLECT_CONFLICT_NEW_RUN_REQUIRED")
+            errors = _validate_manifest(project, docs_root, manifest)
             if errors:
-                raise ValueError(f"ENTRY_RESULT_INVALID {entry_id}: {'; '.join(errors)}")
-        execution = submitted.get("execution")
-        if not isinstance(execution, dict):
-            raise ValueError("EXECUTION_RECORD_MISSING")
-        if mode == "serial":
-            authorization = submitted.get("serial_authorization")
-            if not isinstance(authorization, dict) or not authorization.get("choice_reference") or set(authorization.get("scope", [])) != expected_ids:
-                raise ValueError("SERIAL_AUTHORIZATION_INVALID")
-            if int(submitted.get("completed_child_agents", 0)) != 0:
-                raise ValueError("SERIAL_CHILD_COUNT_INVALID")
-        else:
-            receipts = execution.get("receipts")
-            if not isinstance(receipts, list) or {str(item.get("task_id")) for item in receipts if isinstance(item, dict)} != {f"entry:{entry_id}" for entry_id in expected_ids}:
-                raise ValueError("NATIVE_EXECUTION_RECEIPTS_INCOMPLETE")
-            for receipt in receipts:
-                if not isinstance(receipt, dict) or not receipt.get("child_agent_id") or receipt.get("status") != "success":
-                    raise ValueError("NATIVE_EXECUTION_EVIDENCE_INVALID")
-        manifest["mode"] = mode
-        manifest["degraded"] = mode == "serial"
-        manifest["parallel"] = bool(submitted.get("parallel", False)) if mode == "native" else False
-        manifest["results"] = redact(submitted_results)
-        manifest["result_hashes"] = {entry_id: digest(value) for entry_id, value in manifest["results"].items()}
-        manifest["execution"] = execution
-        manifest["serial_authorization"] = submitted.get("serial_authorization")
-        manifest["completed_child_agents"] = 0 if mode == "serial" else int(submitted.get("completed_child_agents", 0))
+                raise ValueError("; ".join(errors))
+            print(json.dumps({"run_id": args.run_id, "status": manifest["status"], "manifest": str(path), "idempotent": True}))
+            return 0
+        if {n: hashlib.sha256(b).hexdigest() for n, b in _markdown_snapshot(docs_root).items()} != manifest["document_inputs"]:
+            raise ValueError("HUMAN_DOCUMENT_CHANGED")
+        if any(v["kind"] == "evidence_request" for v in submitted["results"].values()):
+            verified = _verify_requests(manifest, submitted, result)
+            new_path, replacement = _freeze_run(project, docs_root, result, manifest["mapping"],
+                purpose=manifest["purpose"], module=manifest["module_filter"], hints=verified, supersedes=args.run_id)
+            manifest.update(status="superseded", superseded_by_run_id=replacement["run_id"],
+                evidence_submission=submitted, verified_output_hashes={i: digest(f) for i, f in replacement["entry_facts"].items()})
+            write_json(path, manifest)
+            print(json.dumps(_prepared_output(new_path, replacement), ensure_ascii=False))
+            return 0
+        analyses = {}
+        for entry_id, value in submitted["results"].items():
+            errors = validate_entry_analysis(value["analysis"], facts[entry_id])
+            if errors:
+                raise ValueError(f"ENTRY_RESULT_INVALID {entry_id}: " + "; ".join(errors))
+            analyses[entry_id] = value["analysis"]
+        modules, owners = manifest["mapping"]["modules"], {}
+        for module in modules:
+            for entry_id in module["entry_ids"]:
+                owners[entry_id] = module
+        for entry in result.entries:
+            entry.module = owners[entry.entry_id]["name"]
+        contents = {}
         if manifest["purpose"] == "generate":
-            markdown_snapshot = _markdown_snapshot(Path(manifest["docs_root"]))
-            mapping = _read_json(Path(manifest["docs_root"]) / "biz-flow-modules.json")
-            result = scan(args.project.resolve(), entry_only=True)
-            for entry in result.entries:
-                analysis = submitted_results.get(entry.entry_id)
-                if isinstance(analysis, dict):
-                    entry.agent_branches = list(analysis.get("branches", []))
-                    entry.agent_persistence = list(analysis.get("persistence_actions", []))
-                    if isinstance(analysis.get("review"), dict):
-                        entry.review = _review_from_dict(analysis["review"], entry)
-            module_contents = {}
-            for module in mapping.get("modules", []):
-                module_id = str(module.get("name"))
-                entries = [entry for entry in result.entries if entry.module == module_id and entry.entry_id in expected_ids]
-                if not entries:
-                    continue
-                module_contents[module_id] = redact(render_module(module_id, entries, result.git, result, module_meta=module))
+            for module in modules:
+                entries = [e for e in result.entries if e.entry_id in module["entry_ids"]]
+                if entries:
+                    contents[module["file"]] = render_module(module["name"], entries, result.git, result,
+                        facts=facts, analyses=analyses, module_meta=module)
+            # Validate all assets before invoking the single writer.
+            for module in modules:
+                ids = set(module["entry_ids"]) & set(analyses)
+                if ids:
+                    errors = validate_markdown_structure(contents[module["file"]], {i: analyses[i] for i in ids}, {i: facts[i] for i in ids})
+                    if errors:
+                        raise ValueError("; ".join(errors))
+            before = _markdown_snapshot(docs_root)
             try:
-                _, _, report = write_artifacts(result, Path(manifest["docs_root"]), module_filter=manifest.get("module_filter"), module_contents=module_contents)
-                _write_overview_report(Path(manifest["docs_root"]), result, report)
+                overview_path = docs_root / "业务流程覆盖总览.md"
+                overview = overview_path.read_text(encoding="utf-8")
+                contents[overview_path.name] = re.sub(r"(?s)<!-- devflow:analysis-status -->.*?<!-- /devflow:analysis-status -->",
+                    lambda _: analysis_status_overview(result, manifest["mapping"], docs_root, completed=contents), overview)
+                for name, content in contents.items():
+                    FileWriteGuard("coordinator", name, str(docs_root)).assert_allowed("coordinator", name)
+                    temporary = docs_root / (name + ".tmp")
+                    temporary.write_text(content, encoding="utf-8")
+                    temporary.replace(docs_root / name)
             except Exception:
-                _restore_markdown_snapshot(Path(manifest["docs_root"]), markdown_snapshot)
-                _remove_transient_artifacts(Path(manifest["docs_root"]))
+                _restore_markdown_snapshot(docs_root, before)
                 raise
-            manifest["document_hashes"] = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                                            for path in Path(manifest["docs_root"]).glob("*.md")}
-            _remove_transient_artifacts(Path(manifest["docs_root"]))
-        manifest["status"] = "collected"
+        manifest.update({key: submitted[key] for key in ("mode", "parallel", "completed_child_agents", "serial_approval", "execution", "results")})
+        manifest.update(status="collected", degraded=submitted["mode"] == "serial", submission_hash=submission_hash,
+            comparison=_source_comparison(project, result, facts, module=manifest["module_filter"]),
+            result_hashes={i: digest(v) for i, v in submitted["results"].items()},
+            document_hashes={n: hashlib.sha256((docs_root / n).read_bytes()).hexdigest() for n in contents},
+            host_capability="available" if submitted["mode"] == "native" else "session_reported_unavailable",
+            trust_boundary="host-attested" if submitted["mode"] == "native" else "coordinator-attested",
+            validation_scope="source-rebuilt-facts-and-canonical-assets")
         write_json(path, manifest)
         print(json.dumps({"run_id": args.run_id, "status": "collected", "manifest": str(path)}, ensure_ascii=False))
         return 0
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
-        try:
-            if path.is_file():
-                failed = _read_json(path)
-                failed["status"] = "failed"
-                failed.setdefault("errors", []).append(str(exc))
+    except (OSError, ValueError, KeyError, RuntimeError, SubprocessError) as exc:
+        if path and path.is_file():
+            failed = _read_json(path)
+            if failed.get("protocol_version") == PROTOCOL_VERSION and failed.get("schema_version") == int(BIZ_FLOW_SCHEMA_VERSION):
+                failed.setdefault("collection_errors", []).append(redact(str(exc)))
+                if isinstance(submitted, dict):
+                    failed.setdefault("rejected_submissions", []).append(redact(submitted))
                 write_json(path, failed)
-        except Exception:
-            pass
         print(f"ERROR: collect failed: {exc}", file=sys.stderr)
         return 8
 
 
-def accept_command(argv: list[str]) -> int:
+def check_command(argv):
+    print("progress stage=check", file=sys.stderr)
+    parser = argparse.ArgumentParser(prog="devflow biz-flow check")
+    _project(parser)
+    parser.add_argument("--stage", choices=("entries", "flows"), default="flows")
+    parser.add_argument("--commit")
+    parser.add_argument("--run-id")
+    args = parser.parse_args(argv)
+    project, docs = args.project.resolve(), _docs_root(args.project.resolve(), args.docs_root)
+    try:
+        require_version_file(project, "biz-flow")
+        if args.stage == "entries":
+            return _check_entry_directory(project, docs, args.commit)
+        path, manifest = (run_path(args.run_id), _read_manifest(run_path(args.run_id))) if args.run_id else _current_manifest(project)
+        gates = []
+        errors = _validate_manifest(project, docs, manifest, gates=gates)
+        report_path = path.with_suffix(".check.json")
+        write_json(report_path, {"run_id": manifest["run_id"], "gates": gates, "errors": errors})
+        print(json.dumps({"run_id": manifest["run_id"], "manifest": str(path),
+                          "report": str(report_path), "gates": gates, "errors": errors}, ensure_ascii=False))
+        return 1 if errors else 0
+    except (ValueError, OSError, KeyError, DevflowError) as exc:
+        print(json.dumps({"gates": _failed_input_report(exc), "errors": [str(exc)]}, ensure_ascii=False))
+        print(f"ERROR: check failed: {exc}", file=sys.stderr)
+        return 1
+
+
+def verify_command(argv):
+    print("progress stage=verify", file=sys.stderr)
+    return _locked(argv, lambda: _verify(argv), report_input_gates=True)
+
+
+def _verify(argv):
+    parser = argparse.ArgumentParser(prog="devflow biz-flow verify")
+    _project(parser)
+    parser.add_argument("--run-id")
+    args = parser.parse_args(argv)
+    project, docs = args.project.resolve(), _docs_root(args.project.resolve(), args.docs_root)
+    gates = []
+    try:
+        path, manifest = (run_path(args.run_id), _read_manifest(run_path(args.run_id))) if args.run_id else _current_manifest(project)
+        errors = _validate_manifest(project, docs, manifest, gates=gates)
+        report_path = path.with_suffix(".verify.json")
+        write_json(report_path, {"run_id": manifest["run_id"], "gates": gates, "errors": errors})
+        if errors:
+            print(json.dumps({"run_id": manifest["run_id"], "manifest": str(path),
+                              "report": str(report_path), "gates": gates, "errors": errors}, ensure_ascii=False))
+            print("ERROR: verify failed: " + "; ".join(errors), file=sys.stderr)
+            return 1
+        value = digest({"facts": manifest["entry_facts"], "results": manifest["results"], "documents": manifest["document_hashes"]})
+        manifest["verification_runs"] = manifest["verification_runs"] + 1 if manifest.get("verify_digest") == value else 1
+        manifest.update(status="verified", verify_digest=value)
+        write_json(path, manifest)
+        print(json.dumps({"run_id": manifest["run_id"], "verification_runs": manifest["verification_runs"],
+            "canonical_facts_verified": True, "stable": manifest["verification_runs"] >= 2,
+            "gates": gates, "report": str(report_path), "manifest": str(path)}))
+        return 0
+    except (ValueError, OSError, KeyError) as exc:
+        print(json.dumps({"gates": gates or _failed_input_report(exc), "errors": [str(exc)]}, ensure_ascii=False))
+        print(f"ERROR: verify failed: {exc}", file=sys.stderr)
+        return 1
+
+
+def accept_command(argv):
+    print("progress stage=accept", file=sys.stderr)
+    return _locked(argv, lambda: _accept(argv))
+
+
+def _accept(argv):
     parser = argparse.ArgumentParser(prog="devflow biz-flow accept")
     _project(parser)
     parser.add_argument("--run-id", required=True)
     args = parser.parse_args(argv)
-    path = _new_run_path(args.run_id)
     try:
-        manifest = _read_json(path)
-        if manifest.get("status") not in {"collected", "verified"}:
-            raise ValueError("run is not collected")
-        if int(manifest.get("verification_runs", 0)) < 2:
-            raise ValueError("two stable verify runs are required before accept")
-        _write_recorded_commit(Path(manifest["docs_root"]), scan(args.project.resolve(), entry_only=True).git.target)
+        path = run_path(args.run_id)
+        manifest = _read_manifest(path)
+        if manifest.get("protocol_version") != PROTOCOL_VERSION:
+            raise ValueError("UNSUPPORTED_PROTOCOL_SCHEMA")
+        if manifest.get("status") != "verified" or manifest["verification_runs"] < 2:
+            raise ValueError("TWO_STABLE_VERIFY_RUNS_REQUIRED")
+        docs = _docs_root(args.project.resolve(), args.docs_root)
+        errors = _validate_manifest(args.project.resolve(), docs, manifest)
+        if errors:
+            raise ValueError("; ".join(errors))
+        # A module-filtered run cannot advance the whole project's baseline.
+        covered = set(manifest["entry_facts"])
+        if manifest["purpose"] == "generate" and covered == {i for m in manifest["mapping"]["modules"] for i in m["entry_ids"]}:
+            _write_recorded_commit(docs, manifest["source_commit"])
+            version = _version_lock_path(docs)
+            manifest["protected_hashes"][version.relative_to(args.project.resolve()).as_posix()] = hashlib.sha256(version.read_bytes()).hexdigest()
         manifest["status"] = "accepted"
+        manifest["accepted_version_hash"] = _version_hash(docs)
+        source_root = path.parent / args.run_id / "source"
+        if source_root.resolve().parent != (path.parent / args.run_id).resolve() or source_root.is_symlink():
+            raise ValueError("SOURCE_PATH_UNSAFE")
+        if source_root.is_dir():
+            shutil.rmtree(source_root)
+        manifest["snapshot_cleaned"] = True
         write_json(path, manifest)
-        print(json.dumps({"run_id": args.run_id, "status": "accepted", "manifest": str(path)}, ensure_ascii=False))
+        print(json.dumps({"run_id": args.run_id, "status": "accepted", "manifest": str(path),
+                          **_delivery_summary(manifest)}, ensure_ascii=False))
         return 0
-    except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+    except (ValueError, OSError, KeyError) as exc:
         print(f"ERROR: accept failed: {exc}", file=sys.stderr)
         return 8
 
 
-def main(argv: list[str] | None = None) -> int:
-    commands = {
-        "init": init_command,
-        "discover": discover_command,
-        "prepare": prepare_command,
-        "collect": collect_command,
-        "accept": accept_command,
-        "check": check_command,
-        "verify": verify_command,
-        "review": lambda args: _unsupported_legacy_command("review", args),
-        "generate": lambda args: _unsupported_legacy_command("generate", args),
-        "update": lambda args: _unsupported_legacy_command("update", args),
-    }
+def clean_command(argv):
+    """Bounded cleanup for old process artifacts in the shared state area."""
+    parser = argparse.ArgumentParser(prog="devflow biz-flow clean")
+    parser.add_argument("--run-id")
+    parser.add_argument("--all", action="store_true")
+    args = parser.parse_args(argv)
+    if args.run_id and args.all:
+        parser.error("provide at most one of --run-id or --all")
+    root = (state_root() / "biz-flow").resolve()
+    if not root.is_dir():
+        print(json.dumps({"removed": 0, "state_root": str(root)}, ensure_ascii=False))
+        return 0
+    if not args.run_id and not args.all:
+        runs = [{"run_id": path.stem, "status": _read_json(path).get("status", "unknown"),
+                 "manifest": str(path)} for path in sorted(root.glob("*.json"))
+                if re.fullmatch(r"[0-9a-f]{32}", path.stem)]
+        print(json.dumps({"runs": runs, "state_root": str(root)}, ensure_ascii=False))
+        return 0
+    if args.run_id:
+        run_path(args.run_id)  # Validate before computing any delete targets.
+    targets = ([p for p in root.iterdir() if p.name in {"scan-cache", "facts-cache", "render-cache"}
+                or re.fullmatch(r"[0-9a-f]{32}(?:\.[\w-]+)?\.json|[0-9a-f]{32}", p.name)]
+               if args.all else [root / args.run_id, root / (args.run_id + ".json"), *root.glob(args.run_id + ".*.json")])
+    removed = 0
+    for target in targets:
+        if target.is_symlink() or target.resolve().parent != root:
+            print("ERROR: invalid run id", file=sys.stderr)
+            return 8
+        if target.is_dir():
+            shutil.rmtree(target)
+            removed += 1
+        elif target.is_file():
+            target.unlink()
+            removed += 1
+    print(json.dumps({"removed": removed, "state_root": str(root)}, ensure_ascii=False))
+    return 0
+
+
+def main(argv=None):
+    commands = {"init": init_command, "discover": discover_command, "prepare": prepare_command,
+        "collect": collect_command, "check": check_command, "verify": verify_command, "accept": accept_command,
+        "clean": clean_command}
+    args = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(prog="devflow biz-flow")
     parser.add_argument("command", nargs="?", choices=tuple(commands))
-    args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in {"-h", "--help"}:
         parser.parse_args(args)
         return 0
     if args[0] not in commands:
-        parser.error(f"invalid choice: {args[0]!r}")
+        parser.error(f"unsupported command: {args[0]}")
     return commands[args[0]](args[1:])

@@ -33,7 +33,7 @@ def write_version_file(qa_root: Path, *, status: str = "draft") -> None:
     (contracts / "bru-api-test-generator-version.json").write_text(
         json.dumps({
             "skill": "bru-api-test-generator",
-            "skill_version": "1.0.0",
+            "skill_version": "2.1.0",
             "artifact_root": "qa/contracts",
             "version": 1,
             "status": status,
@@ -1537,6 +1537,38 @@ class RegressionTests(unittest.TestCase):
         self.assertIn("name: product_query_success", rendered)
         self.assertIn("url: {{baseUrl}}/products", rendered)
 
+    def test_unsupported_case_fields_fail_before_generation_writes(self):
+        materializer = load_script("materialize_missing_bru")
+        parser = load_script("parse_openapi")
+        design = load_script("design_rules")
+        coverage = load_script("check_api_coverage")
+        lock = load_script("qa_lock")
+        for field in ("bru_file", "file_name", "seq"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                qa_root = Path(directory) / "qa"
+                module = qa_root / "contracts" / "modules" / "商品查询"
+                module.mkdir(parents=True)
+                case = {"id": "PRODUCT_OK", "endpoint_id": "PRODUCT", "title": "查询商品成功",
+                        field: 2 if field == "seq" else "02-查询商品成功.bru"}
+                (module / "cases.yaml").write_text(json.dumps({"cases": [case]}), encoding="utf-8")
+                (module / "endpoints.yaml").write_text(json.dumps({"endpoints": [{
+                    "id": "PRODUCT", "method": "GET", "path": "/products",
+                }]}), encoding="utf-8")
+                before = {path.relative_to(qa_root): path.read_bytes() for path in qa_root.rglob("*") if path.is_file()}
+                with self.assertRaisesRegex(SystemExit, "outside the current schema"):
+                    materializer.materialize(qa_root / "contracts", qa_root / "bruno")
+                with self.assertRaisesRegex(ValueError, "outside the current schema"):
+                    parser.write_partitioned({}, qa_root / "contracts" / "module-map.yaml", module.parent, seed_cases=True, incremental=True)
+                with self.assertRaisesRegex(ValueError, "outside the current schema"):
+                    design.apply_to_contracts(qa_root / "contracts", {"rules": [], "flows": []})
+                with self.assertRaisesRegex(ValueError, "outside the current schema"):
+                    lock.current_case_state(qa_root / "contracts")
+                self.assertTrue(any("outside the current schema" in error for error in coverage.case_files([case], qa_root / "bruno")[3]))
+                after = {path.relative_to(qa_root): path.read_bytes() for path in qa_root.rglob("*") if path.is_file()}
+                self.assertEqual(before, after)
+                with self.assertRaisesRegex(SystemExit, "outside the current schema"):
+                    materializer.display_case_file(case)
+
     def test_materializer_rejects_explicit_case_id_filename(self):
         materializer = load_script("materialize_missing_bru")
         with tempfile.TemporaryDirectory() as directory:
@@ -2529,7 +2561,7 @@ class RegressionTests(unittest.TestCase):
             (contracts / "bru-api-test-generator-version.json").write_text(
                 json.dumps({
                     "skill": "bru-api-test-generator",
-                    "skill_version": "1.0.0",
+                    "skill_version": "2.1.0",
                     "artifact_root": "qa/contracts",
                     "version": 1,
                     "status": "current",
@@ -2887,7 +2919,8 @@ class RegressionTests(unittest.TestCase):
 
     def test_coverage_without_execution_is_draft_not_complete(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory) / "qa"
+            root.mkdir()
             contracts = root / "contracts"
             module = contracts / "modules" / "things"
             bru = root / "bruno" / "things"
@@ -2928,10 +2961,13 @@ class RegressionTests(unittest.TestCase):
                 "### 查询事物列表成功\n\n"
                 "简短描述：验证能够正常查询事物列表。\n\n"
                 "```mermaid\nsequenceDiagram\n"
-                "    participant C as 自动化用例\n"
+                "    autonumber\n"
+                "    actor C as 自动化用例\n"
                 "    participant S as 业务服务\n"
                 "    C->>S: GET /things\n"
+                "    activate S\n"
                 "    S-->>C: 返回查询结果\n"
+                "    deactivate S\n"
                 "```\n"
                 "<!-- CASE_END: THING_LIST_OK -->\n"
                 "<!-- AUTO_CASES_END -->\n",
@@ -2979,6 +3015,48 @@ class RegressionTests(unittest.TestCase):
             self.assertEqual(verified_report["status"], "draft")
             self.assertEqual(verified_report["module_status"], "failed")
             self.assertTrue(any("completion requires --require-scenarios" in error for error in verified_report["errors"]))
+
+            write_version_file(root)
+            (contracts / "openapi.json").write_text(json.dumps({
+                "openapi": "3.0.0",
+                "paths": {"/things": {"get": {
+                    "operationId": "THING_LIST",
+                    "responses": {"200": {"description": "ok"}},
+                }}},
+            }), encoding="utf-8")
+            misplaced_lock = root / "bru-api-test-generator-version.json"
+            for misplaced_content in (None, "not valid JSON"):
+                with self.subTest(misplaced_lock=misplaced_content):
+                    if misplaced_content is not None:
+                        misplaced_lock.write_text(misplaced_content, encoding="utf-8")
+                    offline = subprocess.run(
+                        [*module_command("check_api_coverage"), str(contracts), str(root / "bruno"),
+                         "--module", "things", "--json"],
+                        check=False, capture_output=True, text=True, encoding="utf-8",
+                    )
+                    self.assertEqual(offline.returncode, 0, offline.stdout + offline.stderr)
+                    offline_report = json.loads(offline.stdout)
+                    self.assertTrue(offline_report["static_ok"])
+                    self.assertTrue(offline_report["contract_provenance_unverified"])
+                    self.assertFalse(offline_report["completion_ok"])
+                    self.assertEqual(offline_report["status"], "draft")
+                    self.assertEqual(offline_report["inventory_endpoints"], 1)
+
+            authoritative_lock = contracts / "bru-api-test-generator-version.json"
+            misplaced_lock.write_bytes(authoritative_lock.read_bytes())
+            authoritative_lock.unlink()
+            missing = subprocess.run(
+                [*module_command("check_api_coverage"), str(contracts), str(root / "bruno"),
+                 "--module", "things", "--json"],
+                check=False, capture_output=True, text=True, encoding="utf-8",
+            )
+            self.assertEqual(missing.returncode, 1, missing.stdout + missing.stderr)
+            missing_report = json.loads(missing.stdout)
+            self.assertFalse(missing_report["static_ok"])
+            self.assertTrue(any(
+                f"manifest does not exist: {authoritative_lock.resolve()}" in error
+                for error in missing_report["errors"]
+            ), missing_report["errors"])
 
     def test_module_execution_reports_verified_without_changing_global_state(self):
         parser = load_script("parse_openapi")
@@ -3089,7 +3167,7 @@ class RegressionTests(unittest.TestCase):
             version_lock = qa_root / "contracts" / "bru-api-test-generator-version.json"
             version_lock.write_text(json.dumps({
                 "skill": "bru-api-test-generator",
-                "skill_version": "1.0.0",
+                "skill_version": "2.1.0",
                 "artifact_root": "qa/contracts",
                 "status": "current",
                 "business": {
@@ -3973,14 +4051,13 @@ class RegressionTests(unittest.TestCase):
             request = next((bruno / "things").glob("*.bru"))
             self.assertIn('res.body.data.id: eq "two"', request.read_text(encoding="utf-8"))
 
-    def test_legacy_execution_config_is_rejected(self):
+    def test_unsupported_execution_config_is_rejected_without_changes(self):
         execution_config = load_script("execution_config")
         with tempfile.TemporaryDirectory() as directory:
             qa_root = Path(directory) / "qa"
             execution = qa_root / "execution"
             environments = execution / "env"
             environments.mkdir(parents=True)
-            (qa_root / "qa.yaml").write_text("version: 1\ntooling: shared-cli\n", encoding="utf-8")
             (execution / "config.yaml").write_text(
                 "active_environment: local\n"
                 "auth:\n"
@@ -3996,14 +4073,51 @@ class RegressionTests(unittest.TestCase):
                 "vars {\n  BASE_URL: http://localhost\n  AUTH_TOKEN: token\n  TENANT_ID: tenant-1\n}\n",
                 encoding="utf-8",
             )
+            before = {path.relative_to(qa_root): path.read_bytes() for path in qa_root.rglob("*") if path.is_file()}
             with self.assertRaisesRegex(ValueError, r"unsupported field\(s\): auth, custom_headers"):
                 execution_config.initialize_execution_layout(qa_root)
+            self.assertEqual(before, {path.relative_to(qa_root): path.read_bytes() for path in qa_root.rglob("*") if path.is_file()})
+
+    def test_unsupported_execution_assets_are_rejected_without_changes(self):
+        execution_config = load_script("execution_config")
+        for relative in ("qa.yaml", "execution/plans.yaml", "contracts/request-auth.yaml", "contracts/request-context.yaml"):
+            with self.subTest(asset=relative), tempfile.TemporaryDirectory() as directory:
+                qa_root = Path(directory) / "qa"
+                execution_config.initialize_execution_layout(qa_root)
+                unsupported = qa_root / relative
+                unsupported.parent.mkdir(parents=True, exist_ok=True)
+                unsupported.write_text("operator-owned: preserved\n", encoding="utf-8")
+                before = {path.relative_to(qa_root): path.read_bytes() for path in qa_root.rglob("*") if path.is_file()}
+                with self.assertRaises(ValueError) as error:
+                    execution_config.initialize_execution_layout(qa_root)
+                self.assertIn("unsupported execution asset(s): " + relative, str(error.exception))
+                self.assertEqual(before, {path.relative_to(qa_root): path.read_bytes() for path in qa_root.rglob("*") if path.is_file()})
+
+    def test_execution_initialization_preserves_existing_launchers_and_readme(self):
+        execution_config = load_script("execution_config")
+        with tempfile.TemporaryDirectory() as directory:
+            qa_root = Path(directory) / "qa"
+            execution_config.initialize_execution_layout(qa_root)
+            existing = {
+                "README.md": "Operator notes: --plan --all --confirm- are unsupported options.\n",
+                "run.bat": "@echo off\nrem operator launcher\n",
+                "run.sh": "#!/bin/sh\n# operator launcher\n",
+            }
+            for name, content in existing.items():
+                (qa_root / "execution" / name).write_text(content, encoding="utf-8")
+            collection = qa_root / "bruno" / "collection.bru"
+            collection.write_text(execution_config.COLLECTION_TEMPLATE + "\n// stale managed content\n", encoding="utf-8")
+            self.assertEqual(execution_config.initialize_execution_layout(qa_root), [collection.resolve()])
+            for name, content in existing.items():
+                self.assertEqual((qa_root / "execution" / name).read_text(encoding="utf-8"), content)
+            self.assertEqual(collection.read_text(encoding="utf-8"), execution_config.COLLECTION_TEMPLATE)
+            self.assertEqual(execution_config.initialize_execution_layout(qa_root), [])
 
     def test_shared_cli_mode_keeps_asset_only_layout(self):
         execution_config = load_script("execution_config")
         with tempfile.TemporaryDirectory() as directory:
             qa_root = Path(directory) / "qa"
-            execution_config.initialize_execution_layout(qa_root, local_scripts=False)
+            execution_config.initialize_execution_layout(qa_root)
             self.assertFalse((qa_root / "scripts").exists())
             self.assertFalse((qa_root / "qa.yaml").exists())
             self.assertFalse((qa_root / "execution" / "plans.yaml").exists())
@@ -4085,7 +4199,7 @@ class RegressionTests(unittest.TestCase):
             (qa_root / "contracts" / "bru-api-test-generator-version.json").write_text(
                 json.dumps({
                     "skill": "bru-api-test-generator",
-                    "skill_version": "1.0.0",
+                    "skill_version": "2.1.0",
                     "artifact_root": "qa/contracts",
                     "version": 1,
                     "status": "current",

@@ -33,7 +33,7 @@ class DevflowError(Exception):
 
 
 def classify_failure(command: str, message: str, return_code: int) -> DevflowError:
-    """Map legacy domain failures to the public semantic exit contract."""
+    """Map domain failures to the public semantic exit contract."""
 
     text = message.lower()
     document_code = re.search(r"\b(DOCUMENT_[A-Z_]+)\b", message)

@@ -16,13 +16,14 @@ sys.dont_write_bytecode = True
 
 from .check_artifact_safety import scan as scan_secrets
 from .design_rules import understanding_errors
-from .manifest_io import first_list, load_data
+from .manifest_io import case_contract_errors, first_list, load_data
 from .qa_paths import (
     BRUNO,
     CONSTRAINTS,
     CONTRACTS,
     REPORTS,
 )
+from ..core.artifacts import state_root, write_json
 
 
 RULES_VERSION = 2
@@ -1141,7 +1142,6 @@ def _workspace_state(root: Path) -> dict[str, Any]:
         if path.is_file()
         and ".git" not in path.parts
         and "__pycache__" not in path.parts
-        and "/worker-assignments/" not in f"/{path.relative_to(root).as_posix()}"
     }
     return {"root": str(root), "files": dict(sorted(files.items()))}
 
@@ -1151,8 +1151,9 @@ def worker_snapshot_path(qa_root: Path, module: str) -> Path:
     if len(records) != 1:
         raise ValueError(f"module is not unique: {module}")
     module_id = records[0][0]
-    safe_id = re.sub(r"[^A-Za-z0-9._-]+", "-", module_id).strip("-") or "module"
-    return qa_root.resolve() / CONTRACTS / "worker-assignments" / f"{safe_id}.yaml"
+    safe_id = (re.sub(r"[^A-Za-z0-9._-]+", "-", module_id).strip("-")[:32] or "module") + "-" + hashlib.sha256(module_id.encode()).hexdigest()[:16]
+    project_key = hashlib.sha256(str(qa_root.resolve()).encode()).hexdigest()[:24]
+    return state_root() / "bru-api" / project_key / "workers" / f"{safe_id}.json"
 
 
 def write_worker_snapshot(qa_root: Path, module: str) -> Path:
@@ -1168,7 +1169,7 @@ def write_worker_snapshot(qa_root: Path, module: str) -> Path:
         "baseline": _workspace_state(qa_root.parent),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_render_yaml(document), encoding="utf-8")
+    write_json(path, document)
     return path
 
 
@@ -1209,7 +1210,7 @@ def _manual_change_errors(qa_root: Path, records: list[tuple[str, Path, dict[str
                 continue
             current = {
                 key: value for key, value in case.items()
-                if key not in {"bru", "bru_file", "file_name", "manual_review"}
+                if key not in {"bru", "manual_review"}
             }
             fingerprint = hashlib.sha256(
                 json.dumps(current, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -1233,7 +1234,6 @@ def _boundary_errors(qa_root: Path, actor: str, module: str | None, changed_path
     allowed = (
         qa_root / CONTRACTS / "modules" / directory.name,
         qa_root / BRUNO / directory.name,
-        qa_root / REPORTS,
     )
     errors: list[str] = []
     for raw in changed_paths:
@@ -1312,6 +1312,7 @@ def validate_stage(
                 case_ids[case_id] = module_id
     for _, _, _, case_doc in records:
         for case in first_list(case_doc, "cases"):
+            errors.extend(case_contract_errors(case))
             if "request-parseable" in active:
                 errors.extend(_request_errors(case))
                 errors.extend(database_access_errors(case))

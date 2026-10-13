@@ -8,19 +8,23 @@ Set the explicit project root with `--project`. Durable project assets are Markd
 under `<project>/docs/biz-flow` and the sole version file
 `docs/biz-flow/biz-flow-doc-generator-version.json`. Execution manifests live outside
 the project under `~/.local/state/devflow/artifacts/biz-flow/`. The `skill_version`
-is `3.0.0`. Preserve scope, locks, ownership, redaction and source fingerprints.
+is `5.1.0` (domain schema 6, host protocol 5.0). Preserve scope, locks,
+ownership, redaction and source fingerprints.
 
 Read [analysis-policy.md](references/analysis-policy.md) for discovery and business
-presentation; read [agent-orchestration.md](references/agent-orchestration.md) only
+presentation; before every behavior workflow read
+[behavior-evidence.md](references/behavior-evidence.md) and
+[agent-orchestration.md](references/agent-orchestration.md)
 for analysis/delegation. Before acceptance or version changes read
 [requirements-matrix.md](references/requirements-matrix.md),
 [verification.md](references/verification.md) and
 [version-management.md](references/version-management.md).
 
-## 绗竴姝ワ細瀹屾暣涓氬姟鍏ュ彛鐩綍
+## 第一步：完整业务入口目录
 
-Run `init` when needed. Older version locks are unsupported; archive the old
-project and initialize a new 3.0.0 project.
+Run `init` when needed. Older version locks are unsupported; explicitly archive
+tool-owned old assets and locks, preserve user content, then initialize a new
+5.1.0 project. Do not reinterpret old receipts.
 Then run `discover` and `check --stage entries`. The entry
 directory gate must pass independently before classification confirmation. Scan the whole project for registered
 business triggers, including supported platform receivers such as `doExecute` and
@@ -36,37 +40,21 @@ and requires no agent executor. Every registered candidate must have exactly one
 business module or an evidence-backed exclusion. Unsupported/dynamic registration
 coverage must be reported; do not claim complete coverage when it is unproven.
 
-`discover` creates the overview and each module's Markdown inventory skeleton:
-business title, scope, complete entry list, trigger/evidence and analysis status.
+`discover` puts business scope, the complete entry list, trigger/evidence and
+analysis status in the overview. Module Markdown skeletons contain only a title.
 Do not put guessed flows or placeholder diagrams in skeletons. Preserve completed
-content for unchanged entries when updating. Group first by the project's broad
-business domains: one domain, one Markdown module. Keep different objects, duties,
-scenarios, channels and trigger types in entry sections within that domain; never
-split files merely by create/query/configuration/callback/recovery actions. Cross-domain
-entries have one owner, the domain of their primary business outcome, with collaborators
-shown in the sequence diagram. Domain names come from project evidence and user
-classification, not a fixed domain dictionary. Module filenames use natural business
-objects plus their core responsibility, relationship or lifecycle, so readers can
-infer the main contents. Group related functions into meaningful families for a broad
-domain; do not concatenate all action verbs or enforce suffixes such as 鈥滃鐞嗏€?
-鈥滀笟鍔♀€?or 鈥滄祦绋嬧€? Existing project business-document names may guide style, but
-must not become a project-specific naming dictionary. Do not use a bare domain/acronym
-or split a domain by function. Business descriptions are independent of filenames:
-use Swagger `@Tag.description` and `@Operation.summary/description`, then source
-comments for non-HTTP triggers, to summarize the actual business objects and main
-capabilities. Merge related interfaces such as list/detail queries and CRUD;
-retain distinct actions such as opening and closing a plan. Semicolons and multiple
-sentences are allowed. Do not prefix a filename summary with 鈥滆礋璐ｂ€? enumerate
-every endpoint or include client/HTML metadata. Limit shared controller descriptions
-to entries owned by the module; keep the complete inventory separately.
-See analysis-policy for naming and identity rules.
+content for unchanged entries when updating. Group by the project's broad business
+domains: one domain, one Markdown module. Preserve each entry and channel within
+that domain, with one owner per entry. Use source-backed business descriptions and
+natural filenames under the naming rules in analysis-policy; project design may
+guide naming style but cannot prove current behavior.
 
 Before requesting classification confirmation or ending the turn, directly show
-the CLI's entire three-column table (`涓氬姟妯″潡鏂囦欢鍚峘, `涓氬姟鎻忚堪`, `鍏ュ彛鏁伴噺`),
+the CLI's entire three-column table (`业务模块文件名`, `业务描述`, `入口数量`),
 exclusion categories with counts/reasons, and entry-identification uncertainties
 with counts and handling plans. Links or totals cannot replace these tables.
 The overview preserves every candidate's ID, trigger, source and disposition;
-module files preserve all included entries. Inventory totals must reconcile.
+final module entry sections preserve all included entries. Inventory totals must reconcile.
 
 Ask for classification confirmation once, after resolving facts available in source.
 Honor authorization already present in the session; do not ask again. Adjust only
@@ -74,17 +62,23 @@ disputed rows and preserve other ownership. Confirmation is recorded with
 `<!-- devflow:module-confirmed -->` and bound to the source/mapping fingerprint.
 Deep behavior findings do not block inventory delivery or require user classification.
 
-## 绗簩姝ワ細骞惰涓氬姟鍒嗘瀽涓庢椂搴忓浘
+## 第二步：业务分析与时序图
 
 After classification is authorized, run `prepare --project <project> --confirm`.
 Analyze only confirmed business entries and their reachable behavior. The CLI
-creates bounded parallel, read-only entry tasks, merges their evidence and commits
-each module through its unique writer. Coordination owns the inventory and final
+creates frozen read-only entry tasks. The current main Agent must read the package
+and `devflow schema biz-flow.submission`, actually start native host child agents,
+wait for their results, check scope and evidence, and submit `collect --results`
+before `check`, two `verify` calls and `accept`. A prepared package is a normal
+handoff requiring continued work. CLI cannot access session tools. Use available
+slots, batch independent tasks and reuse idle agents with a separate attempt per
+assignment; do not spawn nested agents to bypass slots. CLI merges verified
+evidence and writes each module through its unique writer. Coordination owns the inventory and final
 gates; it must not fabricate agent results, substitute guessed behavior for failed
-agents or let multiple tasks edit one module. The removed review/generate/update
-paths are not compatibility aliases and cannot advance the source baseline.
+agents or let multiple tasks edit one module. Only the current prepare/collect
+workflow can submit analysis for source baseline acceptance.
 
-Keep each reachable `core_capabilities` identity as its complete declaring identity:
+Keep each reachable call target as its complete declaring identity:
 fully qualified package/class (including enclosing classes), method and parameter
 types, bound to the actual declaration source. Resolve supported `doExecute` and
 `doServe` receivers without treating bare method names or caller locations as
@@ -99,19 +93,47 @@ unknowns block the affected entry/module, while completed modules may be retaine
 any incomplete required entry prevents an overall success claim.
 
 Final entry sections use the fixed order: business title, trigger, function summary,
-`sequenceDiagram` with `autonumber`, then branch matrix. Participants
-and visible actions use business language. Ordered `review.steps` determines real
-call/return order and nested controls; bind canonical B/P evidence to those steps,
-never sort the inventory into a flat sequence or append unconditional success.
+`sequenceDiagram` with `autonumber`, then branch matrix. Before generating,
+modifying or verifying diagrams, read the shared
+[diagram-conventions](references/diagram-conventions.md), owned by the
+sequence-diagram-generator Skill, and the domain supplements in
+[analysis-policy.md](references/analysis-policy.md). A common or domain gate
+failure blocks delivery.
+Participants and visible actions use business language. Frozen `entry_facts.flow` determines
+call/return order and nested controls; analysis supplies evidence-bound business
+annotations for every fact and participant. Never change frozen facts, sort them
+into a flat sequence or append unconditional success. Independently inspect the
+committed source. Missing facts require a typed `evidence_request`, adapter
+validation and a newly prepared run; prose cannot clear a critical gap.
 Source-bound sender/destination and response steps determine message arrows; technical paths/IDs belong in inventory
 metadata, source evidence or Mermaid comments, not visible diagram prose. All real
-storage objects retain their exact names and supported Chinese labels. Complex
-entries may use multiple diagrams with complete combined coverage. Do not invent
+storage objects retain their exact names and supported Chinese labels. The current
+renderer emits one ordered diagram per entry. Do not invent
 rules or replace unknown storage objects with generic participants. Follow user's
 explicit diagram requirements; Markdown sequence diagrams do not implicitly authorize
 Feishu publication or replacing editable boards with SVG.
 
-Do not probe brand CLIs or `DEVFLOW_AGENT_EXECUTOR`; that configuration is removed. prepare only creates a redacted task package. The current host session decides whether native sub-agents are available. If unavailable, ask exactly once whether the current Agent may perform serial read-only analysis or stop with the entry directory. Serial mode requires explicit user choice and is recorded as mode=serial, degraded=true, parallel=false, and zero child agents. Native execution uses host tool records; never fabricate child-agent evidence.
+Determine capability from the actual session tools and their responses. Do not
+probe brand CLIs or use `DEVFLOW_AGENT_EXECUTOR`; that removed configuration does
+not describe session capability. Distinguish unknown, prepared, available but not
+started, occupied slots, absent/forbidden tools, launch errors and task failures.
+Wait for occupied slots. When tools are absent or launch cannot recover, use an
+existing explicit serial choice for this scope, or ask serial/stop once. “Generate
+directly” does not authorize serial fallback. Serial requires `serial_approval`
+with a choice reference and exact entry scope, and records mode=serial,
+degraded=true, parallel=false, completed_child_agents=0. Main Agent must actually
+analyze the committed source; static inventory is not an analysis result.
+
+Native mode is valid with parallel=false, including one available slot. Claim
+parallel=true only with host intervals or a referenced snapshot observing distinct
+children running together. Read the mandatory execution and receipt details in
+[agent-orchestration.md](references/agent-orchestration.md). Analysis agents may
+write only their exclusive state result path, never source, module documents,
+mapping or version locks. Shared workspace plus prompt restrictions is not an OS
+sandbox. Preserve actual failures and retries; never take over a failed analysis
+while retaining its child ID. Receipts are host-attested: CLI validates binding
+and consistency, while the main Agent confirms actual tool calls in this session.
+Missing internal times or reclaim tools stay unavailable/unsupported, not invented.
 
 Run `check` and two consecutive `verify` calls. Preserve Git commit plus dirty
 state, source fingerprints and incremental added/changed/deleted entry reporting;
@@ -128,5 +150,48 @@ When the requested output is a standalone sequence diagram, route to the install
 
 ## Git source snapshot gate
 
-When the project has a Git version record, generation must read only the recorded committed snapshot (or committed HEAD when no baseline is recorded). Never read modified or untracked source files. If a tracked file is modified but uncommitted, use its pre-change committed content and record that commit; stop on missing or invalid Git evidence.
+Read only the task's target commit snapshot (`--commit`, or committed HEAD at discovery/prepare). The accepted baseline is used for comparison, not as a substitute for the target. Never read modified or untracked source files as evidence. Source/mapping/task hashes and the version lock are frozen during analysis; accept alone may advance the baseline after passing every gate. Stop on missing or invalid Git evidence.
 After successful completion, delete process-only temporary artifacts and retain only owned business assets, the version lock, and authoritative reports or recovery evidence.
+
+## Fixed targets, retries and gates
+
+Use `discover --commit <commit>` and `prepare --commit <commit>` to select a target;
+both default to committed HEAD. Every later stage uses the manifest target through
+`git archive`; dirty files, untracked files and newer HEAD never become evidence.
+Ignore build/dependency/tool directories, committed gitignore rules and repository
+info/exclude. A committed `.devflow-biz-flow.json` may add only `exclude: string[]`.
+Do not use a project business dictionary. Source labels seed the proposal; user
+module names, filenames, descriptions and ownership persist in overview blocks.
+Confirmation binds commit, source fingerprint and mapping signature. A changed
+binding requires reviewing the overview and one `prepare --confirm`.
+
+`prepare --module <name>` scopes delivery; `check`, `verify` and `accept` select that
+run with `--run-id`. Partial acceptance reports accepted and blocked modules and
+does not advance the whole-project baseline. `prepare --resume <run-id>` retains
+the same task package and reports reusable and pending entry IDs. Reuse validated
+results and their original receipts from the manifest/rejected submissions; retry
+pending tasks with new attempts and submit complete scope to collect. Failed
+collection preserves mapping and recovery evidence. resolutions explain proven
+void completion, memory/submit false positives and conditional connectors under
+[behavior-evidence.md](references/behavior-evidence.md); they cannot waive unknowns.
+
+Check/verify return authoritative report paths and per-gate
+`{gate, executed, passed, errors}`. Missing Mermaid explicitly means structural
+validation only. Renderer timeout defaults to 60 seconds and is configurable with
+`DEVFLOW_MERMAID_TIMEOUT`; successful rendering is cached by diagram and renderer.
+Registration and behavior caches are bound to target, fingerprint and adapter.
+Progress goes to stderr. Budget: scan stage 300 seconds, full fixture lifecycle
+1800 seconds; report measured elapsed time, never assume a budget passed.
+`clean` lists shared runs, `clean --run-id <id>` removes one run and
+`clean --all` removes runs and caches. Accepted runs remove extracted source while
+retaining source proofs and manifests. Clean old runs explicitly when no longer
+needed; cleaning recovery evidence means a new prepare is required.
+
+The host coordination contract has three requirements:
+
+- Record actual child_agent_id, batch_id, task/attempt bindings and status; never
+  invent tools, child identities, timestamps or parallel overlap.
+- When parallel execution is unavailable, native sequential execution is valid;
+  when native agents are unavailable, retain explicit serial approval and its scope.
+- Use a declared per-task timeout; record timed_out or launch failure with tool
+  evidence, retain history and reassign only pending tasks with the next attempt.

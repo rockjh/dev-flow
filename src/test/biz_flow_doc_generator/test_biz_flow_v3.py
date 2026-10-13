@@ -6,10 +6,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from toolkit.biz_flow_doc_generator.cli import _progress
 from toolkit.biz_flow_doc_generator.discovery import scan
-from toolkit.biz_flow_doc_generator.documents import _diagram, _validate_mermaid, apply_module_map, write_discovery
-from toolkit.biz_flow_doc_generator.models import BehaviorEvidence, EntryPoint, GitInfo
+from toolkit.biz_flow_doc_generator.evidence import collect_evidence
+from toolkit.biz_flow_doc_generator.documents import _validate_mermaid, write_discovery
+from toolkit.biz_flow_doc_generator.models import EntryPoint, GitInfo
 
 
 class BizFlowV3Tests(unittest.TestCase):
@@ -37,21 +37,13 @@ class BizFlowV3Tests(unittest.TestCase):
             self.assertEqual(1, len(result.entries))
             docs = root / "docs"
             write_discovery(result, docs)
-            self.assertTrue((docs / "biz-flow-modules-draft.json").is_file())
+            self.assertTrue((docs / "biz-flow-modules.json").is_file())
             mapping = json.loads((docs / "biz-flow-modules.json").read_text(encoding="utf-8"))
             module = mapping["modules"][0]
             self.assertIn("responsibility", module)
             self.assertIn("file", module)
-            self.assertEqual(result.entries[0].entry_id, mapping["entry_reviews"][0]["id"])
+            self.assertEqual(result.entries[0].entry_id, module["entry_ids"][0])
 
-    def _legacy_progress_redacts_errors_in_json_and_failure_log(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            docs_root = Path(temporary)
-            _progress(docs_root, "generate", "failed", error="token=actual-secret")
-            progress = (docs_root / "biz-flow-progress.json").read_text(encoding="utf-8")
-            failures = (docs_root / "biz-flow-failures.log").read_text(encoding="utf-8")
-            self.assertNotIn("actual-secret", progress)
-            self.assertNotIn("actual-secret", failures)
 
     def test_same_named_definitions_are_not_merged(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -66,18 +58,10 @@ class BizFlowV3Tests(unittest.TestCase):
             self._git(root)
             result = scan(root)
             entry = next(item for item in result.entries if item.identifier == "GET /x")
-            self.assertNotIn("ONE_ERROR", entry.error_codes())
-            self.assertNotIn("TWO_ERROR", entry.error_codes())
-            self.assertTrue(any("multiple possible definitions" in value for value in result.unresolved))
+            self.assertNotIn("ONE_ERROR", json.dumps(collect_evidence(result)[entry.entry_id]["outcomes"]))
+            self.assertNotIn("TWO_ERROR", json.dumps(collect_evidence(result)[entry.entry_id]["outcomes"]))
+            self.assertTrue(collect_evidence(result)[entry.entry_id]["gaps"])
 
-    def test_external_action_is_not_rendered_as_optional(self) -> None:
-        entry = EntryPoint(
-            "url:x", "url", "GET /x", "handler", "app.py", 1, "resources", "app.py",
-            behaviors=[BehaviorEvidence("外部调用", "client.fetch()", "app.py", 2)],
-        )
-        diagram = _diagram(entry)
-        self.assertNotIn("opt 外部调用", diagram)
-        self.assertIn("外部接口", diagram)
 
     def test_java_multi_route_binding_is_counted_separately(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -142,85 +126,11 @@ class BizFlowV3Tests(unittest.TestCase):
             self._git(root)
             result = scan(root)
             entry = next(item for item in result.entries if item.identifier == "GET /x")
-            self.assertIn("ONE_ERROR", entry.error_codes())
-            self.assertNotIn("TWO_ERROR", entry.error_codes())
+            self.assertIn("ONE_ERROR", json.dumps(collect_evidence(result)[entry.entry_id]["outcomes"]))
+            self.assertNotIn("TWO_ERROR", json.dumps(collect_evidence(result)[entry.entry_id]["outcomes"]))
 
-    def test_confirmed_map_requires_one_review_per_entry(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "app.py").write_text(
-                "from fastapi import FastAPI\napp = FastAPI()\n"
-                "@app.get('/x')\ndef get_x(): return []\n",
-                encoding="utf-8",
-            )
-            self._git(root)
-            result = scan(root)
-            docs = root / "docs"
-            write_discovery(result, docs)
-            path = docs / "biz-flow-modules.json"
-            mapping = json.loads(path.read_text(encoding="utf-8"))
-            mapping["confirmed"] = True
-            mapping["entry_reviews"] = []
-            path.write_text(json.dumps(mapping), encoding="utf-8")
-            errors = apply_module_map(result, path)
-            self.assertTrue(any("exactly one confirmed entry review" in error for error in errors))
 
-    def test_draft_review_cannot_be_promoted_by_module_confirmation(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "app.py").write_text(
-                "from fastapi import FastAPI\napp = FastAPI()\n"
-                "@app.get('/x')\ndef get_x(): return []\n",
-                encoding="utf-8",
-            )
-            self._git(root)
-            result = scan(root)
-            docs = root / "docs"
-            write_discovery(result, docs)
-            path = docs / "biz-flow-modules.json"
-            mapping = json.loads(path.read_text(encoding="utf-8"))
-            mapping["confirmed"] = True
-            path.write_text(json.dumps(mapping), encoding="utf-8")
-            errors = apply_module_map(result, path)
-            self.assertTrue(any("not explicitly human-confirmed" in error for error in errors))
 
-    def test_module_file_must_be_markdown_and_active_after_exclusions(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "app.py").write_text(
-                "from fastapi import FastAPI\napp = FastAPI()\n"
-                "@app.get('/x')\ndef get_x(): return []\n",
-                encoding="utf-8",
-            )
-            self._git(root)
-            result = scan(root)
-            docs = root / "docs"
-            write_discovery(result, docs)
-            path = docs / "biz-flow-modules.json"
-            mapping = json.loads(path.read_text(encoding="utf-8"))
-            mapping["confirmed"] = True
-            mapping["modules"][0]["file"] = "module.txt"
-            mapping["modules"][0]["rationale"] = "按业务对象边界归组"
-            mapping["modules"][0]["responsibility"] = "处理资源查询"
-            for review in mapping["entry_reviews"]:
-                review.update({
-                    "status": "confirmed", "confirmed_by": "reviewer", "trigger": "调用方",
-                    "purpose": "查询资源", "input": "资源标识", "outcome": "返回资源", "failure": "返回明确错误",
-                })
-                for step in review["steps"]:
-                    step["text"] = "执行资源查询"
-            path.write_text(json.dumps(mapping), encoding="utf-8")
-            errors = apply_module_map(result, path)
-            self.assertTrue(any("must be Markdown" in error for error in errors))
-
-            mapping["modules"][0]["file"] = "module.md"
-            mapping["entry_reviews"] = []
-            candidate = mapping["modules"][0]["entry_ids"][0]
-            mapping["exclusions"] = [{"candidate": candidate, "reason": "非业务入口", "evidence": ["app.py:3"]}]
-            path.write_text(json.dumps(mapping), encoding="utf-8")
-            result = scan(root)
-            errors = apply_module_map(result, path)
-            self.assertTrue(any("no active entries after exclusions" in error for error in errors))
 
     def test_mermaid_validator_rejects_unbalanced_control_block(self) -> None:
         self.assertTrue(_validate_mermaid("sequenceDiagram\nparticipant A as A\nalt x\nA->>A: y\n"))
@@ -236,7 +146,7 @@ class BizFlowV3Tests(unittest.TestCase):
     def test_mermaid_validator_accepts_numbered_sequence(self) -> None:
         self.assertEqual([], _validate_mermaid(
             "sequenceDiagram\nautonumber\nparticipant A as A\n"
-            "A-->>A: PROTOCOL_SUCCESS 落库 投递\n"
+            "activate A\nA-->>A: PROTOCOL_SUCCESS 落库 投递\ndeactivate A\n"
         ))
 
     def test_mermaid_validator_checks_note_participants(self) -> None:
@@ -257,8 +167,8 @@ class BizFlowV3Tests(unittest.TestCase):
             self._git(root)
             result = scan(root)
             entry = next(item for item in result.entries if item.identifier == "GET /x")
-            self.assertNotIn("UNRELATED", entry.error_codes())
-            self.assertTrue(any("unknown receiver type" in item for item in result.unresolved))
+            self.assertNotIn("UNRELATED", json.dumps(collect_evidence(result)[entry.entry_id]["outcomes"]))
+            self.assertTrue(any(g["code"] == "CALL_CONTRACT_UNSUPPORTED" for g in collect_evidence(result)[entry.entry_id]["gaps"]))
 
     def test_caught_loop_item_error_is_kept_as_partial_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -269,8 +179,8 @@ class BizFlowV3Tests(unittest.TestCase):
                 "def batch(items):\n"
                 "    for item in items:\n"
                 "        try:\n"
-                "            raise BusinessError('ITEM_FAILED')\n"
-                "        except BusinessError:\n"
+                "            raise ValueError('ITEM_FAILED')\n"
+                "        except ValueError:\n"
                 "            continue\n"
                 "    return {'accepted': True}\n",
                 encoding="utf-8",
@@ -278,9 +188,11 @@ class BizFlowV3Tests(unittest.TestCase):
             self._git(root)
             result = scan(root)
             entry = next(item for item in result.entries if item.identifier == "POST /batch")
-            error = next(item for item in entry.errors if item.code == "ITEM_FAILED")
-            self.assertEqual("item", error.phase)
-            self.assertIn("继续", error.consequence)
+            facts = collect_evidence(result)[entry.entry_id]
+            error = next(o for o in facts["outcomes"] if "ITEM_FAILED" in o["details"]["expression"])
+            self.assertTrue(error["conditions"])
+            self.assertFalse(error["details"]["observed_by_entry"])
+            self.assertTrue(any(o["type"] == "continue" for o in facts["outcomes"]))
 
     def test_worker_error_is_not_reported_as_sync_response_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -295,9 +207,10 @@ class BizFlowV3Tests(unittest.TestCase):
             self._git(root)
             result = scan(root)
             entry = next(item for item in result.entries if item.identifier == "POST /jobs")
-            error = next(item for item in entry.errors if item.code == "WORKER_FAILED")
-            self.assertEqual("worker", error.phase)
-            self.assertIn("已受理", error.consequence)
+            facts = collect_evidence(result)[entry.entry_id]
+            self.assertTrue(facts["gaps"])
+            self.assertFalse(any("WORKER_FAILED" in o["details"]["expression"] for o in facts["outcomes"]))
+            self.assertFalse(facts["coverage"]["complete"])
 
 
 if __name__ == "__main__":

@@ -16,6 +16,8 @@ from typing import Union, get_args, get_origin, get_type_hints
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from toolkit.sequence_diagram_generator import models
+from toolkit.sequence_diagram_generator import SCHEMA_VERSION
+from toolkit.core.sequence import PARTICIPANT_ROLES
 
 
 def scope(name):
@@ -51,7 +53,7 @@ def main():
             if field in properties:
                 properties[field]["pattern"] = r"^[0-9a-f]{32}$" if field == "run_id" else r"^(|[0-9a-f]{32})$"
         if name == "RunManifest":
-            properties["schema_version"] = {"const": 2}
+            properties["schema_version"] = {"const": SCHEMA_VERSION}
             properties.pop("mode", None)
             properties["intent"]["enum"] = ["implementation", "proposal", "description"]
             properties["execution_mode"]["enum"] = ["", "native", "serial"]
@@ -60,11 +62,34 @@ def main():
             properties["implementation_assessment"]["enum"] = ["checked", "checked_not_found", "not_evaluated"]
         if name == "ExternalOperation":
             properties["resolution"]["enum"] = ["project", "boundary", "summary", "unknown"]
+        if name in {"FlowStep", "ProposedStep"}:
+            for field in ("sender_role", "receiver_role"):
+                properties[field]["enum"] = sorted(PARTICIPANT_ROLES)
         if name == "SequenceBlock":
             properties["kind"]["enum"] = ["sequence", "alt", "opt", "loop", "par"]
         if name == "RenderReport":
             properties["status"]["enum"] = ["passed", "not_run", "failed"]
-        contracts[scope(name)] = {"contract": scope(name), "schema_version": "2",
+        if name == "TaskPackage":
+            properties["protocol_version"] = {"const": SCHEMA_VERSION}
+            properties["execution_mode"]["enum"] = ["native", "serial"]
+        if name == "HostReceipt":
+            properties["status"]["enum"] = ["success", "failed", "interrupted", "timeout", "spawn_failed"]
+            properties["reclaim_state"]["enum"] = ["reclaimed", "unsupported", "not_observed"]
+            properties["record_origin"]["enum"] = ["host-attested", "fixture"]
+            properties["attempt"]["minimum"] = 1
+            properties["child_count"]["minimum"] = 0
+        if name == "HostTaskResult":
+            properties["attempt"]["minimum"] = 1
+            properties["diagnostics"]["items"]["pattern"] = r"\S"
+        if name == "BusinessLabel":
+            for field in ("label", "explanation"):
+                properties[field]["pattern"] = r"\S"
+        if name in {"HostReceipt", "HostActiveObservation"}:
+            properties["time_source"]["enum"] = ["host", "coordinator_observed"] + (["unavailable"] if name == "HostReceipt" else [])
+        if name == "HostSubmission":
+            properties["completed_child_agents"]["minimum"] = 0
+            properties["permission_enforcement"]["enum"] = ["shared_workspace_instructions", "host_sandbox", "staging_patch", "worktree"]
+        contracts[scope(name)] = {"contract": scope(name), "schema_version": str(SCHEMA_VERSION),
             "document": {"type": "object", "properties": properties,
                          "required": list(properties), "additionalProperties": False}}
     path = ROOT / "src" / "toolkit" / "core" / "sequence-contracts.json"

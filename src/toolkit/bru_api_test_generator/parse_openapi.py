@@ -17,6 +17,7 @@ from typing import Any
 sys.dont_write_bytecode = True
 
 from .execution_config import initialize_execution_layout
+from .manifest_io import validate_case_contracts
 from .qa_paths import EXECUTION
 
 HTTP_METHODS = {
@@ -980,10 +981,13 @@ def render_case_documentation(cases: list[dict[str, Any]], endpoints: list[dict[
         "",
         "```mermaid",
         "sequenceDiagram",
-        "    participant C as 自动化用例",
+        "    autonumber",
+        "    actor C as 自动化用例",
         "    participant A as API",
         "    C->>A: 发送接口请求",
+        "    activate A",
         "    A-->>C: 返回 HTTP 响应",
+        "    deactivate A",
         "    C->>C: 校验状态码和响应字段",
         "```",
         "",
@@ -1015,10 +1019,13 @@ def render_case_documentation(cases: list[dict[str, Any]], endpoints: list[dict[
                 "",
                 "```mermaid",
                 "sequenceDiagram",
-                "    participant C as 自动化用例",
+                "    autonumber",
+                "    actor C as 自动化用例",
                 "    participant A as API",
                 f"    C->>A: {method} {route}",
+                "    activate A",
                 "    A-->>C: 返回 HTTP 响应",
+                "    deactivate A",
                 "    C->>C: 捕获并校验流程变量",
                 "```",
             ])
@@ -1112,8 +1119,7 @@ def update_module_document(
         updated = overview_pattern.sub(overview + "\n", existing, count=1)
         return update_case_documentation(updated, cases, endpoints)
     generated = render_module_document(module, endpoints, cases, manifest).rstrip()
-    legacy = re.fullmatch(r"(?s)\s*# .+?\s+Swagger tag:\s*`[^`]+`\s*", existing)
-    if legacy or not existing.strip():
+    if not existing.strip():
         return generated + "\n"
     return generated + "\n\n## 原有补充说明\n\n" + existing.strip() + "\n"
 
@@ -1130,10 +1136,13 @@ def render_contracts_readme(index: dict[str, Any], modules: dict[str, tuple[dict
         "",
         "```mermaid",
         "sequenceDiagram",
-        "    participant C as 测试用例",
+        "    autonumber",
+        "    actor C as 测试用例",
         "    participant A as API",
         "    C->>A: 发送接口请求",
+        "    activate A",
         "    A-->>C: 返回 HTTP 响应",
+        "    deactivate A",
         "    C->>C: 校验状态码和响应字段",
         "```",
     ]
@@ -1691,6 +1700,7 @@ def write_partitioned(
     design_sha256: str | None = None,
 ) -> dict[str, Any]:
     contracts_root = output_dir.parent
+    validate_case_contracts(output_dir)
     qa_root = contracts_root.parent.parent if contracts_root.parent.name == "data" else contracts_root.parent
     if coverage_profile not in {"contract-draft", "full-matrix"}:
         raise ValueError(f"unsupported coverage profile: {coverage_profile}")
@@ -1840,7 +1850,7 @@ def write_partitioned(
             previous_case = previous_cases.get(case_id, {}) if isinstance(previous_cases, dict) else {}
             current_case_fingerprint = canonical_fingerprint({
                 key: value for key, value in case.items()
-                if key not in {"bru", "bru_file", "file_name", "manual_review"}
+                if key not in {"bru", "manual_review"}
             })
             if (
                 isinstance(previous_case, dict)
@@ -1862,7 +1872,7 @@ def write_partitioned(
                     elif existing.get("source") == "openapi" and existing.get("manual_review") is not True:
                         preserved = {
                             key: existing[key]
-                            for key in ("bru", "bru_file", "file_name", "sequence", "seq")
+                            for key in ("bru", "sequence")
                             if key in existing
                         }
                         existing.clear()
@@ -1885,7 +1895,7 @@ def write_partitioned(
                     "endpoint_id": str(case.get("endpoint_id", "")),
                     "fingerprint": canonical_fingerprint({
                         key: value for key, value in case.items()
-                        if key not in {"bru", "bru_file", "file_name", "manual_review"}
+                        if key not in {"bru", "manual_review"}
                     }),
                     "manual_review": case.get("manual_review") is True,
                 }

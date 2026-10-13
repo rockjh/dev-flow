@@ -4,7 +4,7 @@ name: 任务管理
 swagger_tag: 任务管理
 tag_description: tenant-scoped task creation, search, retrieval, and cancellation
 source:
-  file: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\openapi.json
+  file: openapi.json
   spec_version: 3.0.3
   api_version: 1.0.0
   sha256: 22560d4b15fc44d83be3f5c3ca880f9a2ca227f4d2e70f1930e80eca39ea009a
@@ -116,7 +116,7 @@ endpoints:
   - bearerAuth: []
   evidence:
     source_kind: openapi
-    file: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\openapi.json
+    file: openapi.json
     symbol: listTasks
     line: 1
     endpoint_scope:
@@ -297,7 +297,7 @@ endpoints:
   security: *id001
   evidence:
     source_kind: openapi
-    file: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\openapi.json
+    file: openapi.json
     symbol: createTask
     line: 1
     endpoint_scope:
@@ -462,7 +462,7 @@ endpoints:
   security: *id001
   evidence:
     source_kind: openapi
-    file: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\openapi.json
+    file: openapi.json
     symbol: getTask
     line: 1
     endpoint_scope:
@@ -588,7 +588,7 @@ endpoints:
   security: *id001
   evidence:
     source_kind: openapi
-    file: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\openapi.json
+    file: openapi.json
     symbol: cancelTask
     line: 1
     endpoint_scope:

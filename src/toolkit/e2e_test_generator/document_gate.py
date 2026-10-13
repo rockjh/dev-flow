@@ -226,11 +226,13 @@ def _heading_key(value: str) -> str:
 
 
 def _parse_mermaid(text: str, path: Path, scenario: str, start_line: int) -> list[DocumentIssue]:
+    from ..core.sequence import validate_sequence
     issues: list[DocumentIssue] = []
     blocks = re.findall(r"```mermaid\s*\n(.*?)```", text, flags=re.I | re.S)
     if len(blocks) != 1:
         return [_issue("DOCUMENT_DIAGRAM_MISSING", "each scenario must contain exactly one Mermaid diagram", path, scenario, start_line)]
     lines = [line.strip() for line in blocks[0].splitlines() if line.strip()]
+    issues.extend(_issue("DOCUMENT_DIAGRAM_INVALID", error, path, scenario, start_line) for error in validate_sequence(blocks[0]))
     if not lines or lines[0].casefold() != "sequencediagram":
         issues.append(_issue("DOCUMENT_DIAGRAM_INVALID", "diagram must start with sequenceDiagram", path, scenario, start_line))
         return issues
@@ -461,8 +463,9 @@ def validate_scenario_artifacts(project: Path, scenarios: list[dict[str, Any]]) 
         meta = value.get("meta", {})
         if str(meta.get("name", "")).strip() != str(item.get("name", "")).strip():
             issues.append(_issue("DOCUMENT_SYNC_BLOCKED", "scenario YAML name does not match Markdown metadata", path, item.get("name", "")))
-        if str(meta.get("status", "")).strip() != str(item.get("status", "active")).strip():
-            issues.append(_issue("DOCUMENT_SYNC_BLOCKED", "scenario YAML status does not match Markdown metadata", path, item.get("name", "")))
+        # Markdown active/retired describes document lifecycle. Scenario status
+        # describes readiness and is already checked by SCENARIO_DOCUMENT_SCHEMA.
+        # An active document can legitimately generate a blocked scenario.
     for scenario_id, (path, _) in by_id.items():
         if scenario_id not in documented:
             issues.append(_issue("DOCUMENT_SCENARIO_UNASSIGNED", f"scenario YAML is not documented: {scenario_id}", path))
@@ -539,13 +542,25 @@ def run_document_gate(project: Path, command: str, *, allow_initial: bool = Fals
     report.issues.extend(markdown_issues)
     state = _load_state(project)
     status = state.get("status", "missing")
+    # A first native run has no accepted baseline yet. Its normal check/collect
+    # path must remain reachable; advance_baseline still requires acceptance.
+    try:
+        can_check_native = command == "check" and status == "generated" and any(
+            isinstance(item.get("generation", {}).get("host_task"), dict)
+            for item in _native_scenarios(project)
+        )
+    except (OSError, ValueError, TypeError, yaml.YAMLError):
+        can_check_native = False
     report.issues.extend(_state_issues(project, state))
     if command in {"check", "run", "source-status"} and status == "generated":
         report.issues.extend(validate_scenario_artifacts(project, scenarios))
     if issues:
         report.issues.extend(issues)
         can_generate_confirmed = command == "generate" and status == "confirmed" and (project / "docs" / "e2e").is_dir() and any((project / "docs" / "e2e").glob("*.md")) and all(item.code == "DOCUMENT_BASELINE_MISSING" for item in issues)
-        if (allow_initial or can_generate_confirmed) and any(item.code == "DOCUMENT_BASELINE_MISSING" for item in issues):
+        if (
+            (allow_initial or can_generate_confirmed) and any(item.code == "DOCUMENT_BASELINE_MISSING" for item in issues)
+            or can_check_native and all(item.code == "DOCUMENT_BASELINE_MISSING" for item in issues)
+        ):
             report.issues = [item for item in report.issues if item.code != "DOCUMENT_BASELINE_MISSING"]
             if allow_initial and not list((project / "docs" / "e2e").glob("*.md")):
                 report.issues = [item for item in report.issues if item.code != "DOCUMENT_SCENARIO_UNASSIGNED"]
@@ -561,7 +576,7 @@ def run_document_gate(project: Path, command: str, *, allow_initial: bool = Fals
         if not allow_initial and status not in {"confirmed" if command == "generate" else "generated"}:
             report.issues.append(_issue("DOCUMENT_CONFIRMATION_REQUIRED", f"document state {status} cannot run {command}"))
             return report
-        if command != "generate" or status != "confirmed":
+        if (command != "generate" or status != "confirmed") and not can_check_native:
             return report
     if not allow_initial:
         required = {"generate": {"confirmed", "generated"}, "init": {"draft", "awaiting_confirmation", "confirmed", "generated"}}.get(command, {"generated"})
@@ -624,9 +639,78 @@ def run_document_gate(project: Path, command: str, *, allow_initial: bool = Fals
     return report
 
 
+def _native_scenarios(project: Path) -> list[dict[str, Any]]:
+    """Required ownership cannot be erased through editable scenario metadata."""
+    result = []
+    scopes = set()
+    for path in sorted((project / "scenarios").glob("*/场景定义.yaml")):
+        definition = yaml.load(path.read_text(encoding="utf-8"), Loader=_UniqueLoader)
+        if not isinstance(definition, dict) or not isinstance(definition.get("generation", {}), dict):
+            raise ValueError("invalid scenario generation metadata")
+        result.append(definition)
+        scopes.add(f"scenarios/{path.parent.name}")
+    if len(result) > 1:
+        return result
+    native = [definition for definition in result if definition.get("generation", {}).get("host_task") is not None
+              or definition.get("generation", {}).get("mode") in {"delegated", "sequential_degraded"}]
+    if native or not result:
+        return native
+    # A previously delegated single scenario still requires its authoritative
+    # task binding. A never-delegated single scenario keeps its existing flow.
+    from ..core.schema import get_schema
+    from .host import _load, _run_path, digest
+
+    project = project.resolve()
+    for path in sorted(_run_path(project, "ownership-check").parent.parent.glob("*/manifest.json")):
+        manifest = _load(path)
+        if manifest.get("project_root") != str(project):
+            continue
+        if validate_schema(get_schema("e2e.host-run")["document"], manifest):
+            raise ValueError("invalid authoritative scenario-owner run")
+        for task in manifest["tasks"]:
+            if (task["task_sha256"] != digest({key: value for key, value in task.items() if key != "task_sha256"})
+                    or task["run_id"] != manifest["run_id"] or task["input_sha256"] != manifest["input_sha256"]
+                    or task["project_root"] != str(project)):
+                raise ValueError("authoritative scenario-owner task binding changed")
+            if task["write_scope"] in scopes:
+                return result
+    return []
+
+
 def advance_baseline(project: Path, report: GateReport) -> bool:
     """Advance the lock only after the caller's downstream gate has passed."""
     if not report.allowed or not report.baseline_pending or not report.current_commit:
+        return False
+    try:
+        native = _native_scenarios(project)
+        if native:
+            from .host import _run_path, _tree, ownership_errors
+            from .runner import _contract_inputs, _discovery_inputs, _gate_session_errors, _seal_errors
+            from .static_checks import static_errors
+
+            if any(ownership_errors(project, definition=definition) for definition in native):
+                return False
+            # A previously accepted run cannot approve changed requirement docs.
+            # Reuse its frozen snapshot; do not add a second document lock.
+            current_documents = {"docs/e2e/" + key: value for key, value in _tree(project / "docs" / "e2e").items()}
+            for definition in native:
+                reference = definition["generation"]["host_task"]
+                manifest = json.loads(_run_path(project, reference["run_id"]).read_text(encoding="utf-8"))
+                frozen_documents = {key: value for key, value in manifest["readonly_snapshot"].items() if key.startswith("docs/e2e/")}
+                if frozen_documents != current_documents:
+                    return False
+            if _gate_session_errors(project, "complete"):
+                return False
+            for gate, inputs in (
+                ("discovery", _discovery_inputs(project)),
+                ("contracts", _contract_inputs(project, None)),
+                ("static", _contract_inputs(project, None)),
+            ):
+                if _seal_errors(project, gate, inputs):
+                    return False
+            if static_errors(project):
+                return False
+    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError):
         return False
     path = project / "analysis" / BASELINE_NAME
     try:
@@ -665,7 +749,7 @@ def _candidate(requirements: list[str], sources: list[dict[str, str]] | None = N
         "expected_results": [f"protocol result satisfies: {requirement}"],
         "exceptions_and_compensation": ["record protocol failure", "apply the documented compensation or retry policy"],
         "biz_flow_refs": refs_by_requirement[index - 1],
-        "mermaid": "sequenceDiagram\n    autonumber\n    participant Client\n    participant Service\n    Client->>Service: invoke business entry\n    alt 分支1：协议成功\n        Service-->>Client: 协议成功，结果已落库，通知已投递\n    else 分支2：协议失败\n        Service-->>Client: 协议失败，结果未落库，通知未投递\n    end",
+        "mermaid": "sequenceDiagram\n    autonumber\n    actor Client\n    participant Service\n    Client->>Service: invoke business entry\n    activate Service\n    alt 分支1：协议成功\n        Service-->>Client: 协议成功，结果已落库，通知已投递\n    else 分支2：协议失败\n        Service-->>Client: 协议失败，结果未落库，通知未投递\n    end\n    deactivate Service",
         "owner": "pending_confirmation",
     } for index, requirement in enumerate(requirements, 1)]
 

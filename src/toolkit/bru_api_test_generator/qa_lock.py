@@ -12,7 +12,7 @@ from typing import Any
 
 sys.dont_write_bytecode = True
 
-from .manifest_io import load_data
+from .manifest_io import case_contract_errors, load_data
 
 
 def fingerprint(value: Any) -> str:
@@ -62,11 +62,14 @@ def current_case_state(contracts_root: Path) -> dict[str, dict[str, Any]]:
         for case in cases if isinstance(cases, list) else []:
             if not isinstance(case, dict) or not case.get("id"):
                 continue
+            errors = case_contract_errors(case)
+            if errors:
+                raise ValueError("; ".join(errors))
             case_id = str(case["id"])
             contract = {
                 key: value
                 for key, value in case.items()
-                if key not in {"bru", "bru_file", "file_name", "manual_review"}
+                if key not in {"bru", "manual_review"}
             }
             result[case_id] = {
                 "module": module,

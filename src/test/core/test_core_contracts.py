@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from toolkit.core.artifacts import require_version_file, write_version_file
+from toolkit.core.artifacts import require_version_file, write_version_file, DOMAIN_SKILL_VERSIONS
 from toolkit.core.errors import DevflowError
 from toolkit.core.redaction import redact
 from toolkit.core.schema import CONFIG_SCHEMA, validate_schema
@@ -31,7 +31,7 @@ class CoreContractTests(unittest.TestCase):
             root = Path(temporary)
             write_version_file(root, "e2e", {"document_baseline": {"git_commit": None}})
             path = root / "analysis" / "e2e-test-generator-version.json"
-            path.write_text(path.read_text().replace('"skill_version": "1.0.0"', '"skill_version": "old"'), encoding="utf-8")
+            path.write_text(path.read_text().replace(DOMAIN_SKILL_VERSIONS['e2e'], 'old'), encoding="utf-8")
             with self.assertRaisesRegex(DevflowError, "skill_version"):
                 require_version_file(root, "e2e")
 

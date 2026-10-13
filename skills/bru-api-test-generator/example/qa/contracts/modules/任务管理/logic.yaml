@@ -1,6 +1,6 @@
 version: 1
 module: tasks
-swagger_tag: 浠诲姟绠＄悊
+swagger_tag: 任务管理
 logic:
 - id: TASK_CREATE_ACCEPTED
   status: confirmed

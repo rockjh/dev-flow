@@ -9,10 +9,10 @@ from copy import deepcopy
 from typing import Any
 
 
-BRU_API_SCHEMA_VERSION = "6.2"
-BIZ_FLOW_SCHEMA_VERSION = "4"
-E2E_GATE_SCHEMA_VERSION = "10"
-SEQUENCE_SCHEMA_VERSION = "2"
+BRU_API_SCHEMA_VERSION = "7"
+BIZ_FLOW_SCHEMA_VERSION = "6"
+E2E_GATE_SCHEMA_VERSION = "11"
+SEQUENCE_SCHEMA_VERSION = "4"
 E2E_RUNTIME_CLASSIFICATIONS = (
     "protocol_available",
     "service_not_found",
@@ -182,11 +182,14 @@ COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
         "one_of": ["--all", "--module"],
         "required": ["--results", "--preflight-results"],
     },
-    "bru-api.worker-start": {"options": {"--qa-root": "path", "--module": "string"}, "required": ["--module"]},
+    "bru-api.worker-start": {"options": {"--qa-root": "path", "--module": "string[]", "--delegate": "boolean",
+        "--execution-mode": ["native", "serial"], "--execution-approval": "string",
+        "--stage": ["generation", "materialization", "pre-execution", "post-execution"]}, "required": ["--module"]},
     "bru-api.worker-check": {
         "options": {
             "--qa-root": "path",
             "--module": "string",
+            "--run-id": "uuid-hex", "--receipt": "path",
             "--stage": ["generation", "materialization", "pre-execution", "post-execution"],
         },
         "required": ["--module"],
@@ -243,11 +246,13 @@ COMMAND_SCHEMAS: dict[str, dict[str, Any]] = {
         "options": {"--project": "path", "--docs-root": "path", "--commit": "string"}
     },
     "biz-flow.check": {
-        "options": {"--project": "path", "--docs-root": "path", "--module": "string", "--commit": "string", "--stage": "string"}
+        "options": {"--project": "path", "--docs-root": "path", "--commit": "string", "--run-id": "string", "--stage": ["entries", "flows"]}
     },
-    "biz-flow.prepare": {"options": {"--project": "path", "--docs-root": "path", "--module": "string", "--purpose": "string", "--confirm": "boolean"}},
+    "biz-flow.verify": {"options": {"--project": "path", "--docs-root": "path", "--run-id": "string"}},
+    "biz-flow.prepare": {"options": {"--commit": "string", "--project": "path", "--docs-root": "path", "--module": "string", "--purpose": "string", "--confirm": "boolean", "--resume": "string"}},
     "biz-flow.collect": {"options": {"--project": "path", "--docs-root": "path", "--run-id": "string", "--results": "path"}},
     "biz-flow.accept": {"options": {"--project": "path", "--docs-root": "path", "--run-id": "string"}},
+    "biz-flow.clean": {"options": {"--run-id": "string", "--all": "boolean"}},
 }
 
 
@@ -449,7 +454,9 @@ SCENARIO_DOCUMENT_SCHEMA = _object(
                 "owner": NONEMPTY_STRING,
                 "write_scope": {"type": "string", "pattern": "^scenarios/[^/]+$"},
                 "degradation_reason": {"type": ["string", "null"]},
-            }
+                "host_task": _object({"run_id": NONEMPTY_STRING, "task_id": NONEMPTY_STRING}),
+                "serial_approval": _object({"reference": NONEMPTY_STRING, "scope": NONEMPTY_STRING}),
+            }, ("mode", "owner", "write_scope", "degradation_reason")
         ),
         "readiness": _object(
             {
@@ -536,7 +543,7 @@ SCENARIO_DOCUMENT_SCHEMA = _object(
                     "action": NONEMPTY_STRING,
                     "control": {"type": "string", "enum": list(E2E_CONTROL_NAMES)},
                     "side_effect": {"type": "string", "enum": ["none", "read", "write"]},
-                    "data_ref": {"type": "string", "pattern": "^涓氬姟鏁版嵁\\.json#/"},
+                    "data_ref": {"type": "string", "pattern": "^业务数据\\.json#/"},
                     "expect": NONEMPTY_STRING_LIST,
                     "status": {"type": "string", "enum": list(E2E_STEP_STATUSES)},
                     "status_reason": NONEMPTY_STRING,
@@ -590,7 +597,7 @@ SCENARIO_DOCUMENT_SCHEMA = _object(
 SCENARIO_SCHEMA: dict[str, Any] = {
     "schema_version": E2E_GATE_SCHEMA_VERSION,
     "contract": "e2e.scenario",
-    "path": "scenarios/<scenario>/鍦烘櫙瀹氫箟.yaml",
+    "path": "scenarios/<scenario>/场景定义.yaml",
     "required": list(SCENARIO_REQUIRED),
     "status": list(E2E_SCENARIO_STATUSES),
     "generation_mode": list(E2E_GENERATION_MODES),
@@ -600,7 +607,7 @@ SCENARIO_SCHEMA: dict[str, Any] = {
     "candidate_kinds": list(E2E_CANDIDATE_KINDS),
     "candidate_status": list(E2E_CANDIDATE_STATUSES),
     "document": SCENARIO_DOCUMENT_SCHEMA,
-    "required_sibling_artifacts": ["涓氬姟鏁版嵁.json", "涓氬姟娴佺▼鍥?md", "test_<scenario>.py"],
+    "required_sibling_artifacts": ["业务数据.json", "业务流程图.md", "test_<scenario>.py"],
     "machine_gate": "devflow e2e check --gate contracts",
 }
 
@@ -880,7 +887,7 @@ CONFIG_SCHEMA: dict[str, Any] = {
             },
             additional=True,
         ),
-        "scenarios/<scenario>/涓氬姟鏁版嵁.json": {
+        "scenarios/<scenario>/业务数据.json": {
             "type": "object",
             "additionalProperties": {"type": "object"},
             "description": "Top-level keys are exact environment names; data_ref resolves only inside the active environment.",
@@ -1641,228 +1648,200 @@ E2E_SCENARIO_PLAN_SCHEMA: dict[str, Any] = {
     }),
 }
 
-BIZ_FLOW_BRANCH_SCHEMA = _object({
-    "branch_id": {"type": "string", "minLength": 1},
-    "source_file": {"type": "string", "minLength": 1},
-    "source_line": {"type": "integer", "minimum": 1},
-    "condition": {"type": "string", "minLength": 1},
-    "outcomes": _array({"type": "string"}, minimum=1),
-    "effects": _array({"type": "string"}),
-    "reachability": {"enum": ["reachable", "unreachable", "unknown"]},
-    "business_relevant": {"type": ["boolean", "null"]},
-})
-BIZ_FLOW_PERSISTENCE_SCHEMA = _object({
-    "persistence_id": {"type": "string", "minLength": 1},
-    "resource_type": {"enum": ["relational_table", "document_collection", "kv_namespace", "search_index", "object_storage", "file_resource", "external_resource"]},
-    "resource_name": {"type": "string", "minLength": 1},
-    "display_name": {"type": "string"},
-    "operation": {"type": "string", "minLength": 1},
-    "condition": {"type": ["string", "null"]},
-    "fields": _array({"type": "string"}),
-    "source_file": {"type": "string", "minLength": 1},
-    "source_line": {"type": "integer", "minimum": 1},
-})
-BIZ_FLOW_UNRESOLVED_SCHEMA = _object({
-    "code": {"type": "string", "minLength": 1},
-    "critical": {"type": "boolean"},
-    "evidence": {"type": "string", "minLength": 1},
-    "reason": {"type": "string"},
-}, required=("code", "critical", "evidence"))
 BIZ_FLOW_SOURCE_EVIDENCE_SCHEMA = _array(_object({
-    "file": {"type": "string", "minLength": 1},
-    "line": {"type": "integer", "minimum": 1},
-    "reason": {"type": "string", "minLength": 1},
-}, required=("file", "line", "reason")))
-BIZ_FLOW_STEP_SCHEMA = _object({
-    "kind": {"enum": ["action", "alt", "else", "opt", "loop", "end"]},
-    "text": NONEMPTY_STRING, "source": NONEMPTY_STRING, "participant": NONEMPTY_STRING,
-    "branch_ids": _array(NONEMPTY_STRING), "persistence_ids": _array(NONEMPTY_STRING),
-    "sender": {"type": "string"}, "response": {"type": "boolean"},
-}, required=("kind", "text", "source", "participant"))
+    "file": NONEMPTY_STRING, "line": {"type": "integer", "minimum": 1}, "reason": NONEMPTY_STRING,
+}))
+BIZ_FLOW_HASH_SCHEMA = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+BIZ_FLOW_PROOF_SCHEMA = _object({
+    "evidence_id": NONEMPTY_STRING, "file": NONEMPTY_STRING,
+    "line": {"type": "integer", "minimum": 1}, "end_line": {"type": "integer", "minimum": 1},
+    "content_hash": BIZ_FLOW_HASH_SCHEMA, "declaration_id": NONEMPTY_STRING,
+})
+BIZ_FLOW_FACT_SCHEMA = _object({
+    "fact_id": NONEMPTY_STRING, "type": NONEMPTY_STRING, "context_id": NONEMPTY_STRING,
+    "phase": {"enum": ["entry", "background"]}, "conditions": _array(NONEMPTY_STRING),
+    "evidence_refs": _array(NONEMPTY_STRING, minimum=1),
+    "details": {"type": "object", "additionalProperties": True},
+})
+BIZ_FLOW_OUTCOME_SCHEMA = _object({
+    **BIZ_FLOW_FACT_SCHEMA["properties"],
+    "type": {"enum": ["entry_response", "normal_completion", "method_return", "background_result", "write_attempt",
+        "state_change", "async_submission", "async_rejection", "throw", "raise", "break", "continue"]},
+    "details": _object({
+        "expression": {"type": "string"}, "observed_by_entry": {"type": "boolean"},
+        "meaning": NONEMPTY_STRING, "guarantee": {"const": "conditional static fact"},
+        "boundary": {"enum": ["entry", "internal"]}, "propagation": NONEMPTY_STRING, "caught_by": NONEMPTY_STRING,
+        "possible_handlers": _array(_object({"branch_id": NONEMPTY_STRING, "handlers": STRING_LIST})),
+    }, ("expression", "observed_by_entry", "meaning", "guarantee")),
+})
+BIZ_FLOW_GAP_SCHEMA = _object({
+    "finding_id": NONEMPTY_STRING, "code": NONEMPTY_STRING, "critical": {"type": "boolean"},
+    "target_id": NONEMPTY_STRING, "question": NONEMPTY_STRING,
+    "evidence_refs": _array(NONEMPTY_STRING, minimum=1), "candidates": _array(NONEMPTY_STRING),
+    "controls": _array(NONEMPTY_STRING),
+})
+BIZ_FLOW_ENTRY_FACTS_SCHEMA = _object({
+    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)}, "entry_id": NONEMPTY_STRING,
+    "source_commit": NONEMPTY_STRING, "source_fingerprint": BIZ_FLOW_HASH_SCHEMA, "adapter_version": NONEMPTY_STRING,
+    "adapter_dependencies": {"type": "object", "additionalProperties": NONEMPTY_STRING},
+    "registration": _object({**{k: {"type": "string"} for k in ("kind", "identifier", "handler", "business_name", "trigger_summary")},
+        "source_evidence": BIZ_FLOW_SOURCE_EVIDENCE_SCHEMA}),
+    "participants": _array(_object({"participant_id": NONEMPTY_STRING, "identity": NONEMPTY_STRING,
+        "evidence_refs": _array(NONEMPTY_STRING, minimum=1),
+        "role": {"enum": ["caller", "service", "storage", "external", "executor"]}})),
+    "sources": _array(BIZ_FLOW_PROOF_SCHEMA),
+    **{k: _array(BIZ_FLOW_FACT_SCHEMA) for k in ("calls", "branches", "persistence_actions", "effects", "outcomes")},
+    "outcomes": _array(BIZ_FLOW_OUTCOME_SCHEMA),
+    "flow": _array(_object({
+        "step_id": NONEMPTY_STRING, "kind": {"enum": ["call", "return", "control_start", "control_else", "control_end",
+            "persistence", "submit", "outcome", "state_change", "transaction_start", "transaction_end"]},
+        "fact_id": NONEMPTY_STRING, "context_id": NONEMPTY_STRING, "phase": {"enum": ["entry", "background"]},
+        "controls": _array(NONEMPTY_STRING),
+        "arm": {"type": "string"},
+    })),
+    "gaps": _array(BIZ_FLOW_GAP_SCHEMA),
+    "coverage": _object({"scope": {"const": "selected-entry-reachable"}, "complete": {"type": "boolean"},
+        "persistence": {"enum": ["proven", "none_in_verified_scope", "unknown"]}, "limitations": _array(NONEMPTY_STRING)}),
+})
+BIZ_FLOW_ANNOTATION_SCHEMA = _object({
+    "target_id": NONEMPTY_STRING, "text": {"type": "string", "minLength": 1, "maxLength": 200},
+    "evidence_refs": _array(NONEMPTY_STRING, minimum=1),
+})
 BIZ_FLOW_REVIEW_SCHEMA = _object({
-    "id": NONEMPTY_STRING, "trigger": NONEMPTY_STRING, "purpose": NONEMPTY_STRING,
-    "input": NONEMPTY_STRING, "outcome": NONEMPTY_STRING, "failure": NONEMPTY_STRING,
-    "status": {"type": "string", "enum": ["draft", "confirmed"]},
-    "confirmed_by": {"type": "string"},
-    "steps": _array(BIZ_FLOW_STEP_SCHEMA, minimum=1),
-}, ("id", "trigger", "purpose", "input", "outcome", "failure", "status", "confirmed_by", "steps"))
+    k: _object({"text": {"type": "string", "minLength": 1, "maxLength": 200},
+                "evidence_refs": _array(NONEMPTY_STRING, minimum=1)})
+    for k in ("trigger", "purpose", "input", "outcome", "failure")
+})
 BIZ_FLOW_RESOLUTION_SCHEMA = _object({
-    "finding": NONEMPTY_STRING, "resolution": NONEMPTY_STRING, "evidence": _array(NONEMPTY_STRING, minimum=1),
-    "path": _array(NONEMPTY_STRING), "controls": _array(NONEMPTY_STRING), "unknowns": _array(NONEMPTY_STRING),
-}, ("finding", "resolution", "evidence"))
+    "finding": {"type": "string", "pattern": "^(OUTCOME_UNRESOLVED|PERSISTENCE_OBJECT_UNRESOLVED|BRANCH_LINE_UNRESOLVED)\\|.+$"},
+    "classification": {"enum": ["normal_completion", "non_persistence", "non_business_decision"]},
+    "evidence": _array(BIZ_FLOW_PROOF_SCHEMA, minimum=1), "path": _array(NONEMPTY_STRING, minimum=1),
+    "controls": _array(NONEMPTY_STRING, minimum=1), "unknowns": {"type": "array", "maxItems": 0},
+    "explanation": {"type": "string", "minLength": 1, "maxLength": 200},
+})
 BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA = _object({
-    "entry_id": {"type": "string", "minLength": 1},
-    "source_fingerprint": {"type": "string", "minLength": 1},
-    "business_name": {"type": "string", "minLength": 1},
-    "trigger_summary": {"type": "string", "minLength": 1},
-    "source_evidence": BIZ_FLOW_SOURCE_EVIDENCE_SCHEMA,
-    "scope_status": {"enum": ["business", "excluded", "待确认"]},
-    "exclusion_reason": {"type": ["string", "null"]},
-    "participants": _array({"type": "string", "minLength": 1}, minimum=1),
-    "calls": _array({"type": "string", "minLength": 1}),
-    "branches": _array(_object({**BIZ_FLOW_BRANCH_SCHEMA["properties"],
-        "label": {"type": "string", "minLength": 1},
-        "outcome_labels": _array({"type": "string", "minLength": 1}),
-        "exclusion_reason": {"type": "string"},
-    }, required=(*BIZ_FLOW_BRANCH_SCHEMA["required"], "label", "outcome_labels"))),
-    "persistence_actions": _array(_object({**BIZ_FLOW_PERSISTENCE_SCHEMA["properties"],
-        "operation_label": {"type": "string", "minLength": 1},
-    })),
-    "async_actions": _array({"type": "string", "minLength": 1}),
-    "external_calls": _array({"type": "string", "minLength": 1}),
-    "outcomes": _array({"type": "string", "minLength": 1}, minimum=1),
-    "unresolved": _array(BIZ_FLOW_UNRESOLVED_SCHEMA),
-    "review": BIZ_FLOW_REVIEW_SCHEMA,
+    "entry_id": NONEMPTY_STRING, "source_fingerprint": BIZ_FLOW_HASH_SCHEMA, "facts_hash": BIZ_FLOW_HASH_SCHEMA,
+    "review": BIZ_FLOW_REVIEW_SCHEMA, "annotations": _array(BIZ_FLOW_ANNOTATION_SCHEMA),
     "resolutions": _array(BIZ_FLOW_RESOLUTION_SCHEMA),
-    }, required=("entry_id", "source_fingerprint", "business_name", "trigger_summary", "source_evidence", "scope_status", "exclusion_reason", "participants", "calls", "branches", "persistence_actions", "async_actions", "external_calls", "outcomes", "unresolved"))
-BIZ_FLOW_RUN_MANIFEST_SCHEMA = _object({
-    "schema_version": {"const": BIZ_FLOW_SCHEMA_VERSION},
-    "run_id": {"type": "string", "minLength": 1},
-    "source_fingerprint": {"type": "string", "minLength": 1},
-    "mapping_hash": {"type": "string", "minLength": 1},
-    "project_root": {"type": "string", "minLength": 1},
-    "docs_root": {"type": "string", "minLength": 1},
-    "status": {"enum": ["pending", "running", "reviewed", "success", "failed"]},
-    "parallel": {"type": "boolean"}, "degraded": {"type": "boolean"},
-    "allow_degraded": {"type": "boolean"},
-    "executor": _object({
-        "type": {"type": "string", "minLength": 1},
-        "adapter": {"type": "string"},
-        "probed": {"type": "boolean"},
-        "capabilities": {"type": "object", "additionalProperties": {"type": "boolean"}},
-    }, ("type", "adapter", "probed", "capabilities")),
-    "modules": {"type": "object", "additionalProperties": _object({
-        "file": {"type": "string", "minLength": 1},
-        "entry_ids": _array({"type": "string", "minLength": 1}, minimum=1, unique=True),
-    })},
-    "tasks": _array(_object({
-        "run_id": {"type": "string"}, "task_id": {"type": "string"},
-        "parent_task_id": {"type": ["string", "null"]},
-        "role": {"enum": ["coordinator", "module", "entry"]},
-        "module_id": {"type": ["string", "null"]}, "entry_id": {"type": ["string", "null"]},
-        "batch_id": {"type": ["string", "null"]},
-        "status": {"enum": ["pending", "running", "success", "failed"]},
-        "started_at": {"type": ["string", "null"]}, "finished_at": {"type": ["string", "null"]},
-        "result_hash": {"type": ["string", "null"]}, "error": {"type": ["string", "null"]},
-    }), minimum=1),
-    "events": _array(_object({
-        "run_id": {"type": "string"}, "sequence": {"type": "integer", "minimum": 1},
-        "kind": {"enum": ["dispatch_batch", "join_batch", "started", "ready", "success", "failed", "write", "write_denied", "reused", "process_finished"]},
-        "task_id": {"type": "string"}, "timestamp": {"type": "string"},
-        "batch_id": {"type": ["string", "null"]},
-        "task_ids": _array({"type": "string"}),
-        "path": {"type": ["string", "null"]}, "result_hash": {"type": ["string", "null"]},
-    })),
-    "inventories": {"type": "object", "additionalProperties": _object({
-        "entry_id": {"type": "string"}, "source_fingerprint": {"type": "string"},
-        "business_name": {"type": "string"}, "trigger_summary": {"type": "string"},
-        "source_evidence": BIZ_FLOW_SOURCE_EVIDENCE_SCHEMA,
-        "scope_status": {"enum": ["business", "excluded", "待确认"]},
-        "exclusion_reason": {"type": ["string", "null"]},
-        "participants": _array({"type": "string"}), "calls": _array({"type": "string"}),
-        "async_actions": _array({"type": "string"}), "external_calls": _array({"type": "string"}),
-        "outcomes": _array({"type": "string"}),
-        "source_branch_inventory": _array(BIZ_FLOW_BRANCH_SCHEMA),
-        "persistence_inventory": _array(BIZ_FLOW_PERSISTENCE_SCHEMA),
-        "unresolved": _array(BIZ_FLOW_UNRESOLVED_SCHEMA),
-    }, required=("entry_id", "source_fingerprint", "business_name", "trigger_summary", "source_evidence", "scope_status", "exclusion_reason", "participants", "calls", "async_actions", "external_calls", "outcomes", "source_branch_inventory", "persistence_inventory", "unresolved"))},
-    "entry_analyses": {"type": "object", "additionalProperties": BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA},
-    "agent_resolutions": _array(BIZ_FLOW_RESOLUTION_SCHEMA),
-    "module_results": {"type": "object", "additionalProperties": _object({
-        "module_id": {"type": "string", "minLength": 1},
-        "entry_analyses": {"type": "object", "additionalProperties": BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA},
-        "markdown": {"type": "string", "minLength": 1},
-    })},
-    "document_hashes": {"type": "object", "additionalProperties": {"type": "string"}},
-    "report": _object({
-        "module_count": {"type": "integer", "minimum": 0},
-        "entry_count": {"type": "integer", "minimum": 0},
-        "module_tasks": {"type": "integer", "minimum": 0},
-        "entry_tasks": {"type": "integer", "minimum": 0},
-        "parallel": {"type": "boolean"},
-        "degraded": {"type": "boolean"},
-        "branch_coverage": {"type": "number", "minimum": 0, "maximum": 1},
-        "persistence_coverage": {"type": "number", "minimum": 0, "maximum": 1},
-        "critical_unresolved": {"type": "integer", "minimum": 0},
-        "stable": {"type": "boolean"},
-        # Final generation reports carry the complete readable-entry audit.
-        # These fields are optional while a run is still in progress so the
-        # initial manifest remains a valid progress record.
-        "module_entry_lists": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}},
-        "business_name_unresolved_count": {"type": "integer", "minimum": 0},
-        "excluded_business_name_unresolved_count": {"type": "integer", "minimum": 0},
-        "excluded_entry_details": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
-        "entry_reconciliation": {"type": "object", "additionalProperties": True},
-        "adapter_evidence_coverage": {"type": "object", "additionalProperties": True},
-        "git_commit": {"type": "string"},
-        "verification_runs": {"type": "integer", "minimum": 0},
-    }, required=(
-        "module_count", "entry_count", "module_tasks", "entry_tasks", "parallel", "degraded",
-        "branch_coverage", "persistence_coverage", "critical_unresolved", "stable",
-    )),
-    "errors": _array({"type": "string"}),
-}, (
-    "schema_version", "run_id", "source_fingerprint", "mapping_hash", "project_root", "docs_root",
-    "status", "parallel", "degraded", "allow_degraded", "modules", "tasks", "events", "inventories",
-    "entry_analyses", "module_results", "document_hashes", "report", "errors",
-))
+}, ("entry_id", "source_fingerprint", "facts_hash", "review", "annotations"))
+BIZ_FLOW_EVIDENCE_REQUEST_SCHEMA = _object({
+    **{k: NONEMPTY_STRING for k in ("run_id", "task_id", "entry_id", "source_fingerprint", "facts_hash", "target_id")},
+    "source_fingerprint": BIZ_FLOW_HASH_SCHEMA, "facts_hash": BIZ_FLOW_HASH_SCHEMA,
+    "finding_id": {"type": ["string", "null"]},
+    "type": {"enum": ["call_binding", "callback_binding", "behavior_classification", "resource_mapping", "branch_classification", "outcome_fact"]},
+    "path": _array(NONEMPTY_STRING, minimum=1), "controls": _array(NONEMPTY_STRING),
+    "sources": _array(BIZ_FLOW_PROOF_SCHEMA, minimum=1),
+    "binding": _object({"declaration_id": NONEMPTY_STRING, "receiver_type": {"type": "string"},
+        "parameter_types": _array(NONEMPTY_STRING), "classification": {"type": "string"}}),
+})
+BIZ_FLOW_ENTRY_RESULT_SCHEMA = {"oneOf": [
+    _object({"kind": {"const": "analysis"}, "analysis": BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA}),
+    _object({"kind": {"const": "evidence_request"}, "evidence_requests": _array(BIZ_FLOW_EVIDENCE_REQUEST_SCHEMA, minimum=1)}),
+]}
 
-# 3.x host handoff contract. Legacy run manifests remain separate and are
-# rejected by the new prepare/collect lifecycle.
-BIZ_FLOW_HANDOFF_SCHEMA = _object({
-    "protocol_version": {"const": "3.0"},
-    "run_id": NONEMPTY_STRING, "project_root": NONEMPTY_STRING,
+NULLABLE_STRING = {"type": ["string", "null"]}
+HOST_ACTIVE_OBSERVATION_SCHEMA = _object({
+    "observed_at": NONEMPTY_STRING,
+    "time_source": {"enum": ["host", "coordinator_observed"]},
+    "tool_reference": NONEMPTY_STRING,
+    "active_task_ids": _array(NONEMPTY_STRING, minimum=2),
+})
+BIZ_FLOW_TASK_SCHEMA = _object({
+    "task_id": NONEMPTY_STRING, "entry_id": NONEMPTY_STRING, "module_id": NONEMPTY_STRING,
+    "input_hash": NONEMPTY_STRING, "task_hash": NONEMPTY_STRING,
+    "source_commit": NONEMPTY_STRING, "source_snapshot": NONEMPTY_STRING,
+    "snapshot_hash": NONEMPTY_STRING, "result_path": NONEMPTY_STRING,
+    "registration_evidence": BIZ_FLOW_SOURCE_EVIDENCE_SCHEMA,
+    "reachable_analysis": _array(NONEMPTY_STRING), "unresolved_questions": {"type": "array"},
+    "permissions": _object({"read_only_source": {"const": True},
+        "write_scope": NONEMPTY_STRING, "enforcement": {"const": "coordinator_scope_check"}}),
+    "result_schema": {"const": "biz-flow.entry-result"}, "status": {"const": "pending"},
+})
+BIZ_FLOW_RECEIPT_SCHEMA = _object({
+    "run_id": NONEMPTY_STRING, "task_id": NONEMPTY_STRING, "batch_id": NONEMPTY_STRING,
+    "task_hash": NONEMPTY_STRING, "input_hash": NONEMPTY_STRING,
+    "child_agent_id": {"anyOf": [NONEMPTY_STRING, {"type": "null"}]},
+    "attempt": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["success", "failed", "interrupted", "timed_out", "evidence_missing", "spawn_failed"]},
+    "result_hash": NULLABLE_STRING, "error": NULLABLE_STRING,
+    "record_origin": {"enum": ["host-attested", "fixture"]},
+    "tool_references": _array(NONEMPTY_STRING, minimum=1),
+    "time_source": {"enum": ["host", "coordinator_observed", "unavailable"]},
+    "started_at": NULLABLE_STRING, "finished_at": NULLABLE_STRING,
+    "reclaim_state": {"enum": ["reclaimed", "unsupported", "not_observed"]},
+    "reclaimed_at": NULLABLE_STRING,
+})
+BIZ_FLOW_EXECUTION_SCHEMA = _object({
+    "receipts": _array(BIZ_FLOW_RECEIPT_SCHEMA),
+    "active_observations": _array({**HOST_ACTIVE_OBSERVATION_SCHEMA,
+        "description": "active_task_ids bind launched receipts as <task_id>:<attempt>; startup failures are excluded."}),
+})
+BIZ_FLOW_AUTHORIZATION_SCHEMA = _object({
+    "choice_reference": NONEMPTY_STRING, "scope": _array(NONEMPTY_STRING, minimum=1),
+})
+BIZ_FLOW_SUBMISSION_SCHEMA = _object({
+    "protocol_version": {"const": "5.0"}, "run_id": NONEMPTY_STRING,
     "source_fingerprint": NONEMPTY_STRING, "mapping_hash": NONEMPTY_STRING,
+    "package_hash": NONEMPTY_STRING, "mode": {"enum": ["native", "serial"]},
+    "parallel": {"type": "boolean"}, "completed_child_agents": {"type": "integer", "minimum": 0},
+    "serial_approval": {"anyOf": [{"type": "null"}, BIZ_FLOW_AUTHORIZATION_SCHEMA]},
+    "execution": BIZ_FLOW_EXECUTION_SCHEMA,
+    "results": {"type": "object", "additionalProperties": BIZ_FLOW_ENTRY_RESULT_SCHEMA},
+})
+BIZ_FLOW_HANDOFF_SCHEMA = _object({
+    "protocol_version": {"const": "5.0"}, "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
+    "run_id": NONEMPTY_STRING, "project_root": NONEMPTY_STRING, "docs_root": NONEMPTY_STRING,
+    "source_commit": NONEMPTY_STRING, "source_fingerprint": NONEMPTY_STRING,
+    "source_status": _object({"target_commit": NONEMPTY_STRING, "head_commit": NONEMPTY_STRING,
+        "workspace_dirty": {"type": "boolean"}, "includes_uncommitted_changes": {"const": False}}),
+    "mapping_hash": NONEMPTY_STRING, "package_hash": NONEMPTY_STRING,
     "mode": {"enum": ["native", "serial", None]},
-    "status": {"enum": ["prepared", "awaiting_serial_choice", "analyzing", "collected", "accepted", "failed", "cancelled"]},
+    "status": {"enum": ["prepared", "collected", "verified", "accepted", "failed", "cancelled", "superseded"]},
     "parallel": {"type": "boolean"}, "degraded": {"type": "boolean"},
     "completed_child_agents": {"type": "integer", "minimum": 0},
-    "tasks": _array(_object({"task_id": NONEMPTY_STRING, "entry_id": NONEMPTY_STRING, "module_id": NONEMPTY_STRING}, ("task_id", "entry_id", "module_id"), additional=True)),
-}, ("protocol_version", "run_id", "project_root", "source_fingerprint", "mapping_hash", "mode", "status", "parallel", "degraded", "completed_child_agents", "tasks"), additional=True)
+    "tasks": _array(BIZ_FLOW_TASK_SCHEMA),
+    "adapter_version": NONEMPTY_STRING,
+    "entry_facts": {"type": "object", "additionalProperties": BIZ_FLOW_ENTRY_FACTS_SCHEMA},
+    "verified_evidence": _array(BIZ_FLOW_EVIDENCE_REQUEST_SCHEMA),
+    "supersedes_run_id": NULLABLE_STRING,
+    "mapping": {"type": "object"},
+    "protected_hashes": {"type": "object", "additionalProperties": NONEMPTY_STRING},
+    "document_inputs": {"type": "object", "additionalProperties": BIZ_FLOW_HASH_SCHEMA},
+    "version_input_hash": BIZ_FLOW_HASH_SCHEMA,
+    "accepted_version_hash": BIZ_FLOW_HASH_SCHEMA,
+    "purpose": {"enum": ["generate", "audit"]}, "module_filter": NULLABLE_STRING,
+    "host_capability": {"enum": ["unknown", "available", "session_reported_unavailable"]},
+    "serial_approval": {"anyOf": [{"type": "null"}, BIZ_FLOW_AUTHORIZATION_SCHEMA]},
+    "execution": BIZ_FLOW_EXECUTION_SCHEMA,
+    "results": {"type": "object", "additionalProperties": BIZ_FLOW_ENTRY_RESULT_SCHEMA},
+    "verification_runs": {"type": "integer", "minimum": 0}, "errors": STRING_LIST,
+    "comparison": _object({"baseline_commit": NULLABLE_STRING, "available": {"type": "boolean"},
+        "reason": NONEMPTY_STRING, "added_entry_ids": STRING_LIST, "changed_entry_ids": STRING_LIST,
+        "deleted_entry_ids": STRING_LIST, "reuse": NONEMPTY_STRING}),
+    "result_hashes": {"type": "object", "additionalProperties": BIZ_FLOW_HASH_SCHEMA},
+    "document_hashes": {"type": "object", "additionalProperties": BIZ_FLOW_HASH_SCHEMA},
+    "submission_hash": BIZ_FLOW_HASH_SCHEMA, "verify_digest": BIZ_FLOW_HASH_SCHEMA,
+    "trust_boundary": {"enum": ["host-attested", "coordinator-attested"]},
+    "validation_scope": {"const": "source-rebuilt-facts-and-canonical-assets"},
+    "collection_errors": STRING_LIST,
+    "rejected_submissions": _array({"type": "object"}),
+    "superseded_by_run_id": NONEMPTY_STRING,
+    "evidence_submission": BIZ_FLOW_SUBMISSION_SCHEMA,
+    "verified_output_hashes": {"type": "object", "additionalProperties": BIZ_FLOW_HASH_SCHEMA},
+    "snapshot_cleaned": {"type": "boolean"},
+}, ("protocol_version", "schema_version", "run_id", "project_root", "docs_root", "source_commit",
+    "source_fingerprint", "mapping_hash", "package_hash", "mode", "status", "parallel", "degraded",
+    "completed_child_agents", "tasks", "adapter_version", "entry_facts", "verified_evidence", "supersedes_run_id", "source_status",
+    "mapping", "protected_hashes", "document_inputs", "version_input_hash", "purpose", "module_filter", "host_capability", "serial_approval",
+    "execution", "results", "verification_runs", "errors", "comparison"))
 
-BIZ_FLOW_ERROR_SCHEMA = _object({
-    "code": NONEMPTY_STRING,
-    "condition": NONEMPTY_STRING,
-    "source": NONEMPTY_STRING,
-    "capture_boundary": NONEMPTY_STRING,
-    "propagation": NONEMPTY_STRING,
-    "consequence": NONEMPTY_STRING,
-    "phase": NONEMPTY_STRING,
-    "recovery": NONEMPTY_STRING,
-}, ("code", "condition", "source", "capture_boundary", "propagation", "consequence", "phase", "recovery"))
-BIZ_FLOW_BEHAVIOR_SCHEMA = _object({
-    "kind": NONEMPTY_STRING, "statement": NONEMPTY_STRING, "source": NONEMPTY_STRING,
+BIZ_FLOW_DISCOVERY_SCHEMA = _object({
+    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
+    "source_fingerprint": NONEMPTY_STRING, "source_commit": NONEMPTY_STRING,
+    "entries": _array(_object({"entry_id": NONEMPTY_STRING,
+        "source_evidence": BIZ_FLOW_SOURCE_EVIDENCE_SCHEMA})),
+    "unresolved": STRING_LIST,
 })
-BIZ_FLOW_DISCOVERY_SCHEMA: dict[str, Any] = _object(
-    {
-        "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
-        "source_fingerprint": NONEMPTY_STRING,
-        "effective_git": _object({
-            "commit": NONEMPTY_STRING, "branch": NONEMPTY_STRING, "workspace_dirty": {"type": "boolean"},
-            "includes_uncommitted_changes": {"type": "boolean"},
-        }),
-        "languages": STRING_LIST,
-        "frameworks": STRING_LIST,
-        "source_files": STRING_LIST,
-        "entries": _array(_object({
-            "id": NONEMPTY_STRING, "type": NONEMPTY_STRING, "identifier": NONEMPTY_STRING,
-            "handler": NONEMPTY_STRING, "source": NONEMPTY_STRING, "suggested_module": NONEMPTY_STRING,
-            "business_name": NONEMPTY_STRING, "trigger_summary": NONEMPTY_STRING,
-            "source_evidence": _array(_object({"file": NONEMPTY_STRING, "line": {"type": "integer", "minimum": 1}, "reason": NONEMPTY_STRING}, ("file", "line", "reason")), minimum=1),
-            "scope_status": {"enum": ["business", "excluded", "待确认"]},
-            "exclusion_reason": {"type": ["string", "null"]},
-            "non_business_candidate": {"type": "boolean"}, "core_capabilities": STRING_LIST,
-            "errors": _array(BIZ_FLOW_ERROR_SCHEMA),
-        })),
-        "candidate_entry_count": {"type": "integer", "minimum": 0},
-        "confirmed_binding_count": {"type": "integer", "minimum": 0},
-        "confirmed_handler_count": {"type": "integer", "minimum": 0},
-        "unresolved": STRING_LIST,
-        "module_suggestions": _array(_object({
-            "name": NONEMPTY_STRING, "entry_ids": STRING_LIST, "basis": NONEMPTY_STRING,
-        }, ("name", "entry_ids", "basis"))),
-    }
-)
 
 BIZ_FLOW_MODULE_MAP_SCHEMA: dict[str, Any] = _object(
     {
@@ -1870,247 +1849,64 @@ BIZ_FLOW_MODULE_MAP_SCHEMA: dict[str, Any] = _object(
         "source_fingerprint": NONEMPTY_STRING,
         "effective_git": NONEMPTY_STRING,
         "confirmed": {"type": "boolean"},
-        "entry_reviews": _array(BIZ_FLOW_REVIEW_SCHEMA),
-        "migrations": _array(_object({
-            "from": NONEMPTY_STRING, "to": NONEMPTY_STRING, "reason": NONEMPTY_STRING,
-        })),
-        "resolutions": _array(_object({
-            "finding": NONEMPTY_STRING, "resolution": NONEMPTY_STRING, "evidence": NONEMPTY_STRING_LIST,
-            "path": STRING_LIST, "controls": STRING_LIST, "unknowns": STRING_LIST,
-        }, ("finding", "resolution", "evidence"))),
-        "entry_overrides": _array(_object({
-            "id": NONEMPTY_STRING, "type": NONEMPTY_STRING, "identifier": NONEMPTY_STRING,
-            "handler": NONEMPTY_STRING, "caller": NONEMPTY_STRING,
-            "input_summary": NONEMPTY_STRING, "title": NONEMPTY_STRING, "core_capabilities": STRING_LIST,
-            "errors": _array(BIZ_FLOW_ERROR_SCHEMA), "behaviors": _array(BIZ_FLOW_BEHAVIOR_SCHEMA),
-        }, ("id",))),
-        "additional_entries": _array(_object({
-            "id": NONEMPTY_STRING, "type": NONEMPTY_STRING, "identifier": NONEMPTY_STRING,
-            "handler": NONEMPTY_STRING, "source": NONEMPTY_STRING, "caller": NONEMPTY_STRING,
-            "input_summary": NONEMPTY_STRING, "core_capabilities": STRING_LIST,
-            "errors": _array(BIZ_FLOW_ERROR_SCHEMA), "behaviors": _array(BIZ_FLOW_BEHAVIOR_SCHEMA),
-        })),
         "exclusions": _array(_object({
             "candidate": NONEMPTY_STRING, "reason": NONEMPTY_STRING, "evidence": NONEMPTY_STRING_LIST,
             "module": NONEMPTY_STRING,
         }, required=("candidate", "reason", "evidence"))),
         "modules": _array(_object({
             "name": NONEMPTY_STRING, "display_name": NONEMPTY_STRING, "rationale": NONEMPTY_STRING,
-            "file": NONEMPTY_STRING, "responsibility": NONEMPTY_STRING, "objects": STRING_LIST,
-            "partners": STRING_LIST, "questions": STRING_LIST, "entry_ids": STRING_LIST,
+            "file": NONEMPTY_STRING, "responsibility": NONEMPTY_STRING, "entry_ids": STRING_LIST,
         })),
     }
 )
-
-BIZ_FLOW_INDEX_SCHEMA: dict[str, Any] = _object(
-    {
-        "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
-        "source_fingerprint": NONEMPTY_STRING,
-        "effective_git": _object({
-            "commit": NONEMPTY_STRING,
-            "branch": NONEMPTY_STRING,
-            "workspace_dirty": {"type": "boolean"},
-            "includes_uncommitted_changes": {"type": "boolean"},
-        }),
-        "comparison": NONEMPTY_STRING,
-        "old_commit": {"type": ["string", "null"]},
-        "languages": STRING_LIST,
-        "frameworks": STRING_LIST,
-        "modules": _array(_object({
-            "name": NONEMPTY_STRING, "file": NONEMPTY_STRING, "rationale": NONEMPTY_STRING,
-            "entry_ids": STRING_LIST,
-        })),
-        "migrations": BIZ_FLOW_MODULE_MAP_SCHEMA["properties"]["migrations"],
-        "entries": _array(_object({
-            "id": NONEMPTY_STRING, "type": NONEMPTY_STRING, "identifier": NONEMPTY_STRING,
-            "handler": NONEMPTY_STRING, "module": NONEMPTY_STRING, "source": NONEMPTY_STRING,
-            "business_name": NONEMPTY_STRING, "trigger_summary": NONEMPTY_STRING,
-            "source_evidence": _array(_object({"file": NONEMPTY_STRING, "line": {"type": "integer", "minimum": 1}, "reason": NONEMPTY_STRING}, ("file", "line", "reason")), minimum=1),
-            "scope_status": {"enum": ["business", "excluded", "待确认"]},
-            "exclusion_reason": {"type": ["string", "null"]},
-            "caller": NONEMPTY_STRING, "input_summary": NONEMPTY_STRING, "core_capabilities": STRING_LIST,
-            "error_codes": STRING_LIST,
-            "errors": _array(BIZ_FLOW_ERROR_SCHEMA),
-            "behaviors": _array(BIZ_FLOW_BEHAVIOR_SCHEMA),
-            "review": BIZ_FLOW_REVIEW_SCHEMA,
-        })),
-        "counts": _object({
-            "entries": {"type": "integer", "minimum": 0},
-            "modules": {"type": "integer", "minimum": 0},
-            "error_codes": {"type": "integer", "minimum": 0},
-            "by_type": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
-        }),
-        "unresolved": STRING_LIST,
-    }
-)
-
-BIZ_FLOW_REPORT_SCHEMA: dict[str, Any] = _object(
-    {
-        "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
-        "source_fingerprint": NONEMPTY_STRING,
-        "effective_git": BIZ_FLOW_INDEX_SCHEMA["properties"]["effective_git"],
-        "project": NONEMPTY_STRING,
-        "scope": {"type": ["string", "null"]},
-        "languages": STRING_LIST,
-        "frameworks": STRING_LIST,
-        "module_count": {"type": "integer", "minimum": 0},
-        "document_count": {"type": "integer", "minimum": 0},
-        "url_entry_count": {"type": "integer", "minimum": 0},
-        "scheduled_task_count": {"type": "integer", "minimum": 0},
-        "message_consumer_count": {"type": "integer", "minimum": 0},
-        "other_entry_count": {"type": "integer", "minimum": 0},
-        "active_error_code_count": {"type": "integer", "minimum": 0},
-        "entry_count": {"type": "integer", "minimum": 0},
-        "candidate_entry_count": {"type": "integer", "minimum": 0},
-        "confirmed_binding_count": {"type": "integer", "minimum": 0},
-        "confirmed_handler_count": {"type": "integer", "minimum": 0},
-        "completed_entry_count": {"type": "integer", "minimum": 0},
-        "excluded_entry_count": {"type": "integer", "minimum": 0},
-        "pending_review_count": {"type": "integer", "minimum": 0},
-        "added_entries": STRING_LIST,
-        "updated_entries": STRING_LIST,
-        "deleted_entries": STRING_LIST,
-        "version_only_documents": STRING_LIST,
-        "business_changed_documents": STRING_LIST,
-        "comparison": NONEMPTY_STRING,
-        "comparison_error": {"type": ["string", "null"]},
-        "exclusions": STRING_LIST,
-        "unresolved": STRING_LIST,
-        "module_entry_lists": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}},
-        "business_name_unresolved_count": {"type": "integer", "minimum": 0},
-        "excluded_business_name_unresolved_count": {"type": "integer", "minimum": 0},
-        "excluded_entry_details": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
-        "entry_reconciliation": {"type": "object", "additionalProperties": True},
-        "adapter_evidence_coverage": {"type": "object", "additionalProperties": True},
-        "coverage": _object({
-            "code_entry_count": {"type": "integer", "minimum": 0},
-            "documented_entry_count": {"type": "integer", "minimum": 0},
-            "missing_entries": STRING_LIST,
-            "stale_entries": STRING_LIST,
-            "code_error_code_count": {"type": "integer", "minimum": 0},
-            "documented_error_code_count": {"type": "integer", "minimum": 0},
-            "missing_error_codes": STRING_LIST,
-            "stale_error_codes": STRING_LIST,
-            "missing_error_evidence": STRING_LIST,
-            "stale_error_evidence": STRING_LIST,
-            "unique_module_count": {"type": "integer", "minimum": 0},
-            "markdown_document_count": {"type": "integer", "minimum": 0},
-            "markdown_entry_count": {"type": "integer", "minimum": 0},
-            "markdown_missing_documents": STRING_LIST,
-            "markdown_missing_entries": STRING_LIST,
-            "markdown_stale_entries": STRING_LIST,
-            "markdown_missing_error_codes": STRING_LIST,
-            "markdown_missing_error_evidence": STRING_LIST,
-            "markdown_stale_error_evidence": STRING_LIST,
-            "markdown_diagram_mismatches": STRING_LIST,
-            "markdown_fact_mismatches": STRING_LIST,
-            "markdown_version_mismatches": STRING_LIST,
-        }),
-        "index_path": NONEMPTY_STRING,
-    }
-)
-
-# Auxiliary artifacts are deliberately small contracts rather than opaque JSON
-# blobs.  They let ``check`` detect stale or truncated supporting evidence too.
-BIZ_FLOW_OWNERSHIP_SCHEMA: dict[str, Any] = _object({
-    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
-    "source_fingerprint": NONEMPTY_STRING,
-    "confirmed": {"type": "boolean"},
-    "entries": _array(_object({
-        "id": NONEMPTY_STRING, "module": NONEMPTY_STRING, "file": NONEMPTY_STRING,
-    })),
-})
-
-BIZ_FLOW_MIGRATIONS_SCHEMA: dict[str, Any] = _object({
-    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
-    "source_fingerprint": NONEMPTY_STRING,
-    "migrations": BIZ_FLOW_MODULE_MAP_SCHEMA["properties"]["migrations"],
-})
-
-BIZ_FLOW_COMPARISON_SCHEMA: dict[str, Any] = _object({
-    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
-    "source_fingerprint": NONEMPTY_STRING,
-    "comparison": NONEMPTY_STRING,
-    "entry_alignment": _object({
-        "added": STRING_LIST, "updated": STRING_LIST, "deleted": STRING_LIST,
-    }),
-    "version_only_documents": STRING_LIST,
-    "business_changed_documents": STRING_LIST,
-    "changed_paths": STRING_LIST,
-    "comparison_error": {"type": ["string", "null"]},
-    "fact_diffs": _array(_object({"id": NONEMPTY_STRING, "changes": STRING_LIST})),
-    "semantic_diffs": _array(_object({
-        "id": NONEMPTY_STRING,
-        "category": NONEMPTY_STRING,
-        "status": {"type": "string", "enum": ["added", "missing", "contradictory", "unknown"]},
-        "old": STRING_LIST,
-        "new": STRING_LIST,
-        "reason": NONEMPTY_STRING,
-    })),
-})
-
-BIZ_FLOW_EVIDENCE_CACHE_SCHEMA: dict[str, Any] = _object({
-    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
-    "source_fingerprint": NONEMPTY_STRING,
-    "root": NONEMPTY_STRING,
-    "git": {"type": "object", "additionalProperties": True},
-    "languages": STRING_LIST,
-    "frameworks": STRING_LIST,
-    "files": STRING_LIST,
-    "source_lines": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
-    "unresolved": STRING_LIST,
-    "exclusions": STRING_LIST,
-    "candidate_entry_count": {"type": "integer", "minimum": 0},
-    "confirmed_binding_count": {"type": "integer", "minimum": 0},
-    "confirmed_handler_count": {"type": "integer", "minimum": 0},
-    "entries": {"type": "object", "additionalProperties": True},
-})
-
-BIZ_FLOW_DEPENDENCY_GRAPH_SCHEMA: dict[str, Any] = _object({
-    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
-    "source_fingerprint": NONEMPTY_STRING,
-    "nodes": _array(_object({"entry": NONEMPTY_STRING, "functions": STRING_LIST})),
-    "shared_sources": STRING_LIST,
-})
-
-BIZ_FLOW_PROGRESS_SCHEMA: dict[str, Any] = _object({
-    "schema_version": {"const": int(BIZ_FLOW_SCHEMA_VERSION)},
-    "run_id": NONEMPTY_STRING,
-    "run_handle": NONEMPTY_STRING,
-    "phase": NONEMPTY_STRING,
-    "stage": NONEMPTY_STRING,
-    "status": {"type": "string", "enum": ["running", "completed", "failed"]},
-    "source_fingerprint": {"type": "string"},
-    "updated_at": NONEMPTY_STRING,
-    "error": {"type": ["string", "null"]},
-    "failure_log": {"type": ["string", "null"]},
-    "resumed": {"type": "boolean"},
-    "cache_entries": {"type": "integer", "minimum": 0},
-})
 
 BIZ_FLOW_DISCOVERY_SCHEMA["schema_version"] = int(BIZ_FLOW_SCHEMA_VERSION)
+BIZ_FLOW_HANDOFF_SCHEMA["properties"]["mapping"] = BIZ_FLOW_MODULE_MAP_SCHEMA
 BIZ_FLOW_DISCOVERY_SCHEMA["contract"] = "biz-flow.discovery"
 BIZ_FLOW_MODULE_MAP_SCHEMA["schema_version"] = int(BIZ_FLOW_SCHEMA_VERSION)
 BIZ_FLOW_MODULE_MAP_SCHEMA["contract"] = "biz-flow.module-map"
-BIZ_FLOW_INDEX_SCHEMA["schema_version"] = int(BIZ_FLOW_SCHEMA_VERSION)
-BIZ_FLOW_INDEX_SCHEMA["contract"] = "biz-flow.index"
-BIZ_FLOW_REPORT_SCHEMA["schema_version"] = int(BIZ_FLOW_SCHEMA_VERSION)
-BIZ_FLOW_REPORT_SCHEMA["contract"] = "biz-flow.report"
-for _schema in (
-    BIZ_FLOW_OWNERSHIP_SCHEMA,
-    BIZ_FLOW_MIGRATIONS_SCHEMA,
-    BIZ_FLOW_COMPARISON_SCHEMA,
-    BIZ_FLOW_EVIDENCE_CACHE_SCHEMA,
-    BIZ_FLOW_DEPENDENCY_GRAPH_SCHEMA,
-    BIZ_FLOW_PROGRESS_SCHEMA,
-):
-    _schema["schema_version"] = BIZ_FLOW_SCHEMA_VERSION
-BIZ_FLOW_OWNERSHIP_SCHEMA["contract"] = "biz-flow.ownership"
-BIZ_FLOW_MIGRATIONS_SCHEMA["contract"] = "biz-flow.migrations"
-BIZ_FLOW_COMPARISON_SCHEMA["contract"] = "biz-flow.comparison"
-BIZ_FLOW_EVIDENCE_CACHE_SCHEMA["contract"] = "biz-flow.evidence-cache"
-BIZ_FLOW_DEPENDENCY_GRAPH_SCHEMA["contract"] = "biz-flow.dependency-graph"
-BIZ_FLOW_PROGRESS_SCHEMA["contract"] = "biz-flow.progress"
+
+BRU_WORKER_HASH = {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+BRU_WORKER_TASK = _object({
+    "task_id": NONEMPTY_STRING, "module": NONEMPTY_STRING, "directory": NONEMPTY_STRING,
+    "write_scope": NONEMPTY_STRING_LIST, "result_path": NONEMPTY_STRING, "questions": NONEMPTY_STRING_LIST,
+}, ("task_id", "module", "directory", "write_scope", "result_path", "questions"))
+BRU_WORKER_TASK_PACKAGE = _object({
+    "protocol_version": {"const": 1}, "domain": {"const": "bru-api"},
+    "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}, "qa_root": NONEMPTY_STRING,
+    "execution_mode": {"type": "string", "enum": ["native", "serial"]}, "execution_approval": {"type": "string"},
+    "validation_stage": {"type": "string", "enum": ["generation", "materialization", "pre-execution", "post-execution"]},
+    "input_hash": BRU_WORKER_HASH, "tasks": _array(BRU_WORKER_TASK, minimum=1),
+    "protected_files": {"type": "object", "additionalProperties": NONEMPTY_STRING},
+    "baseline_files": {"type": "object", "additionalProperties": NONEMPTY_STRING},
+    "handoff_root": NONEMPTY_STRING, "submission_contract": {"const": "bru-api.worker-submission"}, "stop_conditions": NONEMPTY_STRING_LIST,
+}, ("protocol_version", "domain", "run_id", "qa_root", "execution_mode", "execution_approval", "validation_stage", "input_hash", "tasks",
+    "protected_files", "baseline_files", "handoff_root", "submission_contract", "stop_conditions"))
+BRU_WORKER_ATTEMPT = _object({
+    "attempt": {"type": "integer", "minimum": 1},
+    "status": {"type": "string", "enum": ["success", "failed", "timeout", "interrupted", "spawn_failed"]},
+    "child_agent_id": {"type": "string"}, "tool_references": STRING_LIST,
+    "time_source": {"type": "string", "enum": ["host", "coordinator_observed", "unavailable"]},
+    "started_at": {"type": "string"}, "ended_at": {"type": "string"}, "reclaimed_at": {"type": "string"},
+    "reclaim_state": {"type": "string", "enum": ["reclaimed", "unsupported", "not_observed"]}, "error": {"type": "string"},
+}, ("attempt", "status", "child_agent_id", "tool_references", "time_source", "started_at", "ended_at", "reclaimed_at", "reclaim_state", "error"))
+BRU_WORKER_RESULT = _object({
+    "attempt": {"type": "integer", "minimum": 1},
+    "artifact_hashes": {"type": "object", "additionalProperties": BRU_WORKER_HASH},
+    "changed_paths": STRING_LIST, "diagnostics": NONEMPTY_STRING_LIST,
+}, ("attempt", "artifact_hashes", "changed_paths", "diagnostics"))
+BRU_WORKER_SUBMISSION = _object({
+    "run_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}, "task_id": NONEMPTY_STRING,
+    "package_hash": BRU_WORKER_HASH, "task_hash": BRU_WORKER_HASH, "input_hash": BRU_WORKER_HASH,
+    "record_origin": {"type": "string", "enum": ["host-attested", "fixture"]},
+    "permission_enforcement": {"type": "string", "enum": ["shared_workspace_instructions", "host_sandbox", "worktree", "staging_patch"]},
+    "attempts": _array(BRU_WORKER_ATTEMPT, minimum=1), "result": BRU_WORKER_RESULT, "result_hash": BRU_WORKER_HASH,
+    "active_observations": _array(_object({
+        "observed_at": NONEMPTY_STRING, "active_task_ids": NONEMPTY_STRING_LIST,
+        "active_child_agent_ids": NONEMPTY_STRING_LIST, "active_attempts": _array({"type": "integer", "minimum": 1}, minimum=2),
+        "tool_reference": NONEMPTY_STRING, "time_source": {"type": "string", "enum": ["host", "coordinator_observed"]},
+    }, ("observed_at", "active_task_ids", "active_child_agent_ids", "active_attempts", "tool_reference", "time_source"))),
+}, ("run_id", "task_id", "package_hash", "task_hash", "input_hash", "record_origin", "permission_enforcement", "attempts", "result", "result_hash", "active_observations"))
 
 CONTRACT_SCHEMAS = {
     "e2e.document-baseline": E2E_DOCUMENT_BASELINE_SCHEMA,
@@ -2120,19 +1916,19 @@ CONTRACT_SCHEMAS = {
     "bru-api.logic": BRU_API_LOGIC_SCHEMA,
     "bru-api.value-resolution": BRU_API_VALUE_RESOLUTION_SCHEMA,
     "bru-api.version-lock": BRU_API_VERSION_LOCK_SCHEMA,
+    "bru-api.worker-task-package": {"contract": "bru-api.worker-task-package", "schema_version": BRU_API_SCHEMA_VERSION, "document": BRU_WORKER_TASK_PACKAGE},
+    "bru-api.worker-result": {"contract": "bru-api.worker-result", "schema_version": BRU_API_SCHEMA_VERSION, "document": BRU_WORKER_RESULT},
+    "bru-api.worker-submission": {"contract": "bru-api.worker-submission", "schema_version": BRU_API_SCHEMA_VERSION, "document": BRU_WORKER_SUBMISSION},
     "biz-flow.discovery": BIZ_FLOW_DISCOVERY_SCHEMA,
-    "biz-flow.run-manifest": BIZ_FLOW_RUN_MANIFEST_SCHEMA,
     "biz-flow.handoff": BIZ_FLOW_HANDOFF_SCHEMA,
+    "biz-flow.submission": BIZ_FLOW_SUBMISSION_SCHEMA,
+    "biz-flow.task": BIZ_FLOW_TASK_SCHEMA,
+    "biz-flow.receipt": BIZ_FLOW_RECEIPT_SCHEMA,
     "biz-flow.entry-analysis": BIZ_FLOW_ENTRY_ANALYSIS_SCHEMA,
+    "biz-flow.entry-facts": BIZ_FLOW_ENTRY_FACTS_SCHEMA,
+    "biz-flow.entry-result": BIZ_FLOW_ENTRY_RESULT_SCHEMA,
+    "biz-flow.evidence-request": BIZ_FLOW_EVIDENCE_REQUEST_SCHEMA,
     "biz-flow.module-map": BIZ_FLOW_MODULE_MAP_SCHEMA,
-    "biz-flow.index": BIZ_FLOW_INDEX_SCHEMA,
-    "biz-flow.report": BIZ_FLOW_REPORT_SCHEMA,
-    "biz-flow.ownership": BIZ_FLOW_OWNERSHIP_SCHEMA,
-    "biz-flow.migrations": BIZ_FLOW_MIGRATIONS_SCHEMA,
-    "biz-flow.comparison": BIZ_FLOW_COMPARISON_SCHEMA,
-    "biz-flow.evidence-cache": BIZ_FLOW_EVIDENCE_CACHE_SCHEMA,
-    "biz-flow.dependency-graph": BIZ_FLOW_DEPENDENCY_GRAPH_SCHEMA,
-    "biz-flow.progress": BIZ_FLOW_PROGRESS_SCHEMA,
     "e2e.scenario": SCENARIO_SCHEMA,
     "e2e.workspace": WORKSPACE_SCHEMA,
     "e2e.config": CONFIG_SCHEMA,
@@ -2145,6 +1941,78 @@ CONTRACT_SCHEMAS = {
     "e2e.version-lock": E2E_VERSION_LOCK_SCHEMA,
 }
 
+
+E2E_SERIAL_APPROVAL_SCHEMA = _object({
+    "decision": {"const": "serial"},
+    "reference": NONEMPTY_STRING, "scopes": _array(NONEMPTY_STRING, minimum=1, unique=True),
+    "native_status": {"enum": ["tool_missing", "host_forbidden", "spawn_failed_unrecoverable"]},
+    "reason": NONEMPTY_STRING, "diagnostic_reference": NONEMPTY_STRING,
+    "prior_run_ids": _array(NONEMPTY_STRING, unique=True),
+})
+E2E_HOST_TASK_SCHEMA = _object({
+    "protocol_version": {"const": 1}, "domain": {"const": "e2e"},
+    **{key: NONEMPTY_STRING for key in ("run_id", "task_id", "scenario_id", "project_root", "write_scope",
+        "input_sha256", "starter_sha256", "result_path", "instructions", "permission_enforcement", "task_sha256")},
+    "inputs": {"type": "object", "additionalProperties": True},
+    "source": _array({"type": "object", "additionalProperties": True}),
+    "design_rule_ids": _array(NONEMPTY_STRING),
+    "mode": {"const": "serial"}, "serial_approval": E2E_SERIAL_APPROVAL_SCHEMA,
+}, ("protocol_version", "domain", "run_id", "task_id", "scenario_id", "project_root", "write_scope",
+    "input_sha256", "starter_sha256", "result_path", "instructions", "permission_enforcement", "task_sha256",
+    "inputs", "source", "design_rule_ids"))
+E2E_HOST_RECEIPT_SCHEMA = _object({
+    **{key: NONEMPTY_STRING for key in ("run_id", "task_id", "task_sha256", "input_sha256", "write_scope")},
+    "child_agent_id": {"anyOf": [NONEMPTY_STRING, {"type": "null"}]},
+    "attempt": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["success", "failed", "interrupted", "timeout", "spawn_failed"]},
+    "result_sha256": NULLABLE_STRING, "tool_records": _array(NONEMPTY_STRING, minimum=1),
+    "written_paths": _array(NONEMPTY_STRING),
+    "analysis_summary": NONEMPTY_STRING, "source_evidence": _array(NONEMPTY_STRING), "error": NONEMPTY_STRING,
+}, ("run_id", "task_id", "task_sha256", "input_sha256", "write_scope", "child_agent_id", "attempt",
+    "status", "result_sha256", "tool_records", "written_paths"))
+E2E_HOST_RESULTS_SCHEMA = _object({
+    "protocol_version": {"const": 1}, "domain": {"const": "e2e"}, "run_id": NONEMPTY_STRING,
+    "mode": {"enum": ["native", "serial"]}, "degraded": {"type": "boolean"}, "parallel": {"type": "boolean"},
+    "completed_child_agents": {"type": "integer", "minimum": 0},
+    "receipts": _array(E2E_HOST_RECEIPT_SCHEMA, minimum=1), "observations": _array(HOST_ACTIVE_OBSERVATION_SCHEMA),
+    "fixture": {"type": "boolean"},
+    "serial_approval": E2E_SERIAL_APPROVAL_SCHEMA,
+}, ("protocol_version", "domain", "run_id", "mode", "degraded", "parallel", "completed_child_agents", "receipts", "observations"))
+E2E_HOST_RUN_SCHEMA = _object({
+    "protocol_version": {"const": 1}, "domain": {"const": "e2e"}, "run_id": NONEMPTY_STRING,
+    "project_root": NONEMPTY_STRING, "input_sha256": NONEMPTY_STRING,
+    "status": {"enum": ["tasks_prepared", "results_collected"]}, "mode": {"enum": ["native", "serial"]},
+    "parallel": {"type": "boolean"}, "degraded": {"type": "boolean"},
+    "completed_child_agents": {"type": "integer", "minimum": 0}, "tasks": _array(E2E_HOST_TASK_SCHEMA),
+    "readonly_snapshot": {"type": "object", "additionalProperties": NONEMPTY_STRING},
+    "source_workspaces": {"type": "object", "additionalProperties": {"type": "object"}},
+    "receipts": _array(E2E_HOST_RECEIPT_SCHEMA), "observations": _array(HOST_ACTIVE_OBSERVATION_SCHEMA),
+    "trust_boundary": NONEMPTY_STRING,
+    "serial_approval": E2E_SERIAL_APPROVAL_SCHEMA,
+}, ("protocol_version", "domain", "run_id", "project_root", "input_sha256", "status", "mode", "parallel", "degraded",
+    "completed_child_agents", "tasks", "readonly_snapshot", "source_workspaces", "receipts", "observations", "trust_boundary"), additional=True)
+# These are two explicit execution modes, not interchangeable flags. Runtime
+# validation additionally binds their authorization and receipts to the tasks.
+_e2e_execution_schemas = []
+for _document in (E2E_HOST_RESULTS_SCHEMA, E2E_HOST_RUN_SCHEMA):
+    _native = deepcopy(_document)
+    _native["properties"].update({"mode": {"const": "native"}, "degraded": {"const": False}})
+    _native["properties"].pop("serial_approval")
+    _serial = deepcopy(_document)
+    _serial["properties"].update({"mode": {"const": "serial"}, "degraded": {"const": True},
+        "parallel": {"const": False}, "completed_child_agents": {"const": 0},
+        "observations": {"type": "array", "maxItems": 0}})
+    _serial["required"].append("serial_approval")
+    _e2e_execution_schemas.append({"oneOf": [_native, _serial]})
+E2E_HOST_RESULTS_SCHEMA, E2E_HOST_RUN_SCHEMA = _e2e_execution_schemas
+for _name, _document in {"host-task": E2E_HOST_TASK_SCHEMA, "host-receipt": E2E_HOST_RECEIPT_SCHEMA,
+                        "host-results": E2E_HOST_RESULTS_SCHEMA, "host-run": E2E_HOST_RUN_SCHEMA,
+                        "serial-approval": E2E_SERIAL_APPROVAL_SCHEMA}.items():
+    CONTRACT_SCHEMAS[f"e2e.{_name}"] = {"contract": f"e2e.{_name}", "schema_version": E2E_GATE_SCHEMA_VERSION, "document": _document}
+COMMAND_SCHEMAS["e2e.generate"]["options"]["--delegate"] = "boolean"
+for _command in ("e2e.init", "e2e.generate"):
+    COMMAND_SCHEMAS[_command]["options"]["--serial-approval"] = "path"
+COMMAND_SCHEMAS["e2e.check"]["options"]["--host-results"] = "path"
 
 CONTRACT_SCHEMAS.update(json.loads(Path(__file__).with_name("sequence-contracts.json").read_text(encoding="utf-8")))
 CONTRACT_SCHEMAS["sequence-diagram-generator.domain-command-result"] = {
@@ -2281,6 +2149,8 @@ def validate_schema(schema: dict[str, Any], value: Any, path: str = "$") -> list
     elif isinstance(value, str):
         if len(value) < schema.get("minLength", 0):
             errors.append(f"{path}: string is too short")
+        if len(value) > schema.get("maxLength", len(value)):
+            errors.append(f"{path}: string is too long")
         if "pattern" in schema and re.search(schema["pattern"], value) is None:
             errors.append(f"{path}: string does not match required pattern")
     elif isinstance(value, (int, float)) and not isinstance(value, bool):

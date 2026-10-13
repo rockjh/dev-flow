@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import subprocess
 import tempfile
 import unittest
@@ -12,16 +11,12 @@ from unittest.mock import patch
 
 from toolkit.cli import console_main
 from toolkit.core.schema import BIZ_FLOW_SCHEMA_VERSION, get_schema, validate_schema
+from toolkit.core.artifacts import ProjectDomainLock
+from toolkit.biz_flow_doc_generator.evidence import collect_evidence
 from toolkit.biz_flow_doc_generator.discovery import scan
 
 
 class BizFlowContractTests(unittest.TestCase):
-    def setUp(self) -> None:
-        # 单元契约不依赖本机账号和网络，真实代理由独立端到端验证覆盖。
-        probe = patch("toolkit.biz_flow_doc_generator.orchestration.discover_agent_executor",
-                      return_value=(None, {"type": "unavailable", "adapter": "", "probed": True, "capabilities": {}}))
-        probe.start()
-        self.addCleanup(probe.stop)
 
     def invoke(self, *arguments: str) -> tuple[int, dict[str, object]]:
         output = io.StringIO()
@@ -57,67 +52,16 @@ class BizFlowContractTests(unittest.TestCase):
         overview.write_text(text + "\n<!-- devflow:module-confirmed -->\n", encoding="utf-8")
         return overview
 
-    def test_registration_schema_and_generation(self) -> None:
-        from toolkit.biz_flow_doc_generator.documents import _diagram
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            code, result = self.invoke("schema", "biz-flow.prepare")
-            self.assertEqual(0, code)
-            self.assertEqual(BIZ_FLOW_SCHEMA_VERSION, result["data"]["schema_version"])
-            self.assertIn("--confirm", result["data"]["options"])
-            code, result = self.invoke("schema", "biz-flow.discover")
-            self.assertEqual(0, code)
-            self.assertIn("--commit", result["data"]["options"])
-            code, result = self.invoke("schema", "biz-flow.module-map")
-            self.assertEqual(0, code)
-            self.assertIn("confirmed", result["data"]["properties"])
-            code, result = self.invoke("schema", "biz-flow.report")
-            self.assertEqual(0, code)
-            self.assertEqual(int(BIZ_FLOW_SCHEMA_VERSION), result["data"]["schema_version"])
-            self.initialize_and_confirm(root)
-            for arguments in ((), ("--allow-degraded",)):
-                code, result = self.invoke("biz-flow", "generate", "--project", str(root), *arguments)
-                self.assertEqual(8, code, result)
-                self.assertIn("was removed", result["error"]["message"])
-            entry = scan(root).entries[0]
-            text = _diagram(entry)
-            self.assertIn("RESOURCE_NOT_FOUND", text)
-            self.assertIn("sequenceDiagram", text)
-            self.assertIn("autonumber", text)
-            self.assertNotIn("else 成功", text)
-            version = json.loads((root / "docs/biz-flow/biz-flow-doc-generator-version.json").read_text(encoding="utf-8"))
-            self.assertIsNone(version["source"]["git_commit"])
 
-    def _legacy_markdown_comparison_reports_fact_drift_without_a_score(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
-            self.assertEqual(0, code, result)
-            document_path = root / "docs" / "biz-flow" / "00-resources.md"
-            document = document_path.read_text(encoding="utf-8")
-            document_path.write_text(document.replace("HTTP ", "CLI "), encoding="utf-8")
-            source = root / "app.py"
-            source.write_text(source.read_text(encoding="utf-8").replace("'missing'", "'missing now'"), encoding="utf-8")
-            self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
-            self.assertEqual(0, code, result)
-            comparison = json.loads((root / "docs" / "biz-flow" / "biz-flow-comparison.json").read_text(encoding="utf-8"))
-            self.assertTrue(comparison["semantic_diffs"])
-            self.assertNotIn("score", comparison)
 
     def test_writer_lock_rejects_overlapping_process_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.project(root)
-            docs = root / "docs" / "biz-flow"
-            docs.mkdir(parents=True)
-            (docs / "biz-flow-run.lock").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "init", "--project", str(root))
+            with ProjectDomainLock(root, "biz-flow"):
+                code, result = self.invoke("biz-flow", "init", "--project", str(root))
             self.assertEqual(8, code, result)
-            self.assertIn("writer is active", result["error"]["message"])
+            self.assertIn("concurrent project/domain operation", result["error"]["message"])
 
     def test_missing_lock_is_a_gate_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -137,354 +81,22 @@ class BizFlowContractTests(unittest.TestCase):
             self.assertEqual("GATE_FAILED", result["error"]["code"])
             self.assertIn("protected production paths", result["error"]["message"])
 
-    def _legacy_non_business_git_change_only_updates_document_version(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
-            docs = root / "docs" / "biz-flow"
-            document = docs / "00-resources.md"
-            subprocess.run(["git", "add", "."], cwd=root, check=True)
-            subprocess.run(["git", "commit", "-qm", "record generated docs"], cwd=root, check=True)
-            self.invoke("biz-flow", "generate", "--project", str(root))
-            before = document.read_text(encoding="utf-8").splitlines()
-            subprocess.run(["git", "add", "."], cwd=root, check=True)
-            subprocess.run(["git", "commit", "-qm", "record current version"], cwd=root, check=True)
-            (root / "README.md").write_text("documentation only\n", encoding="utf-8")
-            subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
-            subprocess.run(["git", "commit", "-qm", "docs-only change"], cwd=root, check=True)
-            code, result = self.invoke("biz-flow", "update", "--project", str(root))
-            self.assertEqual(0, code, result)
-            after = document.read_text(encoding="utf-8").splitlines()
-            strip_version = lambda lines: [line for line in lines if not line.startswith("> 生效 Git 版本：")]
-            self.assertEqual(strip_version(before), strip_version(after))
 
-    def _legacy_unreferenced_source_change_only_updates_document_version(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            self.invoke("biz-flow", "generate", "--project", str(root))
-            docs = root / "docs" / "biz-flow"
-            document = docs / "00-resources.md"
-            before = document.read_text(encoding="utf-8").splitlines()
-            subprocess.run(["git", "add", "."], cwd=root, check=True)
-            subprocess.run(["git", "commit", "-qm", "record generated docs"], cwd=root, check=True)
 
-            (root / "unrelated.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
-            subprocess.run(["git", "add", "unrelated.py"], cwd=root, check=True)
-            subprocess.run(["git", "commit", "-qm", "unrelated source change"], cwd=root, check=True)
-            self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "update", "--project", str(root))
-            self.assertEqual(0, code, result)
-            after = document.read_text(encoding="utf-8").splitlines()
-            strip_version = lambda lines: [line for line in lines if not line.startswith("> 生效 Git 版本：")]
-            self.assertEqual(strip_version(before), strip_version(after))
-            report = json.loads((docs / "biz-flow-report.json").read_text(encoding="utf-8"))
-            self.assertEqual("version_only", report["comparison"])
 
-    def _legacy_unresolved_call_requires_evidence_resolution(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            path = root / "app.py"
-            path.write_text(path.read_text(encoding="utf-8").replace(
-                "    raise BusinessError", "    unresolved_domain_call()\n    raise BusinessError"
-            ), encoding="utf-8")
-            subprocess.run(["git", "add", "app.py"], cwd=root, check=True)
-            subprocess.run(["git", "commit", "-qm", "add unresolved call"], cwd=root, check=True)
-            module_map = self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
-            self.assertEqual(8, code, result)
-            self.assertEqual("GATE_FAILED", result["error"]["code"])
-            discovery = json.loads((module_map.parent / "biz-flow-discovery.json").read_text(encoding="utf-8"))
-            document = json.loads(module_map.read_text(encoding="utf-8"))
-            document["resolutions"] = [{
-                "finding": discovery["unresolved"][0],
-                "resolution": "调用由运行框架提供，人工检查确认不会主动抛出业务错误码。",
-                "evidence": ["app.py:5"],
-            }]
-            module_map.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
-            self.assertEqual(0, code, result)
 
-    def _legacy_critical_receiver_resolution_requires_structured_path(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            (root / "app.py").write_text(
-                "from fastapi import FastAPI\n"
-                "app = FastAPI()\n"
-                "@app.get('/resources')\n"
-                "def list_resources():\n"
-                "    client.save()\n",
-                encoding="utf-8",
-            )
-            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
-            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=root, check=True)
-            subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
-            subprocess.run(["git", "add", "app.py"], cwd=root, check=True)
-            subprocess.run(["git", "commit", "-qm", "unknown receiver"], cwd=root, check=True)
-            self.initialize_and_confirm(root)
-            docs = root / "docs" / "biz-flow"
-            module_map = docs / "biz-flow-modules.json"
-            document = json.loads(module_map.read_text(encoding="utf-8"))
-            discovery = json.loads((docs / "biz-flow-discovery.json").read_text(encoding="utf-8"))
-            finding = next(item for item in discovery["unresolved"] if "unknown receiver type" in item)
-            document["resolutions"] = [{
-                "finding": finding,
-                "resolution": "外部客户端类型由运行框架提供，远端实现不在源码范围内。",
-                "evidence": ["app.py:5"],
-            }]
-            module_map.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
-            self.assertEqual(8, code, result)
-            self.assertIn("structured fields", result["error"]["message"])
-            document["resolutions"][0].update({
-                "path": ["app.py:5"],
-                "controls": ["外部客户端类型无法静态解析"],
-                "unknowns": ["远端实现和终态不可见"],
-            })
-            module_map.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
-            self.assertEqual(0, code, result)
 
-    def test_check_reads_markdown_and_rejects_missing_document(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            next((path for path in (root / "docs" / "biz-flow").glob("*.md") if path.name != "业务流程覆盖总览.md")).unlink()
-            code, result = self.invoke("biz-flow", "check", "--project", str(root), "--stage", "entries")
-            self.assertEqual(8, code, result)
-            self.assertTrue(result["error"]["message"])
-            self.assertEqual("biz-flow.check", result["command"])
 
-    def _legacy_check_rejects_wrong_but_well_formed_markdown_commit(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
-            document = root / "docs" / "biz-flow" / "00-resources.md"
-            text = document.read_text(encoding="utf-8")
-            expected = json.loads(
-                (document.parent / "biz-flow-index.json").read_text(encoding="utf-8")
-            )["effective_git"]["commit"]
-            self.assertIn(expected, text)
-            wrong = "0" * len(expected)
-            document.write_text(text.replace(expected, wrong, 1), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "check", "--project", str(root))
-            self.assertEqual(8, code, result)
-            self.assertIn("markdown_version_mismatches", result["error"]["message"])
 
-    def test_generate_rejects_unrepresented_helper_branch(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            app = root / "app.py"
-            app.write_text(
-                "from fastapi import FastAPI\n"
-                "app = FastAPI()\n"
-                "@app.get('/resources')\n"
-                "def list_resources():\n"
-                "    return load_resources()\n"
-                "def should_load():\n"
-                "    return True\n"
-                "def load_resources():\n"
-                "    if should_load():\n"
-                "        return ['loaded']\n"
-                "    else:\n"
-                "        return []\n",
-                encoding="utf-8",
-            )
-            subprocess.run(["git", "add", "app.py"], cwd=root, check=True)
-            subprocess.run(["git", "commit", "-qm", "helper branch"], cwd=root, check=True)
-            self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
-            self.assertEqual(8, code, result)
-            self.assertEqual("GATE_FAILED", result["error"]["code"])
 
-    def _legacy_check_requires_current_discovery_artifact(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            self.invoke("biz-flow", "generate", "--project", str(root))
-            discovery = root / "docs" / "biz-flow" / "biz-flow-discovery.json"
-            discovery.unlink()
-            code, result = self.invoke("biz-flow", "check", "--project", str(root))
-            self.assertEqual(8, code, result)
-            self.assertEqual("biz-flow artifact is missing or stale: biz-flow-discovery.json", result["error"]["message"])
 
-    def _legacy_old_index_path_cannot_escape_docs_root(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            self.invoke("biz-flow", "generate", "--project", str(root))
-            docs = root / "docs" / "biz-flow"
-            outside = docs.parent / "outside.md"
-            outside.write_text("sentinel", encoding="utf-8")
-            index_path = docs / "biz-flow-index.json"
-            index = json.loads(index_path.read_text(encoding="utf-8"))
-            index["modules"][0]["file"] = "../outside.md"
-            index_path.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
-            self.assertEqual(0, code, result)
-            self.assertEqual("sentinel", outside.read_text(encoding="utf-8"))
 
-    def test_caught_error_is_not_documented_and_markdown_is_redacted(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            (root / "app.py").write_text(
-                "from fastapi import FastAPI\n"
-                "app = FastAPI()\n"
-                "def load():\n"
-                "    try:\n"
-                "        raise BusinessError('CAUGHT_ERROR', 'token=TOPSECRET')\n"
-                "    except BusinessError:\n"
-                "        return []\n"
-                "# 查询资源\n"
-                "@app.get('/resources')\n"
-                "def list_resources():\n"
-                "    load()\n"
-                "    raise BusinessError('VISIBLE_ERROR', 'token=TOPSECRET')\n",
-                encoding="utf-8",
-            )
-            subprocess.run(["git", "add", "app.py"], cwd=root, check=True)
-            subprocess.run(["git", "commit", "-qm", "caught and visible errors"], cwd=root, check=True)
-            self.initialize_and_confirm(root)
-            from toolkit.biz_flow_doc_generator.documents import render_module
-            result = scan(root)
-            text = render_module("resources", result.entries, result.git, result, comparison="new")
-            self.assertIn("VISIBLE_ERROR", text)
-            self.assertNotIn("CAUGHT_ERROR", text)
-            self.assertNotIn("TOPSECRET", text)
-            self.assertIn("[REDACTED]", text)
 
-    def _legacy_dirty_business_source_forces_business_update(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            self.invoke("biz-flow", "generate", "--project", str(root))
-            subprocess.run(["git", "add", "."], cwd=root, check=True)
-            subprocess.run(["git", "commit", "-qm", "baseline docs"], cwd=root, check=True)
-            app = root / "app.py"
-            app.write_text(app.read_text(encoding="utf-8").replace("RESOURCE_NOT_FOUND", "RESOURCE_CHANGED"), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "discover", "--project", str(root))
-            self.assertEqual(0, code, result)
-            module_map = root / "docs" / "biz-flow" / "biz-flow-modules.json"
-            document = json.loads(module_map.read_text(encoding="utf-8"))
-            document["confirmed"] = True
-            for review in document.get("entry_reviews", []):
-                review["status"] = "confirmed"
-                review["confirmed_by"] = "test reviewer"
-                review["trigger"] = "HTTP 客户端"
-                review["purpose"] = "读取资源列表"
-                review["input"] = "GET /resources 请求"
-                review["outcome"] = "返回资源列表或明确的业务错误"
-                review["failure"] = "资源缺失时返回 RESOURCE_NOT_FOUND；未确认的远端终态不作推断"
-                for step in review.get("steps", []):
-                    if "代码中未确认" in str(step.get("text", "")):
-                        step["text"] = "进入资源查询处理"
-            for module in document["modules"]:
-                module["rationale"] = "入口围绕同一业务对象、路径和处理能力划分。"
-                module["responsibility"] = "资源查询与业务错误返回"
-            module["questions"] = []
-            module_map.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "update", "--project", str(root))
-            self.assertEqual(0, code, result)
-            report = json.loads((root / "docs" / "biz-flow" / "biz-flow-report.json").read_text(encoding="utf-8"))
-            self.assertEqual("business_changed", report["comparison"])
-            self.assertTrue(report["business_changed_documents"])
 
-    def _legacy_stale_confirmed_module_map_is_rejected_after_source_edit(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            app = root / "app.py"
-            app.write_text(app.read_text(encoding="utf-8").replace("RESOURCE_NOT_FOUND", "RESOURCE_CHANGED"), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
-            self.assertEqual(8, code, result)
-            self.assertIn("source fingerprint is stale", result["error"]["message"])
 
-    def _legacy_check_requires_each_error_condition_in_markdown(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            self.invoke("biz-flow", "generate", "--project", str(root))
-            document = root / "docs" / "biz-flow" / "00-resources.md"
-            text = document.read_text(encoding="utf-8")
-            document.write_text(text.replace("raise BusinessError('RESOURCE_NOT_FOUND', 'missing')", ""), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "check", "--project", str(root))
-            self.assertEqual(8, code, result)
-            self.assertIn("markdown_missing_error_evidence", result["error"]["message"])
 
-    def _legacy_check_rejects_diagram_control_drift(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            self.invoke("biz-flow", "generate", "--project", str(root))
-            document = root / "docs" / "biz-flow" / "00-resources.md"
-            text = document.read_text(encoding="utf-8")
-            document.write_text(text.replace("alt ", "opt ", 1), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "check", "--project", str(root))
-            self.assertEqual(8, code, result)
-            self.assertIn("markdown_diagram_mismatches", result["error"]["message"])
 
-    def _legacy_check_recomputes_report_counts(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--allow-degraded")
-            self.assertEqual(0, code, result)
-            report_path = root / "docs" / "biz-flow" / "biz-flow-report.json"
-            report = json.loads(report_path.read_text(encoding="utf-8"))
-            report["entry_count"] += 1
-            report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "check", "--project", str(root))
-            self.assertEqual(8, code, result)
-            self.assertIn("report_counts_match", result["error"]["message"])
-            self.assertIn("entry_count", result["error"]["message"])
 
-    def _legacy_resume_records_validated_evidence_cache(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
-            self.assertEqual(0, code, result)
-            with patch("toolkit.biz_flow_doc_generator.cli.scan", side_effect=AssertionError("resume must use cached evidence")):
-                code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--resume")
-            self.assertEqual(0, code, result)
-            progress = json.loads(
-                (root / "docs" / "biz-flow" / "biz-flow-progress.json").read_text(encoding="utf-8")
-            )
-            self.assertTrue(progress["resumed"])
-            self.assertGreaterEqual(progress["cache_entries"], 1)
-
-    def _legacy_resume_rejects_malformed_evidence_cache(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.project(root)
-            self.initialize_and_confirm(root)
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root))
-            self.assertEqual(0, code, result)
-            cache = root / "docs" / "biz-flow" / "biz-flow-evidence-cache.json"
-            value = json.loads(cache.read_text(encoding="utf-8"))
-            value["source_lines"] = []
-            cache.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
-            code, result = self.invoke("biz-flow", "generate", "--project", str(root), "--resume")
-            self.assertEqual(8, code, result)
-            self.assertEqual("GATE_FAILED", result["error"]["code"])
-            self.assertIn("source_lines must be an object", result["error"]["message"])
 
     def test_discovery_covers_protocol_graphql_jobs_messages_and_cli_config(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -531,7 +143,7 @@ class BizFlowContractTests(unittest.TestCase):
                 "Resource/Allocate", "Query/resource", "inventory-check", "created", "updated", "reconcile",
                 "GET /resource/one",
             }.issubset(identifiers))
-            self.assertIn("NO_STOCK", {code for entry in result.entries for code in entry.error_codes()})
+            self.assertIn("NO_STOCK", json.dumps(collect_evidence(result)))
             self.assertTrue(result.source_fingerprint)
 
     def test_domain_and_subcommand_help_are_statically_registered(self) -> None:

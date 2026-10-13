@@ -17,7 +17,7 @@ from typing import Any, Iterable
 
 import yaml
 
-from .manifest_io import load_data
+from .manifest_io import load_data, validate_case_contracts
 
 HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE")
 METHOD_PATH_RE = re.compile(
@@ -1908,6 +1908,7 @@ def understanding_errors(document: dict[str, Any]) -> list[str]:
 def apply_to_contracts(contracts_root: Path, document: dict[str, Any]) -> list[Path]:
     """Attach design provenance to cases/logic without consulting source code."""
 
+    validate_case_contracts(contracts_root / "modules")
     changed: list[Path] = []
     try:
         import yaml
@@ -2094,8 +2095,6 @@ def apply_to_contracts(contracts_root: Path, document: dict[str, Any]) -> list[P
                     case["id"] = f"{endpoint_id}_{stable_rule}"
                     case["title"] = f"{template.get('title', endpoint_id)} - 设计规则 {rule_id}"
                     case.pop("bru", None)
-                    case.pop("bru_file", None)
-                    case.pop("file_name", None)
                 case["endpoint_id"] = endpoint_id
                 case["scenario"] = scenario
                 case["source"] = "design"

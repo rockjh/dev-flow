@@ -22,6 +22,7 @@ INSTALLABLE_SKILLS = (
 
 
 def main() -> int:
+    subprocess.run([sys.executable, str(ROOT / "scripts" / "sync_sequence_conventions.py")], cwd=ROOT, check=True)
     subprocess.run([sys.executable, str(ROOT / "scripts" / "verify_git_snapshot_policy.py")], cwd=ROOT, check=True)
     dist = ROOT / "dist"
     python_version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]

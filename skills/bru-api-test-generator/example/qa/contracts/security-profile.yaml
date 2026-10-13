@@ -1,6 +1,6 @@
 version: 1
 source:
-  file: E:\code\dev-flow\skills\test\bru-api\example\qa\contracts\openapi.json
+  file: openapi.json
   spec_version: 3.0.3
   api_version: 1.0.0
   sha256: 22560d4b15fc44d83be3f5c3ca880f9a2ca227f4d2e70f1930e80eca39ea009a

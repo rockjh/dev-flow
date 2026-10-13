@@ -15,6 +15,20 @@ from .discovery import PROTOCOL_SUFFIXES, discover_documents, discover_protocols
 from .document_gate import advance_baseline, initialize_document_state, mark_generated, run_document_gate
 from .runner import ORDERED_GATES, check_gate, pytest_arg_errors, run_ordered
 from .source_versions import RULES_VERSION, source_version_results
+from .host import collect_scenario_owners, prepare_scenario_owners, load_serial_approval
+
+
+def _serial_generation_preflight(args) -> tuple[dict | None, list[str]]:
+    if args.serial_approval is None:
+        return None, []
+    try:
+        approval = load_serial_approval(args.project.resolve(), args.serial_approval)
+        _, errors = _generate_artifacts(args.project.resolve(), design_roots=args.design_root,
+            design_files=args.design_file, openapi_roots=args.openapi_root, openapi_files=args.openapi_file,
+            runtime_urls=args.runtime_urls, serial_approval=approval, preview=True)
+        return approval, errors
+    except (OSError, ValueError, TypeError) as exc:
+        return None, [f"serial approval invalid: {exc}"]
 
 
 def init_command(argv: list[str]) -> int:
@@ -31,8 +45,17 @@ def init_command(argv: list[str]) -> int:
     parser.add_argument("--confirm", action="store_true")
     parser.add_argument("--reject", action="store_true")
     parser.add_argument("--confirmation-summary", default="")
+    parser.add_argument("--serial-approval", type=Path, help="explicit scoped authorization JSON for a new main-Agent serial run")
     args = parser.parse_args(argv)
     project = args.project.resolve()
+    if args.serial_approval and not (args.design_root or args.design_file or args.openapi_root or args.openapi_file or args.runtime_urls):
+        print("serial approval on init requires generation inputs", file=sys.stderr)
+        return int(ExitCode.GATE_FAILED)
+    serial_approval, errors = _serial_generation_preflight(args)
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return int(ExitCode.GATE_FAILED)
     report = run_document_gate(project, "init", allow_initial=True)
     print(json.dumps(report.as_dict(), ensure_ascii=False), file=sys.stderr)
     if not report.allowed:
@@ -76,8 +99,9 @@ def init_command(argv: list[str]) -> int:
             openapi_roots=args.openapi_root,
             openapi_files=args.openapi_file,
             runtime_urls=args.runtime_urls,
+            prepare_owners=False,
+            serial_approval=serial_approval,
         )
-        print(json.dumps(result, ensure_ascii=False))
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)
         if errors:
@@ -90,6 +114,11 @@ def init_command(argv: list[str]) -> int:
         if not protocol.files:
             print("formal protocol documents not found; provide --openapi-root or --openapi-file before generation", file=sys.stderr)
     print(f"initialized {project} ({len(changed)} file(s) changed)")
+    if args.design_root or args.design_file or args.openapi_root or args.openapi_file or args.runtime_urls:
+        handoff = prepare_scenario_owners(project, serial_approval=serial_approval)
+        if handoff is not None:
+            result["host_handoff"] = handoff
+        print(json.dumps(result, ensure_ascii=False))
     if state.get("status") in {"confirmed", "generated"}:
         advance_baseline(project, report)
     return 0
@@ -139,12 +168,22 @@ def discover_command(argv: list[str]) -> int:
 def generate_command(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="devflow e2e generate")
     parser.add_argument("--project", type=Path, default=Path("."))
+    parser.add_argument("--delegate", action="store_true", help="prepare a native-owner task even for a single scenario")
+    parser.add_argument("--serial-approval", type=Path, help="explicit scoped authorization JSON for a new main-Agent serial run")
     parser.add_argument("--design-root", action="append", type=Path, default=[])
     parser.add_argument("--design-file", action="append", type=Path, default=[])
     parser.add_argument("--openapi-root", action="append", type=Path, default=[])
     parser.add_argument("--openapi-file", action="append", type=Path, default=[])
     parser.add_argument("--runtime-url", "--protocol-url", dest="runtime_urls", action="append", default=[])
     args = parser.parse_args(argv)
+    if args.delegate and args.serial_approval:
+        print("--delegate and --serial-approval choose different execution modes", file=sys.stderr)
+        return int(ExitCode.GATE_FAILED)
+    serial_approval, errors = _serial_generation_preflight(args)
+    if errors:
+        for error in errors:
+            print(error, file=sys.stderr)
+        return int(ExitCode.GATE_FAILED)
     report = run_document_gate(args.project.resolve(), "generate")
     print(json.dumps(report.as_dict(), ensure_ascii=False), file=sys.stderr)
     if not report.allowed:
@@ -158,13 +197,19 @@ def generate_command(argv: list[str]) -> int:
         openapi_roots=args.openapi_root,
         openapi_files=args.openapi_file,
         runtime_urls=args.runtime_urls,
+        delegate=args.delegate,
+        prepare_owners=False,
+        serial_approval=serial_approval,
     )
-    print(json.dumps(result, ensure_ascii=False))
     for error in errors:
         print(f"ERROR: {error}", file=sys.stderr)
     if not errors:
         mark_generated(args.project.resolve())
+        handoff = prepare_scenario_owners(args.project.resolve(), delegate=args.delegate, serial_approval=serial_approval)
+        if handoff is not None:
+            result["host_handoff"] = handoff
         advance_baseline(args.project.resolve(), report)
+    print(json.dumps(result, ensure_ascii=False))
     return int(ExitCode.GATE_FAILED) if errors else 0
 
 
@@ -173,6 +218,7 @@ def check_command(argv: list[str]) -> int:
     parser.add_argument("--project", type=Path, default=Path("."))
     parser.add_argument("--gate", required=True, choices=(*ORDERED_GATES, "discovery", "contracts", "static", "all"))
     parser.add_argument("--scenario")
+    parser.add_argument("--host-results", type=Path, help="collect current-session native owners or explicitly authorized serial results before checking")
     args = parser.parse_args(argv)
     root = args.project.resolve()
     report = run_document_gate(root, "check")
@@ -181,6 +227,13 @@ def check_command(argv: list[str]) -> int:
         for issue in report.issues:
             print(issue, file=sys.stderr)
         return int(ExitCode.GATE_FAILED)
+    if args.host_results:
+        collection, errors = collect_scenario_owners(root, args.host_results)
+        print(json.dumps({"host_handoff": collection}, ensure_ascii=False))
+        if errors:
+            for error in errors:
+                print(error, file=sys.stderr)
+            return int(ExitCode.GATE_FAILED)
     errors = check_gate(root, args.gate, args.scenario)
     for error in errors:
         print(error, file=sys.stderr)

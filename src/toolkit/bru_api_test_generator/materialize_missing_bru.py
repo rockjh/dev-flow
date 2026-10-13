@@ -19,7 +19,7 @@ from typing import Any
 
 sys.dont_write_bytecode = True
 
-from .manifest_io import first_list, load_data
+from .manifest_io import case_contract_errors, first_list, load_data, validate_case_contracts
 from .execution_config import (
     COLLECTION_MARKER,
     COLLECTION_TEMPLATE,
@@ -42,8 +42,6 @@ from .constraints import (
 from .qa_lock import write as write_qa_lock
 
 
-LEGACY_AUTH_MARKER = "devflow: auth-start"
-LEGACY_AUTH_END_MARKER = "devflow: auth-end"
 OMIT_MARKER = "devflow: omit-common-headers"
 OMIT_END_MARKER = "devflow: omit-common-headers-end"
 
@@ -108,7 +106,10 @@ def is_http_request_content(content: str) -> bool:
 
 
 def case_sequence(case: dict[str, Any], position: int) -> int:
-    value = case.get("sequence", case.get("seq", position))
+    errors = case_contract_errors(case)
+    if errors:
+        raise SystemExit("; ".join(errors))
+    value = case.get("sequence", position)
     try:
         sequence = int(value)
     except (TypeError, ValueError) as exc:
@@ -436,7 +437,7 @@ def render_case(
     endpoint: dict[str, Any],
     sequence: int | None = None,
 ) -> str:
-    database_errors = database_access_errors(case)
+    database_errors = case_contract_errors(case) + database_access_errors(case)
     if database_errors:
         raise ValueError("; ".join(database_errors))
     request = case.get("request") if isinstance(case.get("request"), dict) else {}
@@ -458,7 +459,7 @@ def render_case(
             request = dict(request)
             request["content_type"] = inferred_content_type
     kind = body_kind(request, body)
-    sequence = sequence if sequence is not None else case.get("sequence", case.get("seq", 1))
+    sequence = sequence if sequence is not None else case.get("sequence", 1)
     lines = [
         "meta {",
         f"  name: {case.get('id')}",
@@ -567,13 +568,8 @@ def _remove_managed_block(content: str, start_marker: str, end_marker: str) -> s
     return empty_script.sub("", updated, count=1)
 
 
-def strip_legacy_auth(content: str) -> str:
-    return _remove_managed_block(content, LEGACY_AUTH_MARKER, LEGACY_AUTH_END_MARKER)
-
-
 def ensure_request_script(content: str, case: dict[str, Any]) -> str:
-    updated = strip_legacy_auth(content)
-    updated = _remove_managed_block(updated, OMIT_MARKER, OMIT_END_MARKER)
+    updated = _remove_managed_block(content, OMIT_MARKER, OMIT_END_MARKER)
     script = request_omit_script(case)
     if not script:
         return updated
@@ -594,7 +590,7 @@ def ensure_request_script(content: str, case: dict[str, Any]) -> str:
 
 
 def strip_meta_tags(content: str) -> str:
-    """Remove legacy generated tags; execution scope is directory-based."""
+    """Keep request metadata free of tags; execution scope is directory-based."""
 
     meta = re.search(r"(?ms)^\s*meta\s*\{(.*?)^\s*\}", content)
     if meta is None:
@@ -616,7 +612,7 @@ def _case_fingerprint(case: dict[str, Any]) -> str:
     payload = {
         key: value
         for key, value in case.items()
-        if key not in {"bru", "bru_file", "file_name", "manual_review"}
+        if key not in {"bru", "manual_review"}
     }
     serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -895,6 +891,10 @@ def materialize(
     modules_root = contracts_root / "modules"
     if not modules_root.is_dir():
         raise SystemExit(f"modules directory does not exist: {modules_root}")
+    try:
+        validate_case_contracts(modules_root)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     qa_root = qa_root_for_contracts(contracts_root)
     config_path = execution_config_path or (qa_root / "execution" / "config.yaml")
     try:
@@ -982,10 +982,10 @@ def materialize(
             endpoint = endpoint_by_id.get(str(case.get("endpoint_id")))
             if not case_id or endpoint is None:
                 continue
-            configured = case.get("bru") or case.get("bru_file") or case.get("file_name")
+            configured = case.get("bru")
             if isinstance(configured, str) and configured:
                 relative = Path(configured)
-                explicit_sequence = case.get("sequence", case.get("seq"))
+                explicit_sequence = case.get("sequence")
                 if relative.parent != Path(".") or not valid_business_file(
                     relative,
                     case_id,
@@ -1019,8 +1019,6 @@ def materialize(
             targets[target] = case_id
             planned.append((case, endpoint, target))
             desired_mapping = relative.as_posix()
-            if "bru_file" in case or "file_name" in case:
-                raise SystemExit(f"case {case_id} uses unsupported legacy bru_file/file_name; use bru")
             if case.get("bru") != desired_mapping:
                 case["bru"] = desired_mapping
                 mappings_changed = True
@@ -1101,19 +1099,6 @@ def materialize(
                 "materialized_case_fingerprint": current_case_fingerprint,
                 "bru_sha256": hashlib.sha256(expected.encode("utf-8")).hexdigest(),
             }
-        if module_bru.is_dir():
-            for existing_path in sorted(module_bru.rglob("*.bru")):
-                try:
-                    existing = existing_path.read_text(encoding="utf-8", errors="strict")
-                except (OSError, UnicodeDecodeError) as exc:
-                    raise SystemExit(f"cannot read Bruno file {existing_path}: {exc}") from exc
-                if not is_http_request_content(existing):
-                    continue
-                updated = strip_meta_tags(strip_legacy_auth(existing))
-                if updated != existing:
-                    created.append(existing_path)
-                    if not dry_run:
-                        existing_path.write_text(updated, encoding="utf-8")
         documentation_path = module_dir / "CASES.md"
         existing_documentation = (
             documentation_path.read_text(encoding="utf-8", errors="strict")
@@ -1131,20 +1116,6 @@ def materialize(
             created.append(documentation_path)
             if not dry_run:
                 documentation_path.write_text(updated_documentation, encoding="utf-8")
-    # Remove legacy generated authentication from coordinator/cross-module requests.
-    if bruno_root.is_dir() and not module_filter:
-        for existing_path in sorted(bruno_root.rglob("*.bru")):
-            try:
-                existing = existing_path.read_text(encoding="utf-8", errors="strict")
-            except (OSError, UnicodeDecodeError) as exc:
-                raise SystemExit(f"cannot read Bruno file {existing_path}: {exc}") from exc
-            if not is_http_request_content(existing):
-                continue
-            updated = strip_meta_tags(strip_legacy_auth(existing))
-            if updated != existing:
-                created.append(existing_path)
-                if not dry_run:
-                    existing_path.write_text(updated, encoding="utf-8")
     if not dry_run and sync_index and not module_filter:
         sync_index_counts(contracts_root)
     if not dry_run and module_filter and materialized_state:

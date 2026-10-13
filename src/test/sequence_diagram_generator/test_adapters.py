@@ -47,3 +47,14 @@ def test_python_ids_ignore_blank_lines_and_comments():
         return adapter.analyze(source_snapshot, AnalysisScope(entry, entry.symbol_id))
     before, after = analyze(code), analyze("# comment\n\n" + code.replace("\n    helper()", "\n    # comment\n    helper()"))
     assert [item.step_id for item in before.steps] == [item.step_id for item in after.steps]
+
+
+def test_adapter_fingerprint_includes_shared_syntax_implementation(monkeypatch):
+    registry = AdapterRegistry()
+    before = registry.fingerprint()
+    original = Path.read_bytes
+    def changed_syntax(path):
+        raw = original(path)
+        return raw + b"\n# fixture: shared parser implementation changed\n" if path.name == "syntax.py" and path.parent.name == "core" else raw
+    monkeypatch.setattr(Path, "read_bytes", changed_syntax)
+    assert registry.fingerprint() != before

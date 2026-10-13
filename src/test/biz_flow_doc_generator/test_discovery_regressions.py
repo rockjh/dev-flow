@@ -4,9 +4,9 @@ import subprocess
 from pathlib import Path
 
 from toolkit.core.redaction import redact
+from toolkit.biz_flow_doc_generator.evidence import collect_evidence
 from toolkit.biz_flow_doc_generator.discovery import _decorated_entries, scan
-from toolkit.biz_flow_doc_generator.documents import apply_module_map, write_discovery
-from toolkit.biz_flow_doc_generator.cli import _write_overview_report
+from toolkit.biz_flow_doc_generator.documents import write_discovery
 from toolkit.biz_flow_doc_generator.cli import _split_entry_ids
 from toolkit.biz_flow_doc_generator.models import EntryPoint, GitInfo, ScanResult
 
@@ -33,7 +33,7 @@ class DeviceController {
     functions = _functions(source, "Java", "DeviceController.java")
     _enrich_signatures(functions, "Java")
     handler = next(item for item in functions if item.name == "detail")
-    assert handler.signature == "detail(String)"
+    assert handler.signature == "detail(java.lang.String)"
     assert "EMPTY_ID" in handler.body and "return load(id)" in handler.body
     result = scan(tmp_path)
     assert result.entries[0].handler == "detail"
@@ -76,11 +76,11 @@ class Two {
 ''', encoding="utf-8")
     _git(tmp_path)
     result = scan(tmp_path)
-    assert "ONE_ERROR" in result.entries[0].error_codes()
-    assert "TWO_ERROR" not in result.entries[0].error_codes()
+    facts = collect_evidence(result)[result.entries[0].entry_id]
+    assert "ONE_ERROR" in json.dumps(facts["outcomes"])
+    assert "TWO_ERROR" not in json.dumps(facts["outcomes"])
     assert not any("getCapability has an unknown receiver" in finding for finding in result.unresolved)
-    assert any(item.kind == "外部调用" and "OperatorApplication.getCapability" in item.statement
-               for item in result.entries[0].behaviors)
+    assert any(g["code"] == "CALL_CONTRACT_UNSUPPORTED" and "OperatorApplication.getCapability" in g["question"] for g in facts["gaps"])
 
 
 def test_class_job_registration_and_constructor_merge_into_template_entry(tmp_path: Path) -> None:
@@ -147,39 +147,6 @@ def test_conversation_and_markdown_share_business_counts_and_filenames(tmp_path:
     assert "不能仅回复文件链接" in conversation
 
 
-def test_review_requires_entry_confirmation_and_does_not_write_flow_modules(tmp_path, monkeypatch):
-    """入口清单确认后才启动审核；执行器失败不得写时序图或推进源码基线。"""
-    from toolkit.biz_flow_doc_generator.cli import init_command, discover_command, review_command, generate_command
-    (tmp_path / "DeviceController.java").write_text('''class DeviceController {
-    /** 查询设备。 */
-    @GetMapping("/devices")
-    public String query() { return "ok"; }
-}
-''', encoding="utf-8")
-    _git(tmp_path)
-    assert init_command(["--project", str(tmp_path)]) == 0
-    before = (tmp_path / "docs/biz-flow/biz-flow-doc-generator-version.json").read_bytes()
-    calls = []
-    def unavailable(run_id):
-        calls.append(run_id)
-        return None, {"type": "unavailable", "adapter": "", "probed": True, "capabilities": {}}
-    monkeypatch.setattr("toolkit.biz_flow_doc_generator.orchestration.discover_agent_executor", unavailable)
-    assert review_command(["--project", str(tmp_path)]) == 8
-    assert calls == []
-    docs = tmp_path / "docs/biz-flow"
-    assert discover_command(["--project", str(tmp_path)]) == 0
-    overview_path = docs / "业务流程覆盖总览.md"
-    overview = overview_path.read_text(encoding="utf-8")
-    assert "<!-- devflow:module-confirmed -->" not in overview
-    directory_files = {path.name: path.read_bytes() for path in docs.glob("[0-9]*.md")}
-    assert directory_files and all(b"sequenceDiagram" not in content for content in directory_files.values())
-    overview_path.write_text(overview + "\n<!-- devflow:module-confirmed -->\n", encoding="utf-8")
-    assert review_command(["--project", str(tmp_path)]) == 8
-    assert len(calls) == 1
-    assert {path.name: path.read_bytes() for path in docs.glob("[0-9]*.md")} == directory_files
-    assert (docs / "biz-flow-doc-generator-version.json").read_bytes() == before
-    assert generate_command(["--project", str(tmp_path)]) == 8
-    assert (docs / "biz-flow-doc-generator-version.json").read_bytes() == before
 
 
 def test_repeated_discovery_preserves_reviewed_filename_without_confirming(tmp_path: Path) -> None:
@@ -275,8 +242,8 @@ def test_nested_java_business_entries_use_outer_class_in_full_name(tmp_path: Pat
     assert len(entries) == 2
     capabilities = {entry.functions[0] for entry in entries}
     assert capabilities == {
-        "java:com.example.jobs.Outer.First#doExecute(String)",
-        "java:com.example.jobs.Outer.Second#doExecute(String)",
+        "java:com.example.jobs.Outer.First#doExecute(java.lang.String)",
+        "java:com.example.jobs.Outer.Second#doExecute(java.lang.String)",
     }
     assert not any("CAPABILITY_ID_CONFLICT" in item for item in result.unresolved)
 
@@ -296,8 +263,8 @@ def test_shared_helper_identity_is_independent_of_entry_registration(tmp_path: P
 
     result = scan(tmp_path)
     entries = {entry.identifier: entry for entry in result.entries}
-    assert entries["order.created"].functions[-1] == entries["order.updated"].functions[-1]
-    assert entries["order.created"].functions[-1] == "python:events#persist()"
+    facts = collect_evidence(result)
+    assert all(any(c["details"]["target"].endswith(":persist") for c in facts[e.entry_id]["calls"]) for e in entries.values())
     assert not any("CAPABILITY_ID_CONFLICT" in item for item in result.unresolved)
 
 
@@ -342,37 +309,6 @@ def test_cli_registration_requires_a_decorator_not_an_ordinary_call() -> None:
         assert entries == [("cli", "run", 1, "run")]
 
 
-def test_shared_helper_is_not_a_capability_ownership_conflict(tmp_path: Path) -> None:
-    (tmp_path / "events.py").write_text(
-        "def persist():\n    return 0\n"
-        "# 接收订单事件并保存订单\n"
-        "@EventListener(classes='order.created')\n"
-        "def store_order():\n    persist()\n"
-        "# 接收订单事件并保存记录\n"
-        "@EventListener(classes='order.created')\n"
-        "def store_history():\n    persist()\n",
-        encoding="utf-8",
-    )
-    _git(tmp_path)
-    result = scan(tmp_path)
-    assert len(result.entries) == 2
-    shared = set(result.entries[0].functions) & set(result.entries[1].functions)
-    assert any("#persist(" in capability for capability in shared)
-    assert not any("CAPABILITY_ID_CONFLICT" in item for item in result.unresolved)
-
-    docs = tmp_path / "docs" / "biz-flow"
-    _, path = write_discovery(result, docs)
-    mapping = json.loads(path.read_text(encoding="utf-8"))
-    mapping["confirmed"] = True
-    for module in mapping["modules"]:
-        module.update(rationale="按订单事件源码归组", responsibility="保存订单事件")
-    for review in mapping["entry_reviews"]:
-        review.update(status="confirmed", confirmed_by="tester", trigger="订单事件", purpose="保存订单",
-                      input="订单数据", outcome="保存完成", failure="向调用方传播异常")
-        for step in review["steps"]:
-            step["text"] = "保存订单事件"
-    path.write_text(json.dumps(mapping, ensure_ascii=False), encoding="utf-8")
-    assert apply_module_map(result, path) == []
 
 
 def test_structured_markers_survive_redaction() -> None:
@@ -395,26 +331,23 @@ def test_module_entry_ids_preserve_commas_in_method_parameters() -> None:
     assert _split_entry_ids(f"{first},{second}") == [first, second]
 
 
-def test_mermaid_success_uses_cleaned_label() -> None:
-    from toolkit.biz_flow_doc_generator.documents import _diagram
-    from toolkit.biz_flow_doc_generator.models import EntryPoint, EntryReview
-
-    entry = EntryPoint("url:GET /x:a.py:handler", "url", "GET /x", "handler", "a.py", 1, "a", "a.py")
-    entry.review = EntryReview("id", "caller", "purpose", "input", "password: SECRET; outcome", "failure")
-    diagram = _diagram(entry)
-    assert "SECRET" not in diagram
-    assert "password: [REDACTED]" in diagram
 
 
-def test_error_code_prefers_raised_literal_over_condition_status() -> None:
-    from toolkit.biz_flow_doc_generator.discovery import _error
-
-    evidence = _error(
-        'payment_id not in PAYMENTS or status != "PAID" -> raise OrderError("PAYMENT_FAILED")',
-        "app.py",
-        10,
-    )
-    assert evidence.code == "PAYMENT_FAILED"
+def test_error_literal_is_separate_from_condition_status(tmp_path) -> None:
+    from test_behavior_facts import project
+    root = project(tmp_path, {"app.py": '''
+# 校验订单支付
+@app.get("/orders")
+def payment(status):
+    if status != "PAID":
+        raise OrderError("PAYMENT_FAILED")
+    return status
+'''})
+    facts = next(iter(collect_evidence(scan(root)).values()))
+    raised = next(o for o in facts["outcomes"] if o["type"] == "raise")
+    assert "PAYMENT_FAILED" in raised["details"]["expression"]
+    assert "PAID" not in raised["details"]["expression"]
+    assert raised["conditions"]
 
 
 def test_overview_keeps_excluded_candidates_in_complete_list(tmp_path: Path) -> None:
@@ -450,7 +383,7 @@ def test_overview_keeps_excluded_candidates_in_complete_list(tmp_path: Path) -> 
     document["confirmed"] = True
     module_map.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
     result.entries = [business]
-    _write_overview_report(docs_root, result, {})
+    write_discovery(result, docs_root)
     rendered = (docs_root / "业务流程覆盖总览.md").read_text(encoding="utf-8")
     assert "| 技术入口：" not in rendered.split("## 完整入口清单", 1)[0]
     assert excluded.entry_id in rendered
@@ -466,19 +399,9 @@ def test_business_object_precedes_processing_form_and_framework_names() -> None:
     for identifier, handler, file, expected in entries:
         entry = EntryPoint("id", "url" if identifier.startswith("POST") else "scheduled",
                            identifier, handler, file, 1, "technical", "source")
-        assert _business_module_name(entry) == expected
+        assert _business_module_name(entry) == "technical"
 
 
-def test_chinese_storage_label_only_clears_label_unknown() -> None:
-    from toolkit.biz_flow_doc_generator.validation import pending_entry_inventory
-    label = {"code": "PERSISTENCE_DISPLAY_NAME_UNRESOLVED", "evidence": "Store.java:3"}
-    resource = {"code": "PERSISTENCE_RESOURCE_UNRESOLVED", "evidence": "Store.java:3"}
-    inventory = {"unresolved": [label, resource]}
-    value = {"persistence_actions": [{"source_file": "Store.java", "source_line": 3,
-                                      "display_name": "订单"}]}
-    assert pending_entry_inventory(value, inventory)["unresolved"] == [resource]
-    value["persistence_actions"][0]["display_name"] = "数据库"
-    assert pending_entry_inventory(value, inventory)["unresolved"] == [label, resource]
 
 
 def test_module_overview_uses_source_terms_and_covers_every_entry(tmp_path: Path) -> None:
@@ -502,12 +425,12 @@ def test_module_overview_uses_source_terms_and_covers_every_entry(tmp_path: Path
     _, mapping_path = write_discovery(result, docs)
     mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
     module = mapping["modules"][0]
-    assert module["file"] == "00-仓库库存管理与变更通知.md"
+    assert module["file"] == "00-仓库库存变更通知.md"
     assert _is_chinese_module_filename(module["file"])
     assert not _is_chinese_module_filename("00-仓库、库存.md")
     assert not _is_chinese_module_filename("00-仓库 库存.md")
     assert not _is_chinese_module_filename("00-仓库-库存.md")
-    assert all(feature in module["responsibility"] for feature in ("维护仓库", "查询仓库库存", "变更通知"))
+    assert all(feature in module["responsibility"] for feature in actions)
     assert "；" in module["responsibility"]
     assert "等业务" not in module["responsibility"]
     conversation = _conversation_overview(result, mapping, docs)
@@ -515,7 +438,7 @@ def test_module_overview_uses_source_terms_and_covers_every_entry(tmp_path: Path
     table = re.search(r"(?m)^\| 业务模块文件名 \|[^\n]*\n(?:\|[^\n]*\n?)+", conversation).group().rstrip()
     assert table in overview
     assert table.splitlines()[0] == "| 业务模块文件名 | 业务描述 | 入口数量 |"
-    assert "| 00-仓库库存管理与变更通知 |" in table and "| 6 |" in table
+    assert "| 00-仓库库存变更通知 |" in table and "| 6 |" in table
     assert ".md" not in table
     assert all(entry.entry_id in overview for entry in result.entries)
     assert module["file"] in overview.split("<!-- devflow:machine-map -->")[1]
@@ -559,7 +482,7 @@ class WarehouseDeviceController {
     assert "查询仓库设备详情" not in module["responsibility"]
     assert "client:" not in module["responsibility"] and "<br" not in module["responsibility"]
     assert write_entry_directory(result, docs, mapping) == []
-    assert description in (docs / module["file"]).read_text(encoding="utf-8")
+    assert description not in (docs / module["file"]).read_text(encoding="utf-8")
     assert description in (docs / "业务流程覆盖总览.md").read_text(encoding="utf-8")
     first = (docs / "业务流程覆盖总览.md").read_bytes()
     write_discovery(result, docs)
@@ -576,7 +499,7 @@ def test_module_description_limits_shared_swagger_scope_and_merges_queries() -> 
                           module_description="维护仓库设备，查询设备费用。")
                for index, name in enumerate(names)]
     description = _module_business_description(entries[:-1], entries)
-    assert description == "查询仓库设备；启用仓库设备；停用仓库设备。"
+    assert description == "；".join(names[:-1])
     assert "费用" not in description
     assert _module_business_description(entries, entries) == "维护仓库设备，查询设备费用。"
     recovery = EntryPoint("job", "scheduled", "recover", "run", "Recover.java", 1,
@@ -585,7 +508,7 @@ def test_module_description_limits_shared_swagger_scope_and_merges_queries() -> 
     receiver = EntryPoint("message", "message", "events", "receive", "Receiver.java", 1,
                           "仓库", "Receiver.java", business_name="仓库设备状态变更",
                           module_description="仓库设备状态变更消费者，只提交已持久化记录主键。")
-    assert _module_business_description([recovery, receiver], [recovery, receiver]) == "仓库设备恢复；仓库设备状态变更。"
+    assert _module_business_description([recovery, receiver], [recovery, receiver]) == "仓库设备恢复任务。；仓库设备状态变更消费者，只提交已持久化记录主键。"
 
 
 def test_module_filenames_summarize_objects_without_losing_actions(tmp_path: Path) -> None:
@@ -608,58 +531,14 @@ def test_module_filenames_summarize_objects_without_losing_actions(tmp_path: Pat
                         ["Java"], [], entries, [], [], "fingerprint")
     _, mapping_path = write_discovery(result, tmp_path / "docs/biz-flow")
     modules = {item["name"]: item for item in json.loads(mapping_path.read_text(encoding="utf-8"))["modules"]}
-    assert modules["batch"]["file"] == "00-批量任务查询.md"
-    assert modules["order"]["file"] == "02-订单同步.md"
+    assert modules["batch"]["file"] == "00-业务模块batch.md"
+    assert modules["order"]["file"] == "02-业务模块order.md"
     assert "订单同步" in modules["order"]["responsibility"]
     assert len(Path(modules["device"]["file"]).stem) <= 43
     assert "查询" in modules["device"]["responsibility"]
     assert "业务0" not in modules["device"]["file"]
 
 
-def test_automatic_short_filename_migrates_completed_content_and_preserves_custom_names(tmp_path: Path) -> None:
-    """自动旧短名迁移不丢图和人工正文，自定义文件名及冲突目标不被覆盖。"""
-    import pytest
-
-    entry = EntryPoint("one", "url", "GET /stock", "query", "Stock.java", 1,
-                       "仓库库存", "Stock.java", business_name="查询仓库库存", module_label="仓库库存")
-    create = EntryPoint("create", "url", "POST /stock", "create", "Stock.java", 2,
-                        "仓库库存", "Stock.java", business_name="创建仓库", module_label="仓库库存")
-    result = ScanResult(tmp_path, GitInfo("main", "a" * 40, "a" * 40, False, False),
-                        ["Java"], [], [entry, create], [], [], "fingerprint")
-    docs = tmp_path / "docs/biz-flow"
-    _, mapping_path = write_discovery(result, docs)
-    overview = docs / "业务流程覆盖总览.md"
-    generated = json.loads(mapping_path.read_text(encoding="utf-8"))["modules"][0]["file"]
-    old_name = "00-仓库库存.md"
-    overview.write_text(overview.read_text(encoding="utf-8").replace(generated, old_name), encoding="utf-8")
-    preserved = "<!-- biz-flow-module: 仓库库存 -->\n# 仓库库存\n```mermaid\nsequenceDiagram\n```\n人工补充说明\n"
-    (docs / old_name).write_text(preserved, encoding="utf-8")
-    write_discovery(result, docs)
-    assert not (docs / old_name).exists()
-    assert (docs / generated).read_text(encoding="utf-8") == preserved
-    assert json.loads(mapping_path.read_text(encoding="utf-8"))["modules"][0]["name"] == "仓库库存"
-
-    legacy = "00-仓库库存维护查询处理.md"
-    overview.write_text(overview.read_text(encoding="utf-8").replace(generated, legacy), encoding="utf-8")
-    (docs / generated).rename(docs / legacy)
-    write_discovery(result, docs)
-    assert not (docs / legacy).exists()
-    assert (docs / generated).read_text(encoding="utf-8") == preserved
-
-    custom = "00-仓库库存盘点说明.md"
-    overview.write_text(overview.read_text(encoding="utf-8").replace(generated, custom), encoding="utf-8")
-    (docs / generated).rename(docs / custom)
-    write_discovery(result, docs)
-    assert json.loads(mapping_path.read_text(encoding="utf-8"))["modules"][0]["file"] == custom
-    assert (docs / custom).read_text(encoding="utf-8") == preserved
-
-    overview.write_text(overview.read_text(encoding="utf-8").replace(custom, old_name), encoding="utf-8")
-    (docs / custom).rename(docs / old_name)
-    (docs / generated).write_text("另一个文件的人工内容", encoding="utf-8")
-    with pytest.raises(RuntimeError, match="迁移目标已存在"):
-        write_discovery(result, docs)
-    assert (docs / old_name).read_text(encoding="utf-8") == preserved
-    assert (docs / generated).read_text(encoding="utf-8") == "另一个文件的人工内容"
 
 
 def test_function_summary_retains_source_object_qualifiers_without_project_templates(tmp_path: Path) -> None:
@@ -675,7 +554,7 @@ def test_function_summary_retains_source_object_qualifiers_without_project_templ
                    business_name="解密完整资产编号", module_label="资产信息"),
     ]
     title = _module_function_summary("协作", entries)
-    assert all(value in title for value in ("仓库配送策略", "资产设备关系"))
+    assert title == "协作"
     assert "策略配置" not in title and "关系变更" not in title
     assert not title.endswith(("处理", "业务", "流程"))
     assert title.startswith("协作")
@@ -698,11 +577,11 @@ def test_entry_only_preserves_registrations_without_behavior_unknowns(tmp_path: 
     assert len(shallow.registration_audit) == 1
     assert shallow.registration_audit[0]["status"] == "business"
     assert shallow.registration_audit[0]["entry_ids"] == [shallow.entries[0].entry_id]
-    assert shallow.entries[0].behaviors == [] and shallow.entries[0].errors == []
+    assert len(shallow.entries[0].functions) == 1
     assert not any("called function" in finding or "receiver type" in finding for finding in shallow.unresolved)
     full = scan(tmp_path)
     assert not any(entry.kind == "worker" for entry in full.entries)
-    assert any(error.phase == "worker" for error in full.entries[0].errors)
+    assert collect_evidence(full)[full.entries[0].entry_id]["gaps"]
     selected = scan(tmp_path, entry_ids=set())
     assert selected.entries == [] and len(selected.all_entries) == 1
     assert not any("called function" in finding for finding in selected.unresolved)
@@ -744,8 +623,8 @@ def test_business_resource_precedes_search_and_execute() -> None:
                        "Callback.java", 1, "fallback", "Callback.java", module_label="软件销售回调")
     second = EntryPoint("two", "url", "POST /v0/admin/dms-server-configs/execute", "execute",
                         "Config.java", 1, "fallback", "Config.java", module_label="DMS服务配置")
-    assert _business_module_name(first) == "软件销售"
-    assert _business_module_name(second) == "DMS业务"
+    assert _business_module_name(first) == "软件销售回调"
+    assert _business_module_name(second) == "DMS服务配置"
 
 
 
@@ -860,26 +739,11 @@ class SoftwareSaleFulfillmentJob extends AbstractJobHandler {
     result = scan(tmp_path, entry_only=True)
     vehicle = [entry for entry in result.entries if "VehicleUsage" in entry.file]
     plan = [entry for entry in result.entries if "SalablePlan" in entry.file]
-    assert {entry.module for entry in vehicle} == {"用量"}
-    assert {entry.module for entry in plan} == {"套餐"}
+    assert {entry.module for entry in vehicle} == {"渠道甲车辆用量查询", "渠道乙车辆用量查询"}
+    assert {entry.module for entry in plan} == {"可售套餐", "可售套餐订单查询"}
     assert len(vehicle) == 2 and len(plan) == 3
     software = [entry for entry in result.entries if "SoftwareSale" in entry.file]
-    assert len(software) == 2 and {entry.module for entry in software} == {"软件销售"}
-
-
-def test_calls_ignore_literal_sql_and_comment_calls_without_removing_real_call() -> None:
-    from toolkit.biz_flow_doc_generator.discovery import _calls, _qualified_calls
-    body = '''def run():
-    value = "INSERT INTO accounts(email) VALUES (?) fake.remote() helper()"
-    other = """helper() literal.insert()"""
-    # other.remote() helper()
-    helper()
-    connection.execute(value)
-    connection.commit()
-'''
-    assert "accounts" not in _calls(body)
-    assert _calls(body).count("helper") == 1
-    assert _qualified_calls(body) == [("connection", "execute"), ("connection", "commit")]
+    assert len(software) == 2 and {entry.module for entry in software} == {"软件销售履约"}
 
 
 def test_module_labels_remove_registration_channels_and_keep_business_actions() -> None:

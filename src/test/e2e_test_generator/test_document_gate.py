@@ -5,8 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 from toolkit.e2e_test_generator.document_gate import initialize_document_state, run_document_gate, validate_baseline, validate_markdown, validate_scenario_artifacts
 from toolkit.e2e_test_generator.contracts import generate_artifacts
+from toolkit.e2e_test_generator.materialize import _definition
 
 
 class DocumentGateTests(unittest.TestCase):
@@ -81,6 +84,35 @@ class DocumentGateTests(unittest.TestCase):
             result, errors = generate_artifacts(Path(temporary))
             self.assertIn("document_gate", result)
             self.assertTrue(any("DOCUMENT_BASELINE_MISSING" in error for error in errors))
+
+    def test_active_document_accepts_readiness_states_and_chinese_data_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "analysis").mkdir()
+            (root / "analysis/workspace.yaml").write_text(yaml.safe_dump({
+                "inventory": {"repositories": [{"id": "fixture", "commit": "a" * 40, "build_files": ["build"]}]},
+                "configuration": {"sources": [{"evidence": ["fixture#Anchor"]}]},
+            }), encoding="utf-8")
+            rule = {"id": "READ_ITEM", "title": "读取详情", "status": "confirmed",
+                    "participants": ["service"], "assertions": ["status=OK"], "protocol_refs": ["read"]}
+            _, definition, _, _ = _definition(root, rule, {"operations": [
+                {"id": "read", "kind": "http", "method": "GET", "path": "/items/{id}"},
+            ]}, owner="fixture")
+            definition["steps"][0]["data_ref"] = "业务数据.json#/test/item"
+            target = root / "scenarios/读取详情/场景定义.yaml"
+            target.parent.mkdir(parents=True)
+            document = {"id": "READ_ITEM", "name": "读取详情", "status": "active", "document": "docs/e2e/read.md"}
+            for status in ("ready", "pending_environment", "contract_blocked"):
+                definition["meta"]["status"] = status
+                target.write_text(yaml.safe_dump(definition, allow_unicode=True), encoding="utf-8")
+                self.assertEqual([], validate_scenario_artifacts(root, [document]))
+            definition["meta"]["status"] = "invented"
+            target.write_text(yaml.safe_dump(definition, allow_unicode=True), encoding="utf-8")
+            self.assertTrue(validate_scenario_artifacts(root, [document]))
+            definition["meta"]["status"] = "contract_blocked"
+            definition["steps"][0]["data_ref"] = "other.json#/test/item"
+            target.write_text(yaml.safe_dump(definition, allow_unicode=True), encoding="utf-8")
+            self.assertTrue(validate_scenario_artifacts(root, [document]))
 
 
 if __name__ == "__main__":

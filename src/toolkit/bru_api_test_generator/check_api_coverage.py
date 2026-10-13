@@ -18,78 +18,12 @@ import unicodedata
 import urllib.parse
 from pathlib import Path
 from typing import Any
+from ..core.sequence import validate_sequence
 
 sys.dont_write_bytecode = True
 
-try:
-    from .manifest_io import first_list, list_at, load_data
-except ImportError:  # Keep a copied checker runnable without the helper module.
-    def load_data(path: Path) -> Any:
-        text = path.read_text(encoding="utf-8")
-        if path.suffix.lower() == ".json":
-            return json.loads(text)
-        try:
-            import yaml  # type: ignore[import-not-found]
-        except ModuleNotFoundError as exc:
-            raise SystemExit("YAML manifests require PyYAML") from exc
-        return yaml.safe_load(text)
-
-    def first_list(document: Any, key: str) -> list[dict[str, Any]]:
-        if isinstance(document, dict) and isinstance(document.get(key), list):
-            return [item for item in document[key] if isinstance(item, dict)]
-        if isinstance(document, list):
-            return [item for item in document if isinstance(item, dict)]
-        return []
-
-    def list_at(document: Any, key: str) -> list[dict[str, Any]]:
-        found: list[dict[str, Any]] = []
-        if isinstance(document, dict):
-            found.extend(item for item in document.get(key, []) if isinstance(item, dict))
-            for child in document.values():
-                found.extend(list_at(child, key))
-        elif isinstance(document, list):
-            for child in document:
-                found.extend(list_at(child, key))
-        return found
-try:
-    from .parse_openapi import extract, load_document
-except ImportError:  # The checker is also intended to be copied on its own.
-    def load_document(path: Path) -> dict[str, Any]:
-        text = path.read_text(encoding="utf-8")
-        if path.suffix.lower() == ".json":
-            loaded = json.loads(text)
-        else:
-            try:
-                import yaml  # type: ignore[import-not-found]
-            except ModuleNotFoundError as exc:
-                raise SystemExit("YAML OpenAPI input requires PyYAML") from exc
-            loaded = yaml.safe_load(text)
-        if not isinstance(loaded, dict):
-            raise ValueError("OpenAPI document must contain an object")
-        return loaded
-
-    def stable_id(method: str, path: str, operation: dict[str, Any]) -> str:
-        operation_id = operation.get("operationId")
-        raw = f"{operation_id}_{method}_{path}" if operation_id else f"{method}_{path}"
-        return re.sub(r"[^A-Za-z0-9]+", "_", raw).strip("_").upper() or "ENDPOINT"
-
-    def extract(path: Path, document: dict[str, Any]) -> dict[str, Any]:
-        paths = document.get("paths")
-        if not isinstance(paths, dict):
-            raise ValueError("OpenAPI document has no object-valued paths field")
-        methods = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
-        endpoints = []
-        for route, path_item in paths.items():
-            if not isinstance(route, str) or not isinstance(path_item, dict):
-                continue
-            for method, operation in path_item.items():
-                if method.lower() in methods and isinstance(operation, dict):
-                    endpoints.append({
-                        "id": stable_id(method.upper(), route, operation),
-                        "method": method.upper(),
-                        "path": route,
-                    })
-        return {"endpoints": sorted(endpoints, key=lambda item: (item["path"], item["method"]))}
+from .manifest_io import case_contract_errors, first_list, list_at, load_data
+from .parse_openapi import extract, load_document
 
 from .execution_config import (
     COLLECTION_END_MARKER,
@@ -804,6 +738,8 @@ def validate_module_documentation(path: Path, cases: list[dict[str, Any]]) -> li
     for marker in ("业务范围：", "## 模块内容", "## 接口清单", CASE_DOCS_START, CASE_DOCS_END):
         if marker not in content:
             errors.append(f"{path.name} is missing required section marker {marker}")
+    for diagram in re.findall(r"```mermaid\s*\n(.*?)```", content, re.S):
+        errors.extend(f"{path.name}: {error}" for error in validate_sequence(diagram))
     documented_ids = re.findall(r"<!-- CASE_START: ([^\s>]+) -->", content)
     declared_ids = {str(case.get("id")) for case in cases if case.get("id")}
     if cases and not re.search(r"```mermaid\s*\n\s*sequenceDiagram\b", content):
@@ -830,7 +766,7 @@ def validate_module_documentation(path: Path, cases: list[dict[str, Any]]) -> li
             if not re.search(r"```mermaid\s*\n\s*sequenceDiagram\b", block):
                 errors.append(f"flow case {case_id} documentation has no Mermaid sequenceDiagram swimlane")
             else:
-                participants = re.findall(r"(?m)^\s*participant\s+([A-Za-z][A-Za-z0-9_]*)\b", block)
+                participants = re.findall(r"(?m)^\s*(?:participant|actor)\s+([A-Za-z][A-Za-z0-9_]*)\b", block)
                 interactions = re.findall(r"(?m)^\s*([A-Za-z][A-Za-z0-9_]*)\s*(->>|-->>|--)\s*([A-Za-z][A-Za-z0-9_]*)\s*:", block)
                 declared = set(participants)
                 if len(declared) < 2 or not interactions:
@@ -854,7 +790,8 @@ def validate_contracts_readme(contracts_root: Path, modules: list[tuple[str, Pat
         content = path.read_text(encoding="utf-8", errors="strict")
     except (OSError, UnicodeDecodeError) as exc:
         return [f"cannot read contracts module overview {path}: {exc}"]
-    errors: list[str] = []
+    errors: list[str] = [f"README.md: {error}" for diagram in re.findall(r"```mermaid\s*\n(.*?)```", content, re.S)
+                         for error in validate_sequence(diagram)]
     for module_id, _ in modules:
         start_marker = f"<!-- MODULE_START: {module_id} -->"
         end_marker = f"<!-- MODULE_END: {module_id} -->"
@@ -1012,9 +949,9 @@ def case_files(
     bru_root: Path,
     endpoints: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[set[str], set[Path], dict[str, Path], list[str]]:
+    errors = [error for case in cases for error in case_contract_errors(case)]
     if not bru_root.is_dir():
-        return set(), set(), {}, [f"Bruno directory does not exist: {bru_root}"]
-    errors: list[str] = []
+        return set(), set(), {}, [*errors, f"Bruno directory does not exist: {bru_root}"]
     candidates = [path for path in bru_root.rglob("*.bru") if is_business_request(path, bru_root)]
     contents: dict[Path, str] = {}
     known_files: dict[Path, Path] = {}
@@ -1041,7 +978,7 @@ def case_files(
         if not case_id:
             errors.append("case without id")
             continue
-        configured = case.get("bru") or case.get("bru_file") or case.get("file_name")
+        configured = case.get("bru")
         matched = None
         if isinstance(configured, str):
             candidate = (bru_root / configured).resolve()
@@ -1073,7 +1010,7 @@ def case_files(
             errors.append(f"case {case_id} reuses Bruno file already mapped to another case: {matched}")
         used_paths.add(matched)
         case_paths[case_id] = matched
-        explicit_sequence = case.get("sequence", case.get("seq"))
+        explicit_sequence = case.get("sequence")
         try:
             expected_sequence = int(explicit_sequence) if explicit_sequence is not None else None
         except (TypeError, ValueError):
@@ -2219,8 +2156,7 @@ def main() -> int:
             try:
                 offline_document = load_document(openapi_path)
                 provenance = offline_document.get("provenance") if isinstance(offline_document, dict) else None
-                version_root = args.contracts_root.parent if args.module else args.contracts_root
-                version_lock = load_data(version_root / "bru-api-test-generator-version.json")
+                version_lock = load_data(qa_root / "contracts" / "bru-api-test-generator-version.json")
                 locked_business = version_lock.get("business", {}) if isinstance(version_lock, dict) and isinstance(version_lock.get("business"), dict) else {}
                 locked_sha = locked_business.get("commit")
                 contract_provenance_unverified = not (

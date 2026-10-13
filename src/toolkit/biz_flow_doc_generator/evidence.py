@@ -1,416 +1,197 @@
-"""Source inventories. Adapters are statically registered, never loaded from projects."""
-
+"""Canonical source facts. Adapters are statically registered and fail closed."""
 from __future__ import annotations
-
 import ast
 import hashlib
-import re
-import textwrap
-from dataclasses import asdict, dataclass
-from typing import Protocol
-
-from .discovery import _capability_id, _enrich_signatures, _functions
+import json
+import sys
+from collections import Counter
+from dataclasses import asdict
+from ..core.redaction import redact
+from ..core.artifacts import state_root, write_json
+from ..core.syntax import normalized, parser_versions
 from .git import source_view
-from .models import BranchEvidence, EntryPoint, FunctionInfo, PersistenceAction, ScanResult
+
+ADAPTER_VERSION = "5.1.0"
+FACT_ARRAYS = ("calls", "branches", "persistence_actions", "effects", "outcomes")
+RESOURCE_TYPES = {"relational_table", "document_collection", "kv_namespace", "search_index", "object_storage", "file_resource"}
 
 
-RESOURCE_TYPES = {
-    "relational_table", "document_collection", "kv_namespace", "search_index",
-    "object_storage", "file_resource", "external_resource",
-}
+def digest(value):
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-@dataclass(frozen=True)
-class SourceContext:
-    entry: EntryPoint
-    source_file: str
-    function: str
-    start_line: int
-    text: str
-    project_sources: dict[str, str]
+def stable_id(prefix, *parts):
+    return prefix + "-" + digest(parts)[:20]
 
 
-class PersistenceEvidenceAdapter(Protocol):
-    def can_handle(self, project_context: SourceContext) -> bool: ...
-
-    def analyze(self, source_context: SourceContext) -> list[PersistenceAction]: ...
-
-
-class BranchEvidenceAdapter(Protocol):
-    """Project supplied branch extractor; language/framework agnostic."""
-
-    def can_handle(self, source_context: SourceContext) -> bool: ...
-
-    def branches(self, source_context: SourceContext) -> list[BranchEvidence]: ...
-
-
-def evidence_id(prefix: str, context: SourceContext, value: str, ordinal: int) -> str:
-    # Line numbers are evidence, not identity: adding blank lines preserves IDs.
-    key = f"{context.entry.entry_id}|{context.source_file}|{context.function}|{value}|{ordinal}"
-    return f"{prefix}-{hashlib.sha256(key.encode()).hexdigest()[:16]}"
-
-
-class LiteralStorageAdapter:
-    """Literal SQL and explicitly named storage API operations; no naming guesses."""
-
-    def can_handle(self, project_context: SourceContext) -> bool:
-        return project_context.source_file.endswith((".py", ".java", ".xml"))
-
-    def analyze(self, source_context: SourceContext) -> list[PersistenceAction]:
-        context = source_context
-        actions = []
-        # SQL joins are separate reads. Dynamic identifiers never become table names.
-        sql = re.compile(
-            r"\b(?P<op>FROM|JOIN|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+"
-            r"[`\"]?(?P<name>[A-Za-z_][\w.]*)[`\"]?", re.I,
-        )
-        operations = {"from": "read", "join": "read", "insert into": "insert", "update": "update", "delete from": "delete"}
-        for match in sql.finditer(context.text):
-            op = operations[re.sub(r"\s+", " ", match["op"].lower())]
-            actions.append(self._action(context, match, "relational_table", match["name"], op, len(actions)))
-        # Explicit object names only. A variable/concatenation is an unresolved action.
-        patterns = (
-            (r'\b(?:collection|get_collection)\(\s*["\']([^"\']+)["\']\s*\)\.(find_one|find|insert_one|update_one|delete_one)\(', "document_collection"),
-            (r'\b[A-Za-z_]\w*\.(get|set|delete|hget|hset)\(\s*["\']([^"\']+)["\']\s*[,)]', "kv_namespace"),
-            (r'\b(?:open|Path)\(\s*["\']([^"\']+)["\']\s*[,)]', "file_resource"),
-            (r'\b(?:search|index|delete)\(\s*index\s*=\s*["\']([^"\']+)["\']\s*[,)]', "search_index"),
-            (r'\b(?:get_object|put_object|delete_object)\(\s*Bucket\s*=\s*["\']([^"\']+)["\']\s*,\s*Key\s*=\s*["\']([^"\']+)["\']\s*[,)]', "object_storage"),
-        )
-        for pattern, kind in patterns:
-            for match in re.finditer(pattern, context.text):
-                name = match[2] if kind == "kv_namespace" else match[1]
-                if kind == "object_storage":
-                    name += "/" + match[2]
-                operation = match[1] if kind == "kv_namespace" else (match[2] if kind == "document_collection" else match[0].split("(")[0])
-                actions.append(self._action(context, match, kind, name, operation, len(actions)))
-        return actions
-
-    @staticmethod
-    def _action(context, match, kind, name, operation, ordinal):
-        label_match = re.search(r"devflow:persistence(?:-name)?\s*[:=]\s*([^\n]+)", context.text)
-        display_name = label_match.group(1).strip() if label_match else ""
-        return PersistenceAction(
-            evidence_id("P", context, f"{kind}:{name}:{operation}", ordinal), kind, name, display_name,
-            operation, None, [], context.source_file,
-            context.start_line + context.text[:match.start()].count("\n"),
-        )
-
-
-class PythonEvidenceAdapter:
-    def can_handle(self, context: SourceContext) -> bool:
-        return context.source_file.endswith(".py")
-
-    def branches(self, context: SourceContext) -> list[BranchEvidence]:
-        tree = ast.parse(textwrap.dedent(context.text))
-        result = []
-        # Conservatively include control decisions, exception boundaries, short
-        # circuits and early returns; only evidence-backed exclusions may remove them.
-        kinds = (ast.If, ast.IfExp, ast.For, ast.AsyncFor, ast.While, ast.ExceptHandler,
-                 ast.Assert, ast.BoolOp, ast.Raise, ast.Match)
-        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
-        nodes = [n for n in ast.walk(tree) if isinstance(n, kinds)]
-        # A plain terminal return is not a decision.  Include an early return
-        # only when a surrounding control construct makes it a business branch.
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Return):
-                continue
-            parent = parents.get(node)
-            while parent is not None and not isinstance(parent, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.ExceptHandler)):
-                parent = parents.get(parent)
-            if parent is not None:
-                nodes.append(node)
-        for node in sorted(nodes, key=lambda n: (n.lineno, n.col_offset)):
-            target = getattr(node, "test", None) or getattr(node, "iter", None) or getattr(node, "type", None)
-            condition = ast.unparse(target or node).splitlines()[0]
-            kind = type(node).__name__
-            reachability = "reachable"
-            business_relevant: bool | None = True
-            handler = node if isinstance(node, ast.ExceptHandler) else parents.get(node)
-            if isinstance(handler, ast.ExceptHandler) and isinstance(node, (ast.ExceptHandler, ast.Return)):
-                try_node = parents.get(handler)
-                # 被调用且返回值被丢弃的纯辅助回退，不改变入口结果；保留有实际处理动作的捕获。
-                if (isinstance(try_node, ast.Try) and self._ignored_helper_return(context)
-                        and self._swallows_without_business_effect(handler, context)
-                        and not try_node.orelse
-                        and all(isinstance(statement, (ast.Raise, ast.Pass))
-                                or (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant))
-                                for statement in try_node.body)):
-                    business_relevant = False
-            if isinstance(node, ast.Raise):
-                child, ancestor = node, parents.get(node)
-                while ancestor is not None and not isinstance(ancestor, ast.Try):
-                    child, ancestor = ancestor, parents.get(ancestor)
-                raised_func = getattr(getattr(node, "exc", None), "func", None)
-                raised_name = ast.unparse(raised_func) if raised_func is not None else None
-                # 同一个 try 的 handler/else/finally 内抛出的异常不由其自身 handler 捕获。
-                if isinstance(ancestor, ast.Try) and child in ancestor.body and raised_name:
-                    for handler in ancestor.handlers:
-                        caught = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
-                        matches = handler.type is None or raised_name in [ast.unparse(value) for value in caught if value]
-                        following = ancestor.body[ancestor.body.index(child) + 1:]
-                        skipped_business_path = bool(ancestor.orelse) or any(
-                            not isinstance(statement, ast.Pass)
-                            and not (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant))
-                            for statement in following)
-                        if matches and not skipped_business_path and self._swallows_without_business_effect(handler, context):
-                            business_relevant = False
-                            break
-            outcomes = ["true", "false"]
-            if isinstance(node, (ast.For, ast.AsyncFor)):
-                outcomes = ["nonempty", "empty"]
-            elif isinstance(node, ast.ExceptHandler):
-                outcomes = ["caught", "propagated"]
-            elif isinstance(node, (ast.Return, ast.Raise)):
-                outcomes = [ast.unparse(node)]
-            elif isinstance(node, ast.Match):
-                outcomes = [ast.unparse(case.pattern) for case in node.cases]
-            result.append(BranchEvidence(
-                evidence_id("B", context, f"{kind}:{condition}", sum(b.condition == condition for b in result)),
-                context.source_file, context.start_line + node.lineno - 1,
-                condition, outcomes, [ast.unparse(node)], reachability, business_relevant,
-            ))
-        return result
-
-
-    @staticmethod
-    def _swallows_without_business_effect(handler: ast.ExceptHandler, context: SourceContext) -> bool:
-        """只有明确吞掉且没有业务结果/副作用的辅助异常才排除。"""
-        for statement in handler.body:
-            if isinstance(statement, ast.Pass):
-                continue
-            if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
-                continue
-            if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
-                call = statement.value.func
-                if (isinstance(call, ast.Attribute)
-                        and ast.unparse(call.value).split(".")[-1] in {"logger", "log", "logging"}
-                        and call.attr in {"debug", "info", "warning", "warn", "error", "exception", "critical"}):
-                    continue
-            if isinstance(statement, ast.Return) and PythonEvidenceAdapter._ignored_helper_return(context):
-                try:
-                    ast.literal_eval(statement.value) if statement.value is not None else None
-                    continue
-                except (ValueError, TypeError):
-                    pass
-            return False
-        return True
-
-    @staticmethod
-    def _ignored_helper_return(context: SourceContext) -> bool:
-        """仅排除同文件辅助方法的纯字面量回退，且所有源码调用都丢弃返回值。"""
-        handler_name = context.entry.handler.rsplit("#", 1)[-1].split("(", 1)[0].rsplit(".", 1)[-1]
-        if context.function == handler_name or context.source_file != context.entry.file:
-            return False
-        for file, text in context.project_sources.items():
-            if file != context.source_file and re.search(r"\b" + re.escape(context.function) + r"\s*\(", text):
-                return False
-        tree = ast.parse(context.project_sources.get(context.source_file, ""))
-        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
-        definitions = [node for node in ast.walk(tree)
-                       if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == context.function]
-        if len(definitions) != 1:
-            return False
-        # return 回退会跳过后续操作；只有顶层 try 之后不再产生业务动作才可排除。
-        for node in ast.walk(definitions[0]):
-            if not isinstance(node, ast.Return) or not isinstance(parents.get(node), ast.ExceptHandler):
-                continue
-            try_node = parents.get(parents[node])
-            if parents.get(try_node) is not definitions[0]:
-                return False
-            following = definitions[0].body[definitions[0].body.index(try_node) + 1:]
-            if any(not isinstance(statement, ast.Return) for statement in following):
-                return False
-            for statement in following:
-                try:
-                    ast.literal_eval(statement.value) if statement.value is not None else None
-                except (ValueError, TypeError):
-                    return False
-        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
-                 and getattr(node.func, "id", getattr(node.func, "attr", None)) == context.function]
-        return bool(calls) and all(isinstance(parents.get(call), ast.Expr) for call in calls)
-
-
-class JavaEvidenceAdapter:
-    """Bounded Java source adapter; complex syntax is a blocking unknown."""
-
-    def can_handle(self, context: SourceContext) -> bool:
-        return context.source_file.endswith(".java")
-
-    def branches(self, context: SourceContext) -> list[BranchEvidence]:
-        text = re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"',
-                      lambda m: "\n" * m[0].count("\n") if m[0].startswith(("//", "/*")) else '"literal"',
-                      context.text, flags=re.S)
-        result = []
-        pattern = r"\b(if|for|while|switch|catch)\s*\(|\b(return|throw)\b[^;]*;|\?|&&|\|\|"
-        for match in re.finditer(pattern, text):
-            end = match.end()
-            reachability = "reachable"
-            if match[1]:
-                depth = 1
-                while end < len(text) and depth:
-                    depth += (text[end] == "(") - (text[end] == ")")
-                    end += 1
-                if depth:
-                    reachability = "unknown"
-            condition = text[match.start():end].strip()
-            if condition in {"?", "&&", "||"}:
-                reachability = "unknown"
-            result.append(BranchEvidence(
-                evidence_id("B", context, condition, sum(b.condition == condition for b in result)),
-                context.source_file, context.start_line + text[:match.start()].count("\n"),
-                condition, ["taken", "not_taken"] if match[1] else [condition], [condition],
-                reachability, True if reachability == "reachable" else None,
-            ))
-        return result
-
-
-def _declared_outcomes(context: SourceContext) -> list[str]:
-    """Extract explicit return/throw outcomes without inventing a result."""
-    if context.source_file.endswith(".py"):
+def trim_cache(directory, limit=128):
+    """Bound rebuildable caches; never touch run or recovery artifacts."""
+    files = [p for p in directory.glob("*.json") if len(p.stem) == 64
+             and all(c in "0123456789abcdef" for c in p.stem) and not p.is_symlink()]
+    ordered = []
+    for path in files:
         try:
-            tree = ast.parse(textwrap.dedent(context.text))
-        except SyntaxError:
-            return []
-        values: list[str] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Return):
-                values.append(ast.unparse(node.value) if node.value is not None else "return")
-            elif isinstance(node, ast.Raise):
-                values.append(ast.unparse(node.exc) if node.exc is not None else "raise")
-        return values
-    if context.source_file.endswith(".java"):
-        return [value.strip() for keyword, value in re.findall(
-            r"\b(return|throw)\s+([^;{}]+)", context.text
-        )]
-    return []
+            ordered.append((path.stat().st_mtime_ns, path))
+        except FileNotFoundError:
+            continue  # Another process may have already pruned this cache.
+    for _, path in sorted(ordered)[:-limit]:
+        path.unlink(missing_ok=True)
 
 
-BRANCH_ADAPTERS = (PythonEvidenceAdapter(), JavaEvidenceAdapter())
-PERSISTENCE_ADAPTERS: tuple[PersistenceEvidenceAdapter, ...] = (LiteralStorageAdapter(),)
-
-
-def collect_evidence(
-    scan: ScanResult,
-    *,
-    branch_adapters: tuple[BranchEvidenceAdapter, ...] = BRANCH_ADAPTERS,
-    persistence_adapters: tuple[PersistenceEvidenceAdapter, ...] = PERSISTENCE_ADAPTERS,
-) -> dict[str, dict]:
-    inventories = {}
-    with source_view(scan.root, scan.git.target) as (root, _):
-        sources = {}
-        for file in scan.files:
-            path = (root / file).resolve()
-            if not path.is_relative_to(root.resolve()):
-                raise ValueError(f"source escapes project: {file}")
-            try:
-                sources[file] = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeError):
-                continue
-        # 声明索引只建立一次；多入口共享辅助能力时不能反复解析整个项目。
-        definitions_by_file = {}
-        capability_locations = {}
-        bare_locations = {}
-        for file, source in sources.items():
-            language = "Python" if file.endswith(".py") else "Java" if file.endswith(".java") else None
-            if language is None:
-                continue
-            definitions = _functions(source, language, file)
-            _enrich_signatures(definitions, language)
-            definitions_by_file[file] = definitions
-            for function in definitions:
-                capability_locations.setdefault(_capability_id(language, file, function, source), []).append((file, function))
-                bare_locations.setdefault(function.name, []).append((file, function.name))
-        for entry in scan.entries:
-            branches, persistence, unresolved = [], [], []
-            participants = [value for value in (entry.caller, entry.module) if value and value != "代码中未确认"]
-            calls = list(dict.fromkeys(entry.functions))
-            async_actions, external_calls, outcomes = [], [], []
-            # Discovery may retain bare helper names for compatibility. Resolve
-            # them only when exactly one source definition exists.
-            locations = {location for location in entry.functions if ":" in location and "#" not in location}
-            if not any("#" in capability for capability in entry.functions):
-                locations.add(f"{entry.file}:{entry.handler}")
-            qualified_definitions: dict[str, tuple[str, FunctionInfo]] = {}
-            for capability in entry.functions:
-                if "#" not in capability or ":" not in capability:
-                    continue
-                candidates = capability_locations.get(capability, [])
-                if len(candidates) == 1:
-                    qualified_definitions[capability] = candidates[0]
-                    locations.add(capability)
-                elif len(candidates) > 1:
-                    unresolved.append({"code": "SOURCE_SCOPE_AMBIGUOUS", "critical": True, "evidence": capability})
-            for bare in {location for location in entry.functions if ":" not in location}:
-                candidates = bare_locations.get(bare, [])
-                if len(candidates) == 1:
-                    locations.add(f"{candidates[0][0]}:{bare}")
-                elif len(candidates) > 1:
-                    unresolved.append({"code": "SOURCE_SCOPE_AMBIGUOUS", "critical": True, "evidence": bare})
-            for location in sorted(locations):
-                qualified = qualified_definitions.get(location)
-                if qualified:
-                    file, definition = qualified
-                    function = definition.name
-                    text = sources[file]
-                    language = "Python" if file.endswith(".py") else "Java"
-                else:
-                    file, _, function = location.rpartition(":")
-                    text = sources.get(file, "")
-                    language = "Python" if file.endswith(".py") else "Java" if file.endswith(".java") else None
-                if language is not None:
-                    definitions = [definition] if qualified else [f for f in definitions_by_file.get(file, []) if f.name == function]
-                    if len(definitions) != 1:
-                        unresolved.append({"code": "SOURCE_SCOPE_UNRESOLVED", "critical": True, "evidence": location})
-                        continue
-                    definition = definitions[0]
-                    context = SourceContext(entry, file, function, definition.start, definition.body, sources)
-                else:
-                    # Other languages are intentionally delegated to a project
-                    # adapter.  Give it the complete source because the
-                    # generic package has no safe parser for that language.
-                    context = SourceContext(entry, file, function, 1, text, sources)
-                adapter = next((a for a in branch_adapters if a.can_handle(context)), None)
-                if adapter is None:
-                    unresolved.append({"code": "SOURCE_ADAPTER_UNAVAILABLE", "critical": True, "evidence": location})
-                    continue
-                try:
-                    branch_values = list(adapter.branches(context))
-                    branches.extend(asdict(b) for b in branch_values)
-                    outcomes.extend(outcome for branch in branch_values for outcome in branch.outcomes)
-                    outcomes.extend(_declared_outcomes(context))
-                except (SyntaxError, ValueError):
-                    unresolved.append({"code": "CRITICAL_UNRESOLVED_BRANCH", "critical": True, "evidence": location})
-                actions = [a for adapter in persistence_adapters if adapter.can_handle(context) for a in adapter.analyze(context)]
-                persistence.extend(asdict(a) for a in actions)
-                if re.search(r"\b(?:async|await|enqueue|publish|send|submit)\b", context.text, re.I):
-                    async_actions.append(f"{file}:{context.start_line}")
-                if re.search(r"\b(?:requests?|httpx|urllib|grpc|RestTemplate|Feign)\b", context.text, re.I):
-                    external_calls.append(f"{file}:{context.start_line}")
-                for action in actions:
-                    if not action.display_name:
-                        unresolved.append({"code": "PERSISTENCE_DISPLAY_NAME_UNRESOLVED", "critical": True,
-                                           "evidence": f"{file}:{action.source_line}"})
-                # A storage-like call with no resolved object is never silently omitted.
-                for number, line in enumerate(context.text.splitlines(), context.start_line):
-                    if re.search(r"\b(?:repository|dao|save|persist|execute|executemany|findBy\w*|redis|cache|collection|get_collection|open|Path|put_object|get_object|delete_object)\b", line, re.I):
-                        if not any(a.source_line == number for a in actions):
-                            unresolved.append({"code": "PERSISTENCE_OBJECT_UNRESOLVED", "critical": True, "evidence": f"{file}:{number}"})
-            inventories[entry.entry_id] = {
-                "entry_id": entry.entry_id, "source_fingerprint": scan.source_fingerprint,
+class Facts:
+    def __init__(self, scan, entry, sources, hints=(), budget=2000):
+        self.scan, self.entry, self.sources, self.budget = scan, entry, sources, budget
+        self.ordinals, self.stack, self.background, self.count = Counter(), [], [], 0
+        self.hints = {h["target_id"]: h for h in hints if h["entry_id"] == entry.entry_id}
+        self.value = {
+            "schema_version": 6, "entry_id": entry.entry_id, "source_commit": scan.git.target,
+            "source_fingerprint": scan.source_fingerprint, "adapter_version": ADAPTER_VERSION,
+            "registration": {"kind": entry.kind, "identifier": entry.identifier, "handler": entry.handler,
                 "business_name": entry.business_name, "trigger_summary": entry.trigger_summary,
-                "source_evidence": list(entry.source_evidence), "scope_status": entry.scope_status,
-                "exclusion_reason": entry.exclusion_reason,
-                "participants": list(dict.fromkeys(participants)), "calls": calls,
-                "async_actions": list(dict.fromkeys(async_actions)),
-                "external_calls": list(dict.fromkeys(external_calls)),
-                "outcomes": list(dict.fromkeys(outcomes)),
-                "source_branch_inventory": branches, "persistence_inventory": persistence,
-                "unresolved": unresolved,
-            }
-            if not outcomes:
-                inventories[entry.entry_id]["unresolved"].append({
-                    "code": "ENTRY_OUTCOME_UNRESOLVED", "critical": True,
-                    "evidence": entry.entry_id,
-                    "reason": "入口函数没有可提取的返回、异常或状态结果",
-                })
-    return inventories
+                "source_evidence": entry.source_evidence},
+            "participants": [], "sources": [], **{k: [] for k in FACT_ARRAYS}, "flow": [], "gaps": [],
+            "coverage": {"scope": "selected-entry-reachable", "complete": False, "persistence": "unknown",
+                         "limitations": ["static conditional reachability; no general path satisfiability or concurrency proof"]},
+        }
+        if entry.file.endswith(".java"):
+            self.value["adapter_dependencies"] = {"tree-sitter": parser_versions("java")[0],
+                "tree-sitter-java": parser_versions("java")[1]}
+        elif entry.file.endswith((".ts", ".tsx", ".js", ".jsx", ".go")):
+            language = "go" if entry.file.endswith(".go") else "typescript" if entry.file.endswith((".ts", ".tsx")) else "javascript"
+            self.value["adapter_dependencies"] = {"tree-sitter": parser_versions(language)[0],
+                "tree-sitter-" + language: parser_versions(language)[1]}
+        else:
+            self.value["adapter_dependencies"] = {"python-ast": __import__("sys").version.split()[0]}
+
+    def source(self, file, node, identity, raw=None):
+        raw = self.sources[file].encode() if raw is None else raw
+        if isinstance(node, ast.AST):
+            semantic = ast.dump(node, include_attributes=False)
+            line, end = node.lineno, getattr(node, "end_lineno", node.lineno)
+        else:
+            semantic = raw[node.start_byte:node.end_byte].decode("utf-8") if node.type in {"line_comment", "block_comment"} else normalized(node, raw)
+            line, end = node.start_point.row + 1, node.end_point.row + 1
+        ref = stable_id("S", file, identity, semantic)
+        proof = {"evidence_id": ref, "file": file, "line": line, "end_line": end,
+                 "content_hash": digest(semantic), "declaration_id": identity}
+        if proof not in self.value["sources"]:
+            self.value["sources"].append(proof)
+        return ref
+
+    def participant(self, identity, role):
+        pid = stable_id("A", identity, role)
+        item = {"participant_id": pid, "identity": identity, "role": role}
+        if item not in self.value["participants"]:
+            self.value["participants"].append(item)
+        return pid
+
+    def source_document(self, file, identity):
+        content_hash = digest(self.sources[file])
+        ref = stable_id("S", file, identity, content_hash)
+        proof = {"evidence_id": ref, "file": file, "line": 1,
+            "end_line": max(1, len(self.sources[file].splitlines())),
+            "content_hash": content_hash, "declaration_id": identity}
+        if proof not in self.value["sources"]:
+            self.value["sources"].append(proof)
+        return ref
+
+    def add(self, array, typ, source, context, phase, controls, details, refs=()):
+        key = (array, typ, source, context, digest(details))
+        ordinal = self.ordinals[key]
+        self.ordinals[key] += 1
+        fid = stable_id({"branches": "B", "persistence_actions": "P", "outcomes": "O", "calls": "C", "effects": "E"}[array], *key, ordinal)
+        item = {"fact_id": fid, "type": typ, "context_id": context, "phase": phase,
+                "conditions": list(controls), "evidence_refs": list(dict.fromkeys([source, *refs])), "details": details}
+        self.value[array].append(item)
+        return item
+
+    def step(self, kind, fact, controls=(), arm=""):
+        self.value["flow"].append({"step_id": stable_id("T", fact["fact_id"], kind, len(self.value["flow"])),
+            "kind": kind, "fact_id": fact["fact_id"], "context_id": fact["context_id"],
+            "phase": fact["phase"], "controls": list(controls), "arm": arm})
+
+    def gap(self, code, source, context, question, candidates=(), controls=()):
+        finding = {"finding_id": stable_id("G", self.entry.entry_id, code, source, context), "code": code,
+                   "critical": True, "target_id": context, "question": question,
+                   "evidence_refs": [source], "candidates": list(candidates), "controls": list(controls)}
+        if finding not in self.value["gaps"]:
+            self.value["gaps"].append(finding)
+        return finding
+
+    def outcome(self, typ, source, context, phase, controls, expression="", refs=()):
+        item = self.add("outcomes", typ, source, context, phase, controls,
+            {"expression": expression, "observed_by_entry": phase == "entry" and typ in {"entry_response", "normal_completion", "async_submission", "async_rejection"}, "meaning": typ,
+             "guarantee": "conditional static fact"}, refs)
+        self.step("outcome", item, controls)
+        return item
+
+    def outbound(self, call, system, endpoint, refs=()):
+        """A declared/literal destination proves an attempt, never delivery."""
+        call["type"] = "external_api"
+        call["details"].update(target_owner=system, endpoint=endpoint, may_throw=True)
+        call["evidence_refs"] = list(dict.fromkeys([*call["evidence_refs"], *refs]))
+        self.participant(system, "external")
+        effect = self.add("effects", "external_call_attempt", call["evidence_refs"][0], call["context_id"],
+            call["phase"], call["conditions"], {"system": system, "endpoint": endpoint, "delivery": "not established"}, refs)
+        self.step("state_change", effect, call["conditions"])
+
+    def finish(self):
+        for participant in self.value["participants"]:
+            identity, role = participant["identity"], participant["role"]
+            if role == "storage":
+                refs = [ref for action in self.value["persistence_actions"] if action["details"]["resource_name"] == identity for ref in action["evidence_refs"]]
+            elif role == "caller":
+                refs = [s["evidence_id"] for s in self.value["sources"][:1]]
+            elif role == "external":
+                refs = [ref for call in self.value["calls"] if call["details"].get("target_owner") == identity for ref in call["evidence_refs"]]
+            else:
+                separator = ":" if self.entry.file.endswith(".py") else "."
+                refs = [s["evidence_id"] for s in self.value["sources"] if s["declaration_id"] == identity or s["declaration_id"].startswith(identity + separator)]
+            participant["evidence_refs"] = list(dict.fromkeys(refs))
+        self.value["coverage"]["complete"] = not self.value["gaps"]
+        self.value["coverage"]["persistence"] = ("proven" if self.value["persistence_actions"] else
+            "none_in_verified_scope" if not self.value["gaps"] else "unknown")
+        return redact(self.value)
+
+
+def collect_evidence(scan, *, hints=(), sources=None, budget=2000):
+    from .java_behavior import JavaIndex, JavaFacts
+    from .python_behavior import PythonFacts
+    from .tree_behavior import TreeFacts
+    cache = None
+    if sources is None:
+        identity = digest([str(scan.root.resolve()), scan.git.target, scan.source_fingerprint,
+            ADAPTER_VERSION, sys.version, parser_versions("java"), parser_versions("typescript"), parser_versions("go"),
+            [asdict(entry) for entry in scan.entries], list(hints), budget])
+        cache = state_root() / "biz-flow" / "facts-cache" / (identity + ".json")
+        try:
+            saved = json.loads(cache.read_text(encoding="utf-8"))
+            if saved["identity"] == identity and saved["checksum"] == digest(saved["facts"]):
+                print(f"progress stage=evidence completed={len(scan.entries)} total={len(scan.entries)} cache=hit", file=sys.stderr)
+                return saved["facts"]
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    if sources is None:
+        with source_view(scan.root, scan.git.target) as (root, _):
+            sources = {file: (root / file).read_text(encoding="utf-8") for file in scan.files}
+    index = JavaIndex(sources)
+    python_index = None
+    result = {}
+    print(f"progress stage=evidence completed=0 total={len(scan.entries)} cache=miss", file=sys.stderr)
+    for completed, entry in enumerate(scan.entries, 1):
+        if entry.file.endswith(".java"):
+            adapter = JavaFacts(scan, entry, sources, hints, budget, index=index)
+        elif entry.file.endswith(".py"):
+            adapter = PythonFacts(scan, entry, sources, hints, budget, index=python_index)
+            python_index = (adapter.definitions, adapter.parents, adapter.shadowed)
+        elif entry.file.endswith((".ts", ".tsx", ".js", ".jsx", ".go")):
+            adapter = TreeFacts(scan, entry, sources, hints, budget)
+        else:
+            adapter = Facts(scan, entry, sources, hints, budget)
+            adapter.gap("SOURCE_ADAPTER_UNAVAILABLE", entry.entry_id, entry.entry_id, "No registered behavior adapter for this language")
+        result[entry.entry_id] = adapter.analyze() if hasattr(adapter, "analyze") else adapter.finish()
+        print(f"progress stage=evidence completed={completed} total={len(scan.entries)}", file=sys.stderr)
+    if cache is not None:
+        write_json(cache, {"identity": identity, "facts": result, "checksum": digest(result)})
+        trim_cache(cache.parent)
+    return result

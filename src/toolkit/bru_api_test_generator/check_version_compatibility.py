@@ -266,7 +266,7 @@ def main() -> int:
         initialized_at = datetime.now(timezone.utc).isoformat()
         lock = {
             "skill": "bru-api-test-generator",
-            "skill_version": "1.0.0",
+            "skill_version": "2.1.0",
             "artifact_root": "qa/contracts",
             "version": 1,
             "status": "draft",

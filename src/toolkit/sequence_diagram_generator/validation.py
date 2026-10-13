@@ -1,7 +1,9 @@
 """Pure evidence, control, ordering and document gates."""
+from . import SCHEMA_VERSION
 from .models import RuleResult, SequenceBlock, ValidationReport
 from .repository import digest
 from .control_flow import build_control_flow
+from ..core.sequence import validate_sequence
 
 
 def target_evidence(scopes):
@@ -99,10 +101,15 @@ class FlowValidator:
 
     def validate_submission(self, package, submission):
         expected = {task.task_id for task in package.tasks}
-        results, receipts = [r.task_id for r in submission.results], [r.task_id for r in submission.receipts]
+        results = [r.task_id for r in submission.results]
+        receipts = [(r.task_id, r.attempt) for r in submission.receipts]
+        successful = [r.task_id for r in submission.receipts if r.status == "success"]
         return ValidationReport((RuleResult("host.identity", submission.run_id == package.run_id and submission.package_hash == digest(package), "bound package identity"),
+            RuleResult("host.package", package.protocol_version == SCHEMA_VERSION and package.model_hash == digest(package.facts)
+                       and package.requirement_hash == (digest(package.requirements) if package.requirements else ""), "frozen input hashes"),
             RuleResult("host.results", len(results) == len(set(results)) and set(results) == expected, "complete unique results"),
-            RuleResult("host.receipts", len(receipts) == len(set(receipts)) and set(receipts) == expected, "complete unique receipts")))
+            RuleResult("host.receipts", len(receipts) == len(set(receipts)) and all(task in expected for task, _ in receipts)
+                       and len(successful) == len(set(successful)) and set(successful) == expected, "unique attempts and exactly one successful receipt per task")))
 
     def validate_bundle(self, bundle, model, annotations, intent, renderer):
         rebuilt = renderer.build(model, annotations, intent, bundle.requirement_report)
@@ -129,6 +136,7 @@ class FlowValidator:
                     valid = valid and bool(stack) and stack[-1] == "par"
             rules.append(RuleResult("document.mermaid_structure", valid and not stack, scene.filename))
             rules.append(RuleResult("document.layout", '"wrap": true' in scene.mermaid and '"activationWidth": 14' in scene.mermaid, scene.filename))
+            rules.append(RuleResult("document.activations", not validate_sequence(scene.mermaid), scene.filename))
         return ValidationReport(tuple(rules))
 
     def validate_sources(self, expected, actual, adapter, current_adapter, requirement_hash, requirements):

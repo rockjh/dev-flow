@@ -2,14 +2,20 @@ interface:
   display_name: "bru-api-test-generator"
   short_description: "\u57fa\u4e8e biz-flow \u4ea7\u7269\u751f\u6210 API \u6d4b\u8bd5"
   default_prompt: >-
-    If the request is a standalone sequence diagram, route to sequence-diagram-generator. bru-api may consume accepted sequence reports but must not generate or edit sequence assets. Preserve QA evidence and inspect API/source facts through bru-api.
-    # >-
-    使用已安装的 devflow CLI (installed devflow CLI)，只路由到 bru-api-test-generator，并确认
+    Use $bru-api-test-generator with the installed devflow CLI，且只路由到 bru-api-test-generator，并确认
     biz-flow-doc-generator 已完成。只读取 docs/biz-flow/ 的已确认 Markdown、锁和源码证据，
-    不重新维护业务设计；skill_version 为 1.0.0，只读写 qa/contracts/bru-api-test-generator-version.json，
+    不重新维护业务设计；skill_version 为 2.1.0，只读写 qa/contracts/bru-api-test-generator-version.json，
     并将 qa-lock.yaml 仅作为 QA 状态锁；只生成 API 测试资产、中文 Bruno 请求、配置、锁和报告。
-    保留核心架构、安全、脱敏和所有权规则；stop when 证据缺失、目标不安全或校验失败，
-    返回 redacted authoritative 报告或产物路径。
+    模块委派先读 references/parallel-generation.md，通过 worker-start --delegate 冻结模块集合后，
+    由当前会话使用实际宿主原生工具分派、等待、收集，并用 worker-check --run-id --receipt 校验真实任务与 owner。
+    准备完成不是能力不可用；不探测品牌 CLI，按槽位调度，native 顺序执行无需串行授权，
+    串行回退仅允许已有明确范围授权，不从“直接生成”推导。保留真实 attempt、工具记录、观察来源和未知回收，
+    只允许模块独占目录写入，生成不授权远程测试或外部副作用。
+    保留核心架构、安全、脱敏和所有权规则；stop when 证据缺失、目标不安全、必需任务失败或校验失败，
+    返回 redacted authoritative 报告或产物路径，区分准备、执行、收集、领域检查和协调者合并，
+    明确 host-attested/structure-and-consistency-only 的可信边界。
+    Before generating, modifying or verifying any sequence diagram, read references/diagram-conventions.md, the shared contract owned by the sequence-diagram-generator Skill. Apply it within this domain and stop when common or domain validation fails.
+
 
 # Git source snapshot gate: use only the recorded committed snapshot; exclude modified and untracked files; use pre-change committed content for uncommitted edits; stop when Git evidence is missing or invalid.
 # Completion cleanup: remove process-only temporary artifacts after success; retain owned assets, version lock, authoritative reports, and recovery evidence.

@@ -9,11 +9,12 @@ from typing import Any
 import yaml
 
 from ..core.schema import E2E_GATE_SCHEMA_VERSION
-from ..core.artifacts import SKILL_VERSION
+from ..core.artifacts import DOMAIN_SKILL_VERSIONS
 from .discovery import SHA_RE, _git, _resolve
 
 
 RULES_VERSION = int(E2E_GATE_SCHEMA_VERSION)
+SKILL_VERSION = DOMAIN_SKILL_VERSIONS["e2e"]
 
 
 def _sha256(path: Path) -> str | None:
