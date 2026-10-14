@@ -1,8 +1,10 @@
 """Generic v1 acceptance: committed inputs, retryable lifecycle and real gates."""
 import copy
 import json
+import os
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
@@ -304,6 +306,109 @@ app.get(dynamic_path, blocked)
     assert '"overall_status": "partial"' in output and '"blocked_modules"' in output
     lock = json.loads((root / "docs/biz-flow/biz-flow-doc-generator-version.json").read_text(encoding="utf-8"))
     assert lock["source"]["git_commit"] is None
+
+
+def test_module_filter_never_advances_baseline_even_when_it_covers_all_entries(tmp_path, monkeypatch):
+    root, state, _, manifest = setup_run(tmp_path, monkeypatch, {
+        "app.py": "from fastapi import FastAPI\napp=FastAPI()\n@app.get('/orders')\ndef orders(): return 1\n"})
+    assert len(manifest["mapping"]["modules"]) == 1
+    args = ["--project", str(root)]
+    assert cli.prepare_command([*args, "--module", manifest["mapping"]["modules"][0]["name"]]) == 0
+    path = max((p for p in (state / "biz-flow").glob("*.json") if len(p.stem) == 32),
+               key=lambda p: p.stat().st_mtime_ns)
+    selected = json.loads(path.read_text(encoding="utf-8"))
+    assert submit(root, state, selected, fixture_submission(selected)) == 0
+    selected_args = [*args, "--run-id", selected["run_id"]]
+    assert cli.verify_command(selected_args) == cli.verify_command(selected_args) == cli.accept_command(selected_args) == 0
+    lock = root / "docs/biz-flow/biz-flow-doc-generator-version.json"
+    assert json.loads(lock.read_text(encoding="utf-8"))["source"]["git_commit"] is None
+
+
+@pytest.mark.parametrize("damaged", ["document", "package"])
+def test_failed_verify_requires_two_new_passes_and_accepted_runs_remain_checkable(tmp_path, monkeypatch, damaged):
+    root, state, path, manifest = setup_run(tmp_path, monkeypatch, SOURCES["python"])
+    payload = fixture_submission(manifest)
+    assert submit(root, state, manifest, payload) == 0
+    args = ["--project", str(root), "--run-id", manifest["run_id"]]
+    assert cli.verify_command(args) == cli.verify_command(args) == 0
+    target = (path.with_suffix(".tasks.json") if damaged == "package" else
+              root / "docs/biz-flow" / manifest["mapping"]["modules"][0]["file"])
+    original = target.read_bytes()
+    if damaged == "package":
+        target.unlink()
+    else:
+        target.write_bytes(original.replace(b"sequenceDiagram", b"invalidDiagram", 1))
+    assert cli.verify_command(args) == 1
+    invalidated = json.loads(path.read_text(encoding="utf-8"))
+    assert invalidated["verification_runs"] == 0 and invalidated["status"] == "collected"
+    target.write_bytes(original)
+    assert cli.accept_command(args) == 8
+    assert cli.verify_command(args) == 0
+    assert cli.accept_command(args) == 8
+    assert cli.verify_command(args) == cli.accept_command(args) == 0
+    version = root / "docs/biz-flow/biz-flow-doc-generator-version.json"
+    accepted_version = version.read_bytes()
+    assert cli.verify_command(args) == cli.verify_command(args) == cli.check_command(args) == 0
+    assert json.loads(path.read_text(encoding="utf-8"))["status"] == "accepted"
+    assert submit(root, state, manifest, payload) == 0
+    assert version.read_bytes() == accepted_version
+
+
+@pytest.mark.parametrize("alias", ["symlink", "junction"])
+def test_accept_rejects_run_directory_alias_without_changing_baseline(tmp_path, monkeypatch, alias):
+    root, state, _, manifest = setup_run(tmp_path, monkeypatch, SOURCES["python"])
+    assert submit(root, state, manifest, fixture_submission(manifest)) == 0
+    args = ["--project", str(root), "--run-id", manifest["run_id"]]
+    assert cli.verify_command(args) == cli.verify_command(args) == 0
+    run_root = state / "biz-flow" / manifest["run_id"]
+    outside = tmp_path / "outside"
+    assert run_root.resolve().is_relative_to(tmp_path.resolve())
+    assert outside.resolve().is_relative_to(tmp_path.resolve())
+    run_root.rename(outside)
+    if alias == "junction":
+        if os.name != "nt":
+            pytest.skip("Windows junction regression")
+        created = subprocess.run(["cmd", "/c", "mklink", "/J", str(run_root), str(outside)], capture_output=True)
+        assert created.returncode == 0, created.stderr.decode(errors="replace")
+    else:
+        try:
+            run_root.symlink_to(outside, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"directory symlink unavailable: {exc}")
+    try:
+        version = root / "docs/biz-flow/biz-flow-doc-generator-version.json"
+        original = version.read_bytes()
+        assert cli.accept_command(args) == 8
+        assert version.read_bytes() == original
+        assert (outside / "source/app.py").is_file()
+    finally:
+        if alias == "junction":
+            run_root.rmdir()
+        else:
+            run_root.unlink()
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_snapshot_cleanup_failure_does_not_advance_baseline(tmp_path, monkeypatch, partial):
+    root, state, _, manifest = setup_run(tmp_path, monkeypatch, SOURCES["python"])
+    assert submit(root, state, manifest, fixture_submission(manifest)) == 0
+    args = ["--project", str(root), "--run-id", manifest["run_id"]]
+    assert cli.verify_command(args) == cli.verify_command(args) == 0
+    source = Path(manifest["tasks"][0]["source_snapshot"])
+    remove = cli.shutil.rmtree
+    def fail_cleanup(target, *positional, **kwargs):
+        if Path(target) == source:
+            if partial:
+                (source / "app.py").unlink()
+            raise PermissionError("fixture: source cleanup denied")
+        return remove(target, *positional, **kwargs)
+    version = root / "docs/biz-flow/biz-flow-doc-generator-version.json"
+    original = version.read_bytes()
+    with monkeypatch.context() as patch:
+        patch.setattr(cli.shutil, "rmtree", fail_cleanup)
+        assert cli.accept_command(args) == 8
+    assert version.read_bytes() == original
+    assert cli.accept_command(args) == 0
 
 
 def test_gitignore_exclude_and_tool_trees_are_never_evidence(tmp_path):

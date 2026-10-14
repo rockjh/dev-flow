@@ -139,6 +139,9 @@ Run `check` and two consecutive `verify` calls. Preserve Git commit plus dirty
 state, source fingerprints and incremental added/changed/deleted entry reporting;
 advance the source baseline only after acceptance. Stop unsafe paths, stale
 fingerprints, ambiguous ownership, redaction failures and failed gates.
+Before acceptance, a failed `verify` resets the consecutive pass count; repair
+the failure and run both checks again. Verifying an accepted run preserves its
+accepted status and validates the fixed commit without restoring extracted source.
 Return the complete business overview plus redacted authoritative manifest/report
 paths, exit status, coverage, unresolved counts by phase/entry and stability.
 Human-facing descriptions and reports are Chinese; IDs and Mermaid keywords stay
@@ -165,9 +168,16 @@ module names, filenames, descriptions and ownership persist in overview blocks.
 Confirmation binds commit, source fingerprint and mapping signature. A changed
 binding requires reviewing the overview and one `prepare --confirm`.
 
+All run commands, including resume, require the current domain schema, host
+protocol and adapter. Task packages must also declare this domain and protocol.
+Reject unsupported records with a new-prepare diagnostic; never convert stored
+versions or silently select an older run when the project's latest run is
+unsupported. Delivery summaries count only valid current-contract accepted runs.
+
 `prepare --module <name>` scopes delivery; `check`, `verify` and `accept` select that
 run with `--run-id`. Partial acceptance reports accepted and blocked modules and
-does not advance the whole-project baseline. `prepare --resume <run-id>` retains
+does not advance the whole-project baseline, even when the selected module contains
+every entry. `prepare --resume <run-id>` retains
 the same task package and reports reusable and pending entry IDs. Reuse validated
 results and their original receipts from the manifest/rejected submissions; retry
 pending tasks with new attempts and submit complete scope to collect. Failed
@@ -184,7 +194,9 @@ Progress goes to stderr. Budget: scan stage 300 seconds, full fixture lifecycle
 1800 seconds; report measured elapsed time, never assume a budget passed.
 `clean` lists shared runs, `clean --run-id <id>` removes one run and
 `clean --all` removes runs and caches. Accepted runs remove extracted source while
-retaining source proofs and manifests. Clean old runs explicitly when no longer
+retaining source proofs and manifests. Snapshot paths must stay under the run's
+state directory without symlink/junction aliases; cleanup failure blocks baseline
+advancement. Clean old runs explicitly when no longer
 needed; cleaning recovery evidence means a new prepare is required.
 
 The host coordination contract has three requirements:

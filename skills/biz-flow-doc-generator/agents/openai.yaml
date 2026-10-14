@@ -15,7 +15,11 @@ interface:
     branch matrix. Keep business scope, the complete entry inventory and analysis
     status only in the overview; module files contain titles and entry flows. Preserve core contracts, locks, ownership, redaction and the sole
     version file docs/biz-flow/biz-flow-doc-generator-version.json. Run check, two
-    verify calls and accept before advancing the baseline. Return Chinese business
+    consecutive successful verify calls and accept before advancing the baseline;
+    restart both verify passes after a failure. Keep accepted runs accepted during
+    later verification. Module-filtered acceptance never advances the project baseline.
+    Reject snapshot directory aliases and stop baseline advancement on cleanup failure.
+    Return Chinese business
     summaries and redacted authoritative report paths, source/coverage/phase status;
     stop when paths are unsafe, ownership is ambiguous, evidence is missing or
     validation fails. Report unsupported semantics and partial completion accurately.
@@ -23,6 +27,8 @@ interface:
     Keep the fixed target commit, persistent module mapping and confirmation signature.
     Use source-proven resolutions under references/behavior-evidence.md; never waive unknown IO.
     Resume pending tasks with original receipts for reusable results; record batch_id.
+    Reject unsupported run schema, host protocol, adapter or task-package domain;
+    require a new prepare, never convert history or silently fall back to an older run.
     Report each gate's executed/passed status and partial module acceptance accurately.
     Before generating, modifying or verifying any sequence diagram, read references/diagram-conventions.md, the shared contract owned by the sequence-diagram-generator Skill. Apply it within this domain and stop when common or domain validation fails.
 

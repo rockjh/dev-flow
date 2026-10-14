@@ -20,6 +20,18 @@ def run_path(run_id: str) -> Path:
     return state_root() / "biz-flow" / f"{run_id}.json"
 
 
+def source_path(run_id: str) -> Path:
+    parent = run_path(run_id).parent
+    run_root = parent / run_id
+    source = run_root / "source"
+    if (any(path.is_symlink() or hasattr(path, "is_junction") and path.is_junction()
+            for path in (run_root, source))
+            or run_root.resolve().parent != parent.resolve()
+            or source.resolve().parent != run_root.resolve()):
+        raise ValueError("SOURCE_PATH_UNSAFE")
+    return source
+
+
 def protected_hashes(project: Path, docs_root: Path) -> dict[str, str]:
     # The user's checkout can change independently of this run (C3). Freeze
     # business assets and locks; validate the archive snapshot separately.
@@ -46,7 +58,7 @@ def protected_hashes(project: Path, docs_root: Path) -> dict[str, str]:
 
 
 def snapshot_sources(project: Path, commit: str, files: list[str], run_id: str) -> tuple[Path, str]:
-    root = state_root() / "biz-flow" / run_id / "source"
+    root = source_path(run_id)
     hashes = {}
     # One archive replaces one git subprocess per source file.  The snapshot
     # is the exact same export view used by discovery (including attributes).
@@ -57,7 +69,8 @@ def snapshot_sources(project: Path, commit: str, files: list[str], run_id: str) 
                 raise ValueError("SOURCE_PATH_UNSAFE")
             content = (view / relative).read_bytes()
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(content)
+            if not destination.is_file() or destination.read_bytes() != content:
+                destination.write_bytes(content)
             hashes[relative] = hashlib.sha256(content).hexdigest()
     write_json(root.parent / "source-hashes.json", hashes)
     return root, digest(hashes)
@@ -68,6 +81,8 @@ def validate_package(manifest: dict) -> list[str]:
     errors = []
     path = run_path(manifest["run_id"]).with_suffix(".tasks.json")
     package = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(package, dict) or package.get("protocol_version") != PROTOCOL_VERSION or package.get("domain") != "biz-flow":
+        return ["UNSUPPORTED_TASK_PACKAGE: prepare a new biz-flow run, do not convert stored packages"]
     if digest(package) != manifest["package_hash"] or package["tasks"] != manifest["tasks"]:
         errors.append("TASK_PACKAGE_CHANGED")
     for key in ("run_id", "project_root", "source_commit", "source_fingerprint", "mapping_hash",
@@ -82,7 +97,10 @@ def validate_package(manifest: dict) -> list[str]:
             errors.append("TASK_HASH_MISMATCH")
         if digest(manifest["entry_facts"][task["entry_id"]]) != task["input_hash"]:
             errors.append("TASK_INPUT_MISMATCH")
-        root = Path(task["source_snapshot"])
+        root = source_path(manifest["run_id"])
+        if Path(task["source_snapshot"]) != root:
+            errors.append("SOURCE_SNAPSHOT_SCOPE_MISMATCH")
+            continue
         if manifest.get("status") == "accepted" and manifest.get("snapshot_cleaned"):
             continue  # Canonical facts are still rebuilt from the fixed commit.
         key = (str(root), task["snapshot_hash"])

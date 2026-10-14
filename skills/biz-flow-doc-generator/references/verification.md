@@ -41,6 +41,10 @@ prepare/collect 阶段使用宿主原生子代理或明确授权的串行会话�
 
 check/verify 必须保存逐门禁 executed/passed/errors，不能将未执行写成通过。破坏任一模块内容或图后 check 必须失败；修复后可重试。分别验证入口对账、Markdown/分支/持久化覆盖、业务占位文案和 Mermaid 渲染。默认渲染超时 60 秒，成功图按内容和渲染器哈希缓存，超时/失败不缓存。源清单与行为缓存的键包含提交、指纹和适配器信息；缓存不能改变运行 target。
 
+验收前 verify 失败必须清零连续成功次数，修复后重新通过两次 verify 才能 accept。验收后重复 verify 保持 accepted，使用固定提交重建事实；不能因源码快照已清理而回退状态或使后续 check/collect 失效。prepare --module 的验收即使覆盖当前全部入口也不推进项目基线。将运行目录或 source 目录替换为软链接/junction 必须拒绝，不能删除别名目标；源码清理失败不能推进版本锁，解除故障后可以重试 accept。
+
+向运行注入旧/缺失协议、旧/缺失 schema 或旧 adapter，prepare --resume、collect、check、verify、accept 均须拒绝并保持旧文件及版本锁原样。最新运行不受支持时默认命令必须停止，不能自动回退到更早运行；其他项目的旧运行不影响本项目诊断。即使重算哈希，错误协议或领域的任务包仍须拒绝。旧/无效 accepted 记录不得计入局部验收汇总。
+
 自动化夹具至少检查 Java/Spring+JPA、Python/FastAPI+SQLAlchemy、TypeScript/Nest+Prisma 的 prepare → collect → check → verify×2 → accept，并在串行、原生顺序和带并行观察回执的模式运行。夹具回执仅用于测试，不是实际会话执行证据。对同 target 加脏文件、移动 HEAD、加入 agent worktree 后指纹与基线仍相同；快照篡改必须失败。用户改名、描述和归属经过两轮 prepare/collect 保持稳定。模块范围含阻断入口时其余模块可独立验收。重复生成的模块字节一致，失败 collect 不丢映射。
 
 ## 增量、版本和交付

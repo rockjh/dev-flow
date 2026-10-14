@@ -24,7 +24,7 @@ from .documents import write_discovery, write_entry_directory, readable_inventor
 from .evidence import ADAPTER_VERSION, digest
 from .models import EntryPoint, GitInfo, ScanResult
 from .orchestration import FileWriteGuard
-from .host import PROTOCOL_VERSION, run_path, snapshot_sources, protected_hashes, validate_package, validate_execution
+from .host import PROTOCOL_VERSION, run_path, source_path, snapshot_sources, protected_hashes, validate_package, validate_execution
 from .validation import validate_markdown_structure, validate_entry_analysis, validate_evidence_request, digest
 
 
@@ -338,6 +338,13 @@ def _read_manifest(path: Path) -> dict[str, object]:
     value = _read_json(path)
     if not value:
         raise ValueError(f"RUN_MANIFEST_UNAVAILABLE: {path}; choose a run listed by devflow biz-flow clean, or prepare a new run")
+    if value.get("protocol_version") != PROTOCOL_VERSION or value.get("schema_version") != int(BIZ_FLOW_SCHEMA_VERSION):
+        raise ValueError(f"UNSUPPORTED_PROTOCOL_SCHEMA: {path}; requires protocol={PROTOCOL_VERSION}, schema={BIZ_FLOW_SCHEMA_VERSION}; prepare a new run, do not rewrite stored versions")
+    errors = validate_schema(BIZ_FLOW_HANDOFF_SCHEMA, value)
+    if errors:
+        raise ValueError("HANDOFF_INVALID: " + "; ".join(errors))
+    if value["adapter_version"] != ADAPTER_VERSION:
+        raise ValueError("ADAPTER_VERSION_CHANGED: prepare a new run, do not reuse old adapter evidence")
     return value
 
 
@@ -498,18 +505,13 @@ def _check_entry_directory(project: Path, docs_root: Path, target: str | None) -
 
 
 def _current_manifest(project):
-    unsupported = False
     for path in sorted((state_root() / "biz-flow").glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         if not re.fullmatch(r"[0-9a-f]{32}\.json", path.name):
             continue
         value = _read_json(path)
-        # Only inspect protocol/version before reading business structures.
-        if value.get("protocol_version") != PROTOCOL_VERSION or value.get("schema_version") != int(BIZ_FLOW_SCHEMA_VERSION):
-            unsupported = True
-            continue
         if value.get("project_root") == str(project) and value.get("status") != "superseded":
-            return path, value
-    raise ValueError("UNSUPPORTED_STORED_RUN: prepare a new run" if unsupported else "CURRENT_RUN_MISSING: run prepare/collect")
+            return path, _read_manifest(path)
+    raise ValueError("CURRENT_RUN_MISSING: run prepare/collect")
 
 
 def _mapping_signature(mapping):
@@ -788,7 +790,9 @@ def _delivery_summary(manifest):
             continue
         other = _read_json(path)
         if (other.get("status") != "accepted" or other.get("project_root") != manifest["project_root"]
-                or other.get("source_commit") != manifest["source_commit"] or other.get("mapping_hash") != manifest["mapping_hash"]):
+                or other.get("docs_root") != manifest["docs_root"]
+                or other.get("source_commit") != manifest["source_commit"] or other.get("mapping_hash") != manifest["mapping_hash"]
+                or other.get("adapter_version") != ADAPTER_VERSION or validate_schema(BIZ_FLOW_HANDOFF_SCHEMA, other)):
             continue
         for module in manifest["mapping"]["modules"]:
             target = docs / module["file"]
@@ -902,15 +906,10 @@ def _collect(argv):
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--results", type=Path, required=True)
     args = parser.parse_args(argv)
-    project, path, submitted = args.project.resolve(), None, None
+    project, path, submitted, manifest = args.project.resolve(), None, None, None
     try:
         path = run_path(args.run_id)
         manifest = _read_manifest(path)
-        if manifest.get("protocol_version") != PROTOCOL_VERSION or manifest.get("schema_version") != int(BIZ_FLOW_SCHEMA_VERSION):
-            raise ValueError("UNSUPPORTED_PROTOCOL_SCHEMA")
-        manifest_errors = validate_schema(BIZ_FLOW_HANDOFF_SCHEMA, manifest)
-        if manifest_errors:
-            raise ValueError("HANDOFF_INVALID: " + "; ".join(manifest_errors))
         if manifest["status"] not in {"prepared", "collected", "verified", "accepted"}:
             raise ValueError("RUN_NOT_COLLECTABLE")
         docs_root = _docs_root(project, args.docs_root)
@@ -999,7 +998,7 @@ def _collect(argv):
         print(json.dumps({"run_id": args.run_id, "status": "collected", "manifest": str(path)}, ensure_ascii=False))
         return 0
     except (OSError, ValueError, KeyError, RuntimeError, SubprocessError) as exc:
-        if path and path.is_file():
+        if manifest is not None and path and path.is_file():
             failed = _read_json(path)
             if failed.get("protocol_version") == PROTOCOL_VERSION and failed.get("schema_version") == int(BIZ_FLOW_SCHEMA_VERSION):
                 failed.setdefault("collection_errors", []).append(redact(str(exc)))
@@ -1055,13 +1054,18 @@ def _verify(argv):
         report_path = path.with_suffix(".verify.json")
         write_json(report_path, {"run_id": manifest["run_id"], "gates": gates, "errors": errors})
         if errors:
+            if (manifest.get("status") == "verified" and manifest.get("project_root") == str(project)
+                    and manifest.get("docs_root") == str(docs) and not validate_schema(BIZ_FLOW_HANDOFF_SCHEMA, manifest)):
+                manifest.update(status="collected", verification_runs=0)
+                manifest.pop("verify_digest", None)
+                write_json(path, manifest)
             print(json.dumps({"run_id": manifest["run_id"], "manifest": str(path),
                               "report": str(report_path), "gates": gates, "errors": errors}, ensure_ascii=False))
             print("ERROR: verify failed: " + "; ".join(errors), file=sys.stderr)
             return 1
         value = digest({"facts": manifest["entry_facts"], "results": manifest["results"], "documents": manifest["document_hashes"]})
         manifest["verification_runs"] = manifest["verification_runs"] + 1 if manifest.get("verify_digest") == value else 1
-        manifest.update(status="verified", verify_digest=value)
+        manifest.update(status="accepted" if manifest["status"] == "accepted" else "verified", verify_digest=value)
         write_json(path, manifest)
         print(json.dumps({"run_id": manifest["run_id"], "verification_runs": manifest["verification_runs"],
             "canonical_facts_verified": True, "stable": manifest["verification_runs"] >= 2,
@@ -1086,27 +1090,31 @@ def _accept(argv):
     try:
         path = run_path(args.run_id)
         manifest = _read_manifest(path)
-        if manifest.get("protocol_version") != PROTOCOL_VERSION:
-            raise ValueError("UNSUPPORTED_PROTOCOL_SCHEMA")
         if manifest.get("status") != "verified" or manifest["verification_runs"] < 2:
             raise ValueError("TWO_STABLE_VERIFY_RUNS_REQUIRED")
         docs = _docs_root(args.project.resolve(), args.docs_root)
         errors = _validate_manifest(args.project.resolve(), docs, manifest)
         if errors:
             raise ValueError("; ".join(errors))
+        source_root = source_path(args.run_id)
+        # Cleanup must succeed before changing the accepted source baseline.
+        if source_root.is_dir():
+            files = [p.relative_to(source_root).as_posix() for p in source_root.rglob("*") if p.is_file()]
+            try:
+                shutil.rmtree(source_root)
+            except OSError:
+                # Restore a partially removed snapshot from its fixed commit for retry.
+                snapshot_sources(args.project.resolve(), manifest["source_commit"], files, args.run_id)
+                raise
         # A module-filtered run cannot advance the whole project's baseline.
         covered = set(manifest["entry_facts"])
-        if manifest["purpose"] == "generate" and covered == {i for m in manifest["mapping"]["modules"] for i in m["entry_ids"]}:
+        if (manifest["purpose"] == "generate" and manifest["module_filter"] is None
+                and covered == {i for m in manifest["mapping"]["modules"] for i in m["entry_ids"]}):
             _write_recorded_commit(docs, manifest["source_commit"])
             version = _version_lock_path(docs)
             manifest["protected_hashes"][version.relative_to(args.project.resolve()).as_posix()] = hashlib.sha256(version.read_bytes()).hexdigest()
         manifest["status"] = "accepted"
         manifest["accepted_version_hash"] = _version_hash(docs)
-        source_root = path.parent / args.run_id / "source"
-        if source_root.resolve().parent != (path.parent / args.run_id).resolve() or source_root.is_symlink():
-            raise ValueError("SOURCE_PATH_UNSAFE")
-        if source_root.is_dir():
-            shutil.rmtree(source_root)
         manifest["snapshot_cleaned"] = True
         write_json(path, manifest)
         print(json.dumps({"run_id": args.run_id, "status": "accepted", "manifest": str(path),
