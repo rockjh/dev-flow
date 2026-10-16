@@ -3,12 +3,14 @@ import subprocess
 
 from toolkit.biz_flow_doc_generator.discovery import scan
 from toolkit.biz_flow_doc_generator.evidence import collect_evidence
+from toolkit.biz_flow_doc_generator.paths import io_path
+from toolkit.core.schema import BIZ_FLOW_ENTRY_FACTS_SCHEMA, validate_schema
 
 
 def project(tmp_path, files):
     tmp_path.mkdir(parents=True, exist_ok=True)
     for name, source in files.items():
-        path = tmp_path / name
+        path = io_path(tmp_path / name)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(source, encoding="utf-8")
     for args in (("init", "-q"), ("add", "."),
@@ -156,7 +158,7 @@ class QOrder extends EntityPathBase<Order> {
     assert any("rows == 1" in o["details"]["expression"] for o in facts["outcomes"])
 
 
-def test_method_reference_iteration_is_sync_and_executor_background_follows_entry_return(tmp_path):
+def test_method_reference_iteration_is_sync_and_executor_schedule_stays_unproven(tmp_path):
     root = project(tmp_path, {"Controller.java": '''
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -170,13 +172,36 @@ class Controller { Service service; ExecutorService executor;
 class Service { void process(String order) {} }
 '''})
     facts = next(iter(collect_evidence(scan(root)).values()))
-    assert not facts["gaps"]
+    assert {g["code"] for g in facts["gaps"]} == {"EXECUTOR_SCHEDULING_UNRESOLVED"}
     assert any(b["type"] == "synchronous_iteration" for b in facts["branches"])
     assert any(e["type"] == "task_submission" for e in facts["effects"])
     entry_returns = [i for i,s in enumerate(facts["flow"]) if s["phase"] == "entry" and s["kind"] == "outcome"]
     backgrounds = [i for i,s in enumerate(facts["flow"]) if s["phase"] == "background"]
     assert max(entry_returns) < min(backgrounds)
     assert any(o["type"] == "background_result" and not o["details"]["observed_by_entry"] for o in facts["outcomes"])
+
+
+def test_executor_rejection_inside_nested_catches_obeys_schema_and_keeps_gap(tmp_path):
+    root = project(tmp_path, {"Controller.java": '''
+import java.util.concurrent.ExecutorService;
+class Controller { ExecutorService executor;
+  // 后台处理订单
+  @PostMapping("/orders") void receive() {
+    try {
+      try { executor.submit(() -> work()); }
+      catch (IllegalStateException e) { }
+    } catch (RuntimeException e) { }
+  }
+  void work() { }
+}
+'''})
+    facts = next(iter(collect_evidence(scan(root)).values()))
+    assert not validate_schema(BIZ_FLOW_ENTRY_FACTS_SCHEMA, facts)
+    rejected = next(o for o in facts["outcomes"] if o["type"] == "async_rejection")
+    assert len(rejected["details"]["possible_handlers"]) == 2
+    assert all(set(scope) == {"branch_id", "handlers"} for scope in rejected["details"]["possible_handlers"])
+    assert not rejected["details"]["observed_by_entry"]
+    assert any(g["code"] == "ERROR_PROPAGATION_UNRESOLVED" for g in facts["gaps"])
 
 
 def test_stored_callback_is_not_executed_and_conditional_callback_keeps_control(tmp_path):

@@ -220,6 +220,9 @@ class JavaFacts(Facts):
             return env.get(val, self.type_name(val, method.owner))
         if kind == "this":
             return env.get("this", method.owner.name)
+        if kind == "super":
+            superclass = next((n for n in method.owner.node.named_children if n.type == "superclass"), None)
+            return self.type_name(text(superclass.named_children[0], raw), method.owner) if superclass else "java.lang.Object"
         if kind in {"object_creation_expression", "cast_expression"}:
             return self.type_name(text(field(node, "type"), raw), method.owner)
         if kind == "field_access":
@@ -230,10 +233,14 @@ class JavaFacts(Facts):
                 return self.type_name(typ, declaring)
         if kind == "method_invocation":
             receiver = field(node, "object")
-            typ = self.infer(receiver, method, env) if receiver else method.owner.name
+            typ = self.infer(receiver, method, env) if receiver else env.get("this", method.owner.name)
             target = self.index.types.get(typ)
             name = text(field(node, "name"), raw)
             methods = self.candidates(target, name, field(node, "arguments").named_children, method, env) if target else []
+            if receiver is None or receiver.type == "this":
+                lexical = self.candidates(method.owner, name, field(node, "arguments").named_children, method, env)
+                if len(lexical) == 1 and self.nonvirtual(lexical[0]):
+                    methods = lexical
             if len(methods) == 1:
                 return self.type_name(methods[0].returns, methods[0].owner)
             summaries = {
@@ -244,6 +251,11 @@ class JavaFacts(Facts):
             if name in summaries.get(typ, {}):
                 return summaries[typ][name]
         return ""
+
+    @staticmethod
+    def nonvirtual(method):
+        modifiers = next((n for n in method.node.named_children if n.type == "modifiers"), None)
+        return modifiers is not None and any(n.type in {"private", "static"} for n in modifiers.children)
 
     def candidates(self, target, name, args, method, env):
         values = [m for m in self.index.methods(target, name) if len(m.parameters) == len(args)]
@@ -303,7 +315,9 @@ class JavaFacts(Facts):
             self.gap("TRANSACTION_ACTIVATION_UNRESOLVED", source, context,
                      "Prove proxy/container activation, propagation and rollback rules before claiming a transaction boundary", controls=controls)
             self.step("transaction_start", transaction, controls)
-        falls_through = self.visit(method.body, method, env, bindings, context, phase, controls)
+        falls_through = (self.constructor_body(method, env, bindings, context, phase, controls)
+            if method.name == method.owner.name.rsplit(".", 1)[-1] and method.node.type in {"constructor_declaration", "class_declaration"}
+            else self.visit(method.body, method, env, bindings, context, phase, controls))
         completion_controls = list(dict.fromkeys([*controls, *self.normal_conditions[context]]))
         if falls_through and (method.returns == "void" or phase == "background"):
             self.outcome("background_result" if phase == "background" and len(self.stack) == 1 else
@@ -311,6 +325,105 @@ class JavaFacts(Facts):
         if transaction:
             self.step("transaction_end", transaction, controls)
         self.stack.pop()
+        return falls_through or any(o["context_id"] == context and o["type"] in {
+            "entry_response", "method_return", "background_result"} for o in self.value["outcomes"])
+
+    def construct(self, owner, args, caller, env, bindings, context, phase, controls, source, receiver_type):
+        constructors = [m for m in self.candidates(owner, owner.name.rsplit(".", 1)[-1], args, caller, env)
+                        if m.owner == owner and m.node.type == "constructor_declaration"]
+        implicit = not args and not any(m.node.type == "constructor_declaration" for m in owner.methods)
+        modifiers = next((n for n in owner.node.named_children if n.type == "modifiers"), None)
+        annotations = [self.type_name(name, owner) for name in re.findall(r"@([\w.]+)", text(modifiers, owner.raw))]
+        if implicit and set(annotations) & {"lombok." + name for name in (
+                "Data", "Value", "AllArgsConstructor", "NoArgsConstructor", "RequiredArgsConstructor", "Builder")}:
+            self.gap("CONSTRUCTOR_BINDING_UNRESOLVED", source, context,
+                     "Bound Lombok generation cannot be replaced with an implicit default constructor", controls=controls)
+            return
+        if len(constructors) != 1 and not implicit:
+            self.gap("CONSTRUCTOR_BINDING_UNRESOLVED", source, context,
+                     "Constructor overload/arguments are not uniquely bound", [m.identity for m in constructors], controls)
+            return
+        if owner.node.type != "class_declaration":
+            self.gap("CONSTRUCTOR_CONTRACT_UNSUPPORTED", source, context,
+                     "Record/enum construction requires its generated lifecycle contract", controls=controls)
+            return
+        constructor = constructors[0] if constructors else JavaMethod(owner, owner.name.rsplit(".", 1)[-1], [],
+            "void", owner.node, field(owner.node, "body"))
+        child_context = stable_id("K", context, source, self.ordinals[(context, source)])
+        self.ordinals[(context, source)] += 1
+        proof = self.source(owner.file, constructor.node, constructor.identity, owner.raw)
+        self.participant(owner.name, "service")
+        call = self.add("calls", "construction", source, child_context, phase, controls,
+            {"method": constructor.name, "receiver_type": receiver_type, "target": constructor.identity,
+             "sender_type": caller.owner.name, "target_owner": owner.name, "parent_context": context,
+             "arguments": [text(a, caller.owner.raw) for a in args]}, [proof])
+        self.step("call", call, controls)
+        bound, types = {}, {"this": receiver_type}
+        for (param, _), argument in zip(constructor.parameters, args):
+            types[param] = self.infer(argument, caller, env)
+            if argument.type in {"lambda_expression", "method_reference"}:
+                bound[param] = (argument, caller, env.copy(), bindings.copy())
+            elif text(argument, caller.owner.raw) in bindings:
+                bound[param] = bindings[text(argument, caller.owner.raw)]
+        outcome_start = len(self.value["outcomes"])
+        completed = self.expand(constructor, child_context, phase, controls, bound, types)
+        call["details"]["may_throw"] = any(o["type"] == "throw" for o in self.value["outcomes"][outcome_start:])
+        self.step("return", call, controls)
+        return completed
+
+    def constructor_body(self, method, env, bindings, context, phase, controls):
+        owner, raw = method.owner, method.owner.raw
+        statements = list(method.body.named_children) if method.node.type == "constructor_declaration" else []
+        explicit = next((n for n in statements if n.type == "explicit_constructor_invocation"), None)
+        source = self.source(owner.file, explicit or method.node, method.identity, raw)
+        delegates = explicit is not None and any(n.type == "this" for n in explicit.children)
+        superclass = next((n for n in owner.node.named_children if n.type == "superclass"), None)
+        parent_name = text(superclass.named_children[0], raw) if superclass and superclass.named_children else "java.lang.Object"
+        parent = owner if delegates else self.index.resolve_type(parent_name, owner)
+        args_node = field(explicit, "arguments") if explicit else None
+        args = list(args_node.named_children) if args_node else []
+        for argument in args:
+            if argument.type not in {"lambda_expression", "method_reference"}:
+                if not self.visit(argument, method, env, bindings, context, phase, controls):
+                    return False
+        if parent:
+            if self.construct(parent, args, method, env, bindings, context, phase, controls, source, env["this"]) is False:
+                return False
+        elif self.type_name(parent_name, owner) != "java.lang.Object" or args:
+            self.gap("CONSTRUCTOR_CONTRACT_UNSUPPORTED", source, context,
+                     "Prove the external superclass constructor contract: " + parent_name, controls=controls)
+        else:
+            self.value["adapter_dependencies"]["java-se-api-profile"] = "17"
+        if not delegates:
+            # Initializers have instance scope, without constructor parameters.
+            initial_env = {name: self.type_name(t, declaring)
+                for name, (t, _, declaring) in self.index.fields(owner).items()}
+            initial_env["this"] = env["this"]
+            for member in field(owner.node, "body").named_children:
+                modifiers = next((n for n in member.named_children if n.type == "modifiers"), None)
+                static = modifiers is not None and any(n.type == "static" for n in modifiers.children)
+                if member.type == "static_initializer" or static and any(field(n, "value") for n in member.named_children if n.type == "variable_declarator"):
+                    self.gap("OBJECT_INITIALIZATION_UNSUPPORTED", self.source(owner.file, member, owner.name, raw), context,
+                             "Class initialization timing and prior activation are not established", controls=controls)
+                elif member.type == "block":
+                    if not self.visit(member, method, initial_env, {}, context, phase, controls):
+                        return False
+                elif member.type == "field_declaration" and not static:
+                    for declaration in member.named_children:
+                        value = field(declaration, "value") if declaration.type == "variable_declarator" else None
+                        if value is None:
+                            continue
+                        if not self.visit(value, method, initial_env, {}, context, phase, controls):
+                            return False
+                        proof = self.source(owner.file, declaration, owner.name, raw)
+                        mutation = self.add("effects", "memory_state_change", proof, context, phase, controls,
+                            {"receiver_type": env["this"], "field": text(field(declaration, "name"), raw),
+                             "expression": text(declaration, raw), "storage": "instance initialization; no durability guarantee"})
+                        self.step("state_change", mutation, controls)
+        for statement in statements:
+            if statement != explicit and not self.visit(statement, method, env, bindings, context, phase, controls):
+                return False
+        return True
 
     def visit(self, node, method, env, bindings, context, phase, controls):
         if node is None:
@@ -329,7 +442,7 @@ class JavaFacts(Facts):
         if kind in {"assert_statement", "explicit_constructor_invocation", "yield_statement"}:
             self.gap("CONTROL_SEMANTICS_UNSUPPORTED", source, context,
                      "Control/constructor contract not supported: " + kind, controls=controls)
-        if kind == "block":
+        if kind in {"block", "constructor_body"}:
             env, bindings = env.copy(), bindings.copy()
             for child in node.named_children:
                 if not self.visit(child, method, env, bindings, context, phase, controls):
@@ -340,8 +453,8 @@ class JavaFacts(Facts):
             for declaration in node.named_children:
                 if declaration.type == "variable_declarator":
                     name, value = text(field(declaration, "name"), raw), field(declaration, "value")
-                    if value:
-                        self.visit(value, method, env, bindings, context, phase, controls)
+                    if value and not self.visit(value, method, env, bindings, context, phase, controls):
+                        return False
                     env[name] = self.infer(value, method, env) if typ == "var" else typ
                     if value and value.type == "object_creation_expression":
                         env[name] = self.infer(value, method, env)
@@ -350,7 +463,8 @@ class JavaFacts(Facts):
             return True
         if kind == "switch_expression" and node.parent.type == "block":
             condition, body = field(node, "condition"), field(node, "body")
-            self.visit(condition, method, env, bindings, context, phase, controls)
+            if not self.visit(condition, method, env, bindings, context, phase, controls):
+                return False
             groups = body.named_children if body else []
             if any(group.type != "switch_block_statement_group" for group in groups):
                 self.gap("SWITCH_RULE_UNRESOLVED", source, context,
@@ -360,6 +474,7 @@ class JavaFacts(Facts):
                               {"condition": text(condition, raw), "arms": labels})
             self.step("control_start", branch, controls)
             completed = False
+            abrupt = False
             for i, group in enumerate(groups):
                 arm = labels[i]
                 if i:
@@ -374,6 +489,7 @@ class JavaFacts(Facts):
                         break
                     can_continue = self.visit(statement, method, env.copy(), bindings.copy(), context, phase, active)
                     if not can_continue:
+                        abrupt = True
                         stopped = True
                         break
                 if not stopped and i + 1 < len(groups):
@@ -383,22 +499,29 @@ class JavaFacts(Facts):
             self.step("control_end", branch, controls)
             if not groups:
                 self.gap("SWITCH_CASE_UNRESOLVED", source, context, "Bind explicit switch cases", controls=controls)
-            return completed or not any(label == "default" for label in labels)
+            completed |= not any(label == "default" for label in labels)
+            if completed and abrupt:
+                self.gap("CONTROL_EXIT_MERGE_UNSUPPORTED", source, context,
+                         "Mixed switch exits require path-specific continuation proof", controls=[*controls, branch["fact_id"]])
+            return completed
         if kind in {"if_statement", "while_statement", "for_statement", "enhanced_for_statement", "do_statement", "try_statement", "try_with_resources_statement", "switch_expression", "synchronized_statement", "ternary_expression"}:
             condition = field(node, "condition") or field(node, "value")
+            loops = {"for_statement", "enhanced_for_statement", "while_statement", "do_statement"}
+            if kind == "for_statement":
+                if not self.visit(field(node, "init"), method, env, bindings, context, phase, controls):
+                    return False
+            if kind == "enhanced_for_statement":
+                if not self.visit(field(node, "value"), method, env, bindings, context, phase, controls):
+                    return False
+            elif condition and kind not in loops:
+                if not self.visit(condition, method, env, bindings, context, phase, controls):
+                    return False
             branch = self.add("branches", kind, source, context, phase, controls,
                               {"condition": text(condition, raw) or kind, "arms": [], "reachability": "conditional"})
             if condition:
                 branch["evidence_refs"].extend(p for (ctx, variable), p in self.row_results.items()
                     if ctx == context and re.search(r"\b" + re.escape(variable) + r"\b", text(condition, raw)))
             nested = [*controls, branch["fact_id"]]
-            loops = {"for_statement", "enhanced_for_statement", "while_statement", "do_statement"}
-            if kind == "for_statement":
-                self.visit(field(node, "init"), method, env, bindings, context, phase, controls)
-            if kind == "enhanced_for_statement":
-                self.visit(field(node, "value"), method, env, bindings, context, phase, controls)
-            elif condition and kind not in loops:
-                self.visit(condition, method, env, bindings, context, phase, controls)
             self.step("control_start", branch, controls)
             if kind == "if_statement":
                 before_conditions = list(self.normal_conditions.get(context, []))
@@ -459,39 +582,52 @@ class JavaFacts(Facts):
                 return completed
             elif kind in loops:
                 before_conditions = list(self.normal_conditions.get(context, []))
-                if kind != "do_statement" and condition:
-                    self.visit(condition, method, env, bindings, context, phase, nested)
-                self.visit(field(node, "body"), method, env, bindings, context, phase, nested)
-                if kind == "for_statement":
-                    self.visit(field(node, "update"), method, env, bindings, context, phase, nested)
-                if kind == "do_statement" and condition:
-                    self.visit(condition, method, env, bindings, context, phase, nested)
                 branch["details"]["arms"] = ["iteration", "empty"] if kind != "do_statement" else ["iteration"]
+                if kind != "do_statement" and condition:
+                    if not self.visit(condition, method, env, bindings, context, phase, nested):
+                        self.step("control_end", branch, controls)
+                        return False
+                if not self.visit(field(node, "body"), method, env, bindings, context, phase, nested):
+                    self.gap("CONTROL_EXIT_MERGE_UNSUPPORTED", source, context,
+                             "Abrupt loop completion requires iteration/empty-path continuation proof", controls=nested)
+                if kind == "for_statement":
+                    if not self.visit(field(node, "update"), method, env, bindings, context, phase, nested):
+                        self.gap("CONTROL_EXIT_MERGE_UNSUPPORTED", source, context,
+                                 "Abrupt loop update requires iteration/empty-path continuation proof", controls=nested)
+                if kind == "do_statement" and condition:
+                    if not self.visit(condition, method, env, bindings, context, phase, nested):
+                        self.gap("CONTROL_EXIT_MERGE_UNSUPPORTED", source, context,
+                                 "Abrupt do/while condition requires loop continuation proof", controls=nested)
                 completed = True
                 if self.normal_conditions.get(context, []) != before_conditions:
                     self.gap("CONTROL_CONTINUATION_MERGE_UNSUPPORTED", source, context,
                              "Loop submission requires iteration-specific continuation evidence", controls=nested)
                     self.normal_conditions[context] = before_conditions
             else:
+                completed = True
                 for child in node.named_children:
                     if child != condition:
-                        self.visit(child, method, env, bindings, context, phase, nested)
+                        if not self.visit(child, method, env, bindings, context, phase, nested):
+                            completed = False
+                            break
                 branch["details"]["arms"] = ["iteration", "empty"] if "for" in kind or "while" in kind else ["body"]
-                completed = True
                 if kind in {"switch_expression", "ternary_expression"}:
                     self.gap("CONTROL_SEMANTICS_UNSUPPORTED", source, context, "Switch/ternary requires explicit arm semantics", controls=nested)
             self.step("control_end", branch, controls)
             return completed
         if kind == "binary_expression" and text(field(node, "operator"), raw) in {"&&", "||"}:
             operator = text(field(node, "operator"), raw)
+            if not self.visit(field(node, "left"), method, env, bindings, context, phase, controls):
+                return False
             branch = self.add("branches", "short_circuit", source, context, phase, controls,
                               {"condition": text(field(node, "left"), raw), "expression": text(node, raw), "operator": operator,
                                "arms": ["left_true", "left_false"] if operator == "&&" else ["left_false", "left_true"],
                                "reachability": "conditional"})
-            self.visit(field(node, "left"), method, env, bindings, context, phase, controls)
             self.step("control_start", branch, controls)
             before_conditions = list(self.normal_conditions.get(context, []))
-            self.visit(field(node, "right"), method, env, bindings, context, phase, [*controls, branch["fact_id"], branch["details"]["arms"][0]])
+            if not self.visit(field(node, "right"), method, env, bindings, context, phase, [*controls, branch["fact_id"], branch["details"]["arms"][0]]):
+                self.gap("CONTROL_EXIT_MERGE_UNSUPPORTED", source, context,
+                         "Abrupt short-circuit evaluation requires a disjunctive continuation contract", controls=controls)
             if self.normal_conditions.get(context, []) != before_conditions:
                 self.gap("CONTROL_CONTINUATION_MERGE_UNSUPPORTED", source, context,
                          "Short-circuit submission needs disjunctive continuation evidence", controls=controls)
@@ -500,8 +636,7 @@ class JavaFacts(Facts):
             self.step("control_end", branch, controls)
             return True
         if kind == "method_invocation":
-            self.invocation(node, method, env, bindings, context, phase, controls)
-            return True
+            return self.invocation(node, method, env, bindings, context, phase, controls)
         if kind in {"assignment_expression", "update_expression"}:
             left = field(node, "left") or (node.named_children[0] if node.named_children else None)
             name = text(left, raw).removeprefix("this.")
@@ -511,18 +646,20 @@ class JavaFacts(Facts):
                 for n in walk(method.body))
             if name in declarations and (left.type != "identifier" or not shadowed):
                 _, declaration, declaring = declarations[name]
+                for child in node.named_children:
+                    if not self.visit(child, method, env, bindings, context, phase, controls):
+                        return False
                 mutation = self.add("effects", "memory_state_change", source, context, phase, controls,
-                    {"receiver_type": method.owner.name, "field": name, "expression": text(node, raw),
+                    {"receiver_type": env.get("this", method.owner.name), "field": name, "expression": text(node, raw),
                      "storage": "in-process field; no durability guarantee"},
                     [self.source(declaring.file, declaration, declaring.name + "." + name)])
-                for child in node.named_children:
-                    self.visit(child, method, env, bindings, context, phase, controls)
                 self.step("state_change", mutation, controls)
                 self.outcome("state_change", source, context, phase, controls, text(node, raw), refs=[mutation["fact_id"]])
                 return True
         if kind in {"return_statement", "throw_statement", "break_statement", "continue_statement"}:
             for child in node.named_children:
-                self.visit(child, method, env, bindings, context, phase, controls)
+                if not self.visit(child, method, env, bindings, context, phase, controls):
+                    return False
             controls = list(dict.fromkeys([*controls, *self.normal_conditions.get(context, [])]))
             typ = ("entry_response" if phase == "entry" and len(self.stack) == 1 else "background_result" if phase == "background" and len(self.stack) == 1 else "method_return") if kind == "return_statement" else kind.removesuffix("_statement")
             linked = [p for (ctx, variable), p in self.row_results.items()
@@ -568,39 +705,12 @@ class JavaFacts(Facts):
             args = list(args_node.named_children) if args_node else []
             for argument in args:
                 if argument.type not in {"lambda_expression", "method_reference"}:
-                    self.visit(argument, method, env, bindings, context, phase, controls)
+                    if not self.visit(argument, method, env, bindings, context, phase, controls):
+                        return False
             if typ in self.index.types:
                 owner = self.index.types[typ]
-                constructors = self.candidates(owner, typ.rsplit(".", 1)[-1], args, method, env)
-                implicit = not args and not any(m.node.type == "constructor_declaration" for m in owner.methods)
-                if len(constructors) != 1 and not implicit:
-                    self.gap("CONSTRUCTOR_BINDING_UNRESOLVED", source, context,
-                             "Constructor overload/arguments are not uniquely bound", [m.identity for m in constructors], controls)
-                    return True
-                initializer = field(owner.node, "body")
-                if any(n.type in {"block", "static_initializer"} or n.type == "field_declaration" and any(
-                        e.type in {"method_invocation", "object_creation_expression", "assignment_expression"}
-                        for e in walk(n)) for n in initializer.named_children):
-                    self.gap("OBJECT_INITIALIZATION_UNSUPPORTED", source, context,
-                             "Instance/static initializer effects need constructor lifecycle binding", controls=controls)
-                child_context = stable_id("K", context, source, self.ordinals[(context, source)])
-                self.ordinals[(context, source)] += 1
-                proof = self.source(owner.file, owner.node, owner.name)
-                self.participant(owner.name, "service")
-                call = self.add("calls", "construction", source, child_context, phase, controls,
-                    {"method": owner.name.rsplit(".", 1)[-1], "receiver_type": owner.name,
-                     "target": constructors[0].identity if constructors else owner.name + ".<init>()",
-                     "sender_type": method.owner.name, "target_owner": owner.name, "parent_context": context,
-                     "arguments": [text(a, raw) for a in args]}, [proof])
-                self.step("call", call, controls)
-                if constructors:
-                    bound, types = {}, {"this": typ}
-                    for (param, _), argument in zip(constructors[0].parameters, args):
-                        types[param] = self.infer(argument, method, env)
-                        if argument.type in {"lambda_expression", "method_reference"}:
-                            bound[param] = (argument, method, env.copy(), bindings.copy())
-                    self.expand(constructors[0], child_context, phase, controls, bound, types)
-                self.step("return", call, controls)
+                if self.construct(owner, args, method, env, bindings, context, phase, controls, source, typ) is False:
+                    return False
             elif typ not in {"java.lang.String", "java.lang.RuntimeException", "java.lang.IllegalArgumentException", "java.lang.IllegalStateException", "java.lang.Exception",
                              "java.util.ArrayList", "java.util.HashMap", "java.util.HashSet", "java.util.LinkedHashMap", "java.util.LinkedHashSet"}:
                 self.gap("CONSTRUCTOR_CONTRACT_UNSUPPORTED", source, context, "Unknown external constructor: " + typ, controls=controls)
@@ -609,7 +719,8 @@ class JavaFacts(Facts):
                          "Anonymous class initializers and callback dispatch need a binding contract", controls=controls)
             return True
         for child in node.named_children:
-            self.visit(child, method, env, bindings, context, phase, controls)
+            if not self.visit(child, method, env, bindings, context, phase, controls):
+                return False
         return True
 
     def callback(self, callback, context, phase, controls, arity=None):
@@ -621,18 +732,25 @@ class JavaFacts(Facts):
             if phase == "background" and completed:
                 self.outcome("background_result", self.source(original.owner.file, node, original.identity),
                              context, phase, controls)
+            return completed or any(o["context_id"] == context and o["type"] in {
+                "method_return", "background_result"} for o in self.value["outcomes"])
         elif node.type == "method_reference":
             raw, parts = original.owner.raw, node.named_children
             owner = self.index.types.get(self.infer(parts[0], original, env))
             name = text(parts[-1], raw)
             candidates = [m for m in self.index.methods(owner, name) if arity is None or len(m.parameters) == arity] if owner else []
+            if parts[0].type == "this":
+                lexical = [m for m in self.index.methods(original.owner, name) if arity is None or len(m.parameters) == arity]
+                if len(lexical) == 1 and self.nonvirtual(lexical[0]):
+                    candidates = lexical
+            receiver_type = env.get("this", original.owner.name) if parts[0].type == "super" else owner.name if owner else ""
             if candidates and all(m.body is None for m in candidates):
                 candidates = [m for implementation in self.index.implementations(owner)
                               for m in self.index.methods(implementation, name) if arity is None or len(m.parameters) == arity]
             source = self.source(original.owner.file, node, original.identity)
             callback_context = stable_id("K", context, source, "callback")
             call = self.add("calls", "method_reference", source, callback_context, phase, controls,
-                {"method": name, "receiver_type": owner.name if owner else "", "target": candidates[0].identity if len(candidates) == 1 else "",
+                {"method": name, "receiver_type": receiver_type, "target": candidates[0].identity if len(candidates) == 1 else "",
                  "arguments": ["callback argument"] * (arity or 0), "parent_context": context,
                  "sender_type": original.owner.name, "target_owner": candidates[0].owner.name if len(candidates) == 1 else ""})
             hint = self.hints.get(call["fact_id"])
@@ -641,8 +759,9 @@ class JavaFacts(Facts):
                 call["details"].update(target=candidates[0].identity if len(candidates) == 1 else "",
                                       target_owner=candidates[0].owner.name if len(candidates) == 1 else "")
             self.step("call", call, controls)
+            completed = True
             if len(candidates) == 1:
-                self.expand(candidates[0], callback_context, phase, controls, {}, {})
+                completed = self.expand(candidates[0], callback_context, phase, controls, {}, {"this": receiver_type})
             else:
                 for candidate in candidates:
                     self.source(candidate.owner.file, candidate.node, candidate.identity)
@@ -650,13 +769,15 @@ class JavaFacts(Facts):
                 self.gap("CALLBACK_BINDING_UNRESOLVED", source, callback_context,
                          "Method reference needs unique receiver/signature", [m.identity for m in candidates], controls)
             self.step("return", call, controls)
+            return completed
         else:
             name = text(node, original.owner.raw)
             if name in bindings:
-                self.callback(bindings[name], context, phase, controls, arity)
+                return self.callback(bindings[name], context, phase, controls, arity)
             else:
                 self.gap("CALLBACK_TARGET_UNSUPPORTED", self.source(original.owner.file, node, original.identity), context,
                          "Task target cannot be bound to an executable callback", controls=controls)
+        return True
 
     def invocation(self, node, method, env, bindings, parent, phase, controls):
         raw = method.owner.raw
@@ -669,16 +790,23 @@ class JavaFacts(Facts):
         typ = self.infer(receiver, method, env) if receiver else env.get("this", method.owner.name)
         if typ in {"com.querydsl.jpa.impl.JPAUpdateClause", "com.querydsl.jpa.impl.JPADeleteClause"} and name == "execute":
             self.querydsl(node, method, env, parent, phase, controls, typ)
-            return
-        if receiver and receiver.type == "method_invocation":
-            self.visit(receiver, method, env, bindings, parent, phase, controls)
+            return True
+        if receiver:
+            if not self.visit(receiver, method, env, bindings, parent, phase, controls):
+                return False
         for arg in args:
             if arg.type not in {"lambda_expression", "method_reference"}:
-                self.visit(arg, method, env, bindings, parent, phase, controls)
+                if not self.visit(arg, method, env, bindings, parent, phase, controls):
+                    return False
         context = stable_id("K", parent, source, self.ordinals[(parent, source)])
         self.ordinals[(parent, source)] += 1
         target = self.index.types.get(typ)
         candidates = self.candidates(target, name, args, method, env) if target else []
+        if receiver is None or receiver.type == "this":
+            lexical = self.candidates(method.owner, name, args, method, env)
+            if len(lexical) == 1 and self.nonvirtual(lexical[0]):
+                candidates = lexical
+        receiver_type = env.get("this", method.owner.name) if receiver is not None and receiver.type == "super" else typ
         if candidates and all(m.body is None for m in candidates):
             implementations = self.index.implementations(target)
             if len(implementations) > 1:
@@ -710,7 +838,7 @@ class JavaFacts(Facts):
             if implementations:
                 candidates = [m for t in implementations for m in self.candidates(t, name, args, method, env)]
         call = self.add("calls", "invocation", source, context, phase, controls,
-                        {"method": name, "receiver_type": typ, "target": candidates[0].identity if len(candidates) == 1 else "",
+                        {"method": name, "receiver_type": receiver_type, "target": candidates[0].identity if len(candidates) == 1 else "",
                          "arguments": [text(a, raw) for a in args], "parent_context": parent,
                          "sender_type": method.owner.name, "target_owner": candidates[0].owner.name if len(candidates) == 1 else typ})
         call["details"]["argument_types"] = [self.infer(a, method, env) for a in args]
@@ -720,11 +848,12 @@ class JavaFacts(Facts):
             call["details"]["target"] = candidates[0].identity if len(candidates) == 1 else ""
             call["details"]["target_owner"] = candidates[0].owner.name if len(candidates) == 1 else typ
         self.step("call", call, controls)
+        completed = True
         if receiver_text in bindings and name in {"run", "accept", "apply", "get", "call"}:
-            self.callback(bindings[receiver_text], context, phase, controls, len(args))
+            completed = self.callback(bindings[receiver_text], context, phase, controls, len(args))
             self.normal_conditions.setdefault(parent, []).extend(self.normal_conditions.get(context, []))
         elif len(candidates) == 1 and candidates[0].body is not None:
-            bound, types = {}, {"this": typ}
+            bound, types = {}, {"this": receiver_type}
             for (param, _), arg in zip(candidates[0].parameters, args):
                 types[param] = self.infer(arg, method, env)
                 if arg.type in {"lambda_expression", "method_reference"}:
@@ -732,7 +861,7 @@ class JavaFacts(Facts):
                 elif text(arg, raw) in bindings:
                     bound[param] = bindings[text(arg, raw)]
             outcome_start = len(self.value["outcomes"])
-            self.expand(candidates[0], context, phase, controls, bound, types)
+            completed = self.expand(candidates[0], context, phase, controls, bound, types)
             self.normal_conditions.setdefault(parent, []).extend(self.normal_conditions.get(context, []))
             call["details"]["may_throw"] = any(o["type"] == "throw" for o in self.value["outcomes"][outcome_start:])
         elif len(candidates) > 1:
@@ -756,13 +885,14 @@ class JavaFacts(Facts):
             branch = self.add("branches", "synchronous_iteration", source, context, phase, controls,
                               {"condition": receiver_text + " elements", "arms": ["nonempty", "empty"], "reachability": "conditional"})
             self.step("control_start", branch, controls)
-            self.callback((args[0], method, env, bindings), context, phase, [*controls, branch["fact_id"]], 1)
+            if self.callback((args[0], method, env, bindings), context, phase, [*controls, branch["fact_id"]], 1) is False:
+                self.gap("CONTROL_EXIT_MERGE_UNSUPPORTED", source, context,
+                         "Abrupt callback completion requires iteration/empty-path continuation proof", controls=controls)
             self.step("control_end", branch, controls)
         elif typ in {"java.util.concurrent.Executor", "java.util.concurrent.ExecutorService", "java.util.concurrent.ThreadPoolExecutor",
                      "org.springframework.core.task.TaskExecutor", "org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor"} and name in {"submit", "execute"} and args:
-            if typ in {"java.util.concurrent.Executor", "org.springframework.core.task.TaskExecutor"}:
-                self.gap("EXECUTOR_SCHEDULING_UNRESOLVED", source, context,
-                         "Executor/TaskExecutor may invoke inline; bind the implementation before classifying a background boundary", controls=controls)
+            self.gap("EXECUTOR_SCHEDULING_UNRESOLVED", source, context,
+                     "Bind the actual executor implementation, scheduling and rejection policy; a declared executor type does not prove background execution", controls=controls)
             effect = self.add("effects", "task_submission", source, context, phase, controls,
                               {"executor_type": typ, "operation": name, "wait_observed": False, "task_call": call["fact_id"],
                                "execution_order": "task may overlap entry; listing task phase last does not prove it starts after entry return"})
@@ -773,7 +903,7 @@ class JavaFacts(Facts):
             self.outcome("async_submission", source, context, phase, [*controls, decision["fact_id"], "accepted"], refs=[effect["fact_id"], decision["fact_id"]])
             self.step("control_else", decision, controls, "rejected")
             rejected = self.outcome("async_rejection", source, context, phase, [*controls, decision["fact_id"], "rejected"], refs=[effect["fact_id"], decision["fact_id"]])
-            rejected["details"].update(possible_handlers=list(self.exception_scopes),
+            rejected["details"].update(possible_handlers=[{"branch_id": scope["branch_id"], "handlers": scope["handlers"]} for scope in self.exception_scopes],
                 observed_by_entry=phase == "entry" and len(self.stack) == 1 and not self.exception_scopes,
                 boundary="entry" if len(self.stack) == 1 else "internal")
             if self.exception_scopes:
@@ -788,6 +918,7 @@ class JavaFacts(Facts):
             self.gap("CALL_CONTRACT_UNSUPPORTED", source, context, "Unresolved declaration or external contract: " + typ + "." + name,
                      [m.identity for m in candidates], controls)
         self.step("return", call, list(dict.fromkeys([*controls, *self.normal_conditions.get(parent, [])])))
+        return completed
 
     def feign(self, owner, method, call):
         if owner.imports.get("FeignClient") != "org.springframework.cloud.openfeign.FeignClient":
@@ -946,7 +1077,7 @@ class JavaFacts(Facts):
                     versions.append(interpolate(value(dependency, "version") or managed.get((group, artifact), "")))
             if versions:
                 break
-        if any(children(root, "profiles") for _, root in chain):
+        if unresolved_parent or any(children(root, "profiles") for _, root in chain):
             versions = []  # Active profile selection has not been established.
         if not versions or set(versions) != {supported}:
             self.gap("LIBRARY_CONTRACT_VERSION_UNSUPPORTED", source, context,

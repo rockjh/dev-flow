@@ -52,3 +52,13 @@ check/verify 必须保存逐门禁 executed/passed/errors，不能将未执行�
 在 Git 夹具提交新增/修改/删除入口或共享调用变化后，新建 discover/prepare 运行并实际分析，再 collect、check、两次 verify 和 accept。只支持当前 prepare/collect 流程。验证新增归属需确认、受影响入口重分析、删除章节同步清理、未变内容保留；无法读取已验收 commit 时报告无法增量比较，重新分析完整范围。核对 commit、dirty、fingerprint 和唯一版本 JSON，任何失败保持原 source.git_commit。
 
 最终对话直接输出完整三列模块表及排除/疑点类别，不用链接替代；同时返回已脱敏外部 manifest、退出状态、各入口类型覆盖、逐入口未决、两次稳定性。实际目标项目的扫描及流程文档证据是验收依据，夹具通过不能代替实际项目验证。
+
+## 5.2.1 补充门禁
+
+构造与继承回归须验证接收者先于实参、this 委托只初始化一次、父构造先于子实例初始化、初始化器无构造参数作用域，以及实际接收者与声明所有者分别绑定。库外父构造与静态初始化未证明时仍须产生 gap。内部已证明抛出的直线调用、赋值和响应停止，捕获及最终清理继续保留；复杂出口不因直线修复而放行。新增完整生命周期夹具仍只证明测试语义，不提供生产宿主回执。
+
+入口数量对账与注册覆盖分别判定。存在 coverage_gaps 时，全范围 check/verify/accept 返回 REGISTRATION_COVERAGE_UNRESOLVED；--module 可独立验收并保留其余范围未完成。所有模块分别 accepted 不能替代新全范围运行和回执；汇总仅在存在当前契约有效的全范围 accepted 运行时报告整体 success。
+
+文档流程缺少 Mermaid 渲染器时，mermaid_render.executed=false、passed=false，返回 MERMAID_RENDERER_UNAVAILABLE 并阻断验收。恢复渲染后重新连续 verify 两次；仅实际超时才调整 DEVFLOW_MERMAID_TIMEOUT。审计流程不生成图，报告其未执行范围。
+
+Windows 回归覆盖短根下的长子路径：git archive 解出、扫描、冻结、哈希、collect、verify×2、accept 和 clean；分别验证本地/UNC/已有前缀。内部 symlink/junction 不得读取目录外证据。原清理失败回归拦截实际带前缀的 shutil.rmtree 调用，验证部分删除后从固定提交恢复可重试且基线不动。非 Windows 保留原路径行为，平台用例按环境选择。

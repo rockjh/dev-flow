@@ -116,7 +116,7 @@ class Controller { ExecutorService executor;
   @PostMapping("/orders") void receive() { executor.submit(() -> work()); after(); }
   void work() {} void after() {}
 }'''})
-    assert not facts["gaps"]
+    assert {g["code"] for g in facts["gaps"]} == {"EXECUTOR_SCHEDULING_UNRESOLVED"}
     decision = next(b for b in facts["branches"] if b["type"] == "task_submission_result")
     after = next(c for c in facts["calls"] if c["details"]["method"] == "after")
     completion = next(o for o in facts["outcomes"] if o["type"] == "normal_completion")
@@ -160,6 +160,195 @@ def test_unresolved_constructor_and_initializer_are_not_silent(tmp_path):
 class Task { String value = load(); Task(long value) {} String load() { return "x"; } }
 '''})
     assert any(g["code"] == "CONSTRUCTOR_BINDING_UNRESOLVED" for g in facts["gaps"])
+
+
+def test_inherited_template_dispatches_override_on_actual_receiver(tmp_path):
+    facts = facts_for(tmp_path, {"Controller.java": '''class Base {
+  void template() { hook(); }
+  void hook() { missing(); }
+}
+class Controller extends Base {
+  @PostMapping("/orders") void receive() { template(); }
+  void hook() { save(); } void save() {}
+}'''})
+    assert not facts["gaps"]
+    assert [c["details"]["target"] for c in facts["calls"]] == [
+        "Base.template()", "Controller.hook()", "Controller.save()"]
+    assert facts["calls"][0]["details"]["receiver_type"] == "Controller"
+    assert facts["calls"][0]["details"]["target_owner"] == "Base"
+
+
+def test_receiver_construction_runs_before_argument_and_invocation(tmp_path):
+    facts = facts_for(tmp_path, {"Controller.java": '''class Controller {
+  @PostMapping("/orders") void receive() { new Task().accept(input()); }
+  String input() { return "order"; }
+}
+class Task { Task() { initialize(); } void initialize() {} void accept(String value) {} }
+'''})
+    assert not facts["gaps"]
+    assert [c["details"]["method"] for c in facts["calls"]] == [
+        "Task", "initialize", "input", "accept"]
+
+
+def test_local_constructor_chain_runs_parent_then_initializers_once(tmp_path):
+    facts = facts_for(tmp_path, {"Controller.java": '''class Controller {
+  @PostMapping("/orders") void receive() { new Task(input()); }
+  int input() { return 1; }
+}
+class Base { int base = baseValue(); Base(int x) { baseBody(); }
+  int baseValue() { return 1; } void baseBody() {}
+}
+class Task extends Base {
+  int value = initialValue(); { initialize(); }
+  Task(int value) { this(value, true); outerBody(); }
+  Task(int value, boolean enabled) { super(value); innerBody(); }
+  int initialValue() { return 2; }
+  void initialize() {} void innerBody() {} void outerBody() {}
+}'''})
+    assert not facts["gaps"]
+    assert [c["details"]["method"] for c in facts["calls"]] == [
+        "input", "Task", "Task", "Base", "baseValue", "baseBody",
+        "initialValue", "initialize", "innerBody", "outerBody"]
+    initialized = [e["details"]["field"] for e in facts["effects"] if e["type"] == "memory_state_change"]
+    assert initialized == ["base", "value"]
+
+
+def test_implicit_constructor_includes_parent_and_instance_initializers(tmp_path):
+    facts = facts_for(tmp_path, {"Controller.java": '''class Controller {
+  @PostMapping("/orders") void receive() { new Task(); }
+}
+class Base { Base() { before(); } void before() {} }
+class Task extends Base { { initialize(); } void initialize() {} }
+'''})
+    assert not facts["gaps"]
+    assert [c["details"]["method"] for c in facts["calls"]] == ["Task", "Base", "before", "initialize"]
+
+
+def test_unknown_parent_constructor_is_not_silent(tmp_path):
+    facts = facts_for(tmp_path, {"Controller.java": '''class Controller {
+  @PostMapping("/orders") void receive() { new Task(); }
+}
+class Task extends ExternalBase {}
+'''})
+    assert any(g["code"] == "CONSTRUCTOR_CONTRACT_UNSUPPORTED" for g in facts["gaps"])
+    assert not facts["coverage"]["complete"]
+
+
+@pytest.mark.parametrize("annotation", ["Data", "NoArgsConstructor", "Value"])
+def test_lombok_generation_is_not_replaced_by_implicit_default_constructor(tmp_path, annotation):
+    facts = facts_for(tmp_path, {"Controller.java": "import lombok." + annotation + ''';
+class Controller { @PostMapping("/orders") void receive() { new Task(); } }
+@''' + annotation + " class Task { String value; }"})
+    assert any(g["code"] == "CONSTRUCTOR_BINDING_UNRESOLVED" for g in facts["gaps"])
+
+
+def test_private_and_static_methods_keep_lexical_owner(tmp_path):
+    facts = facts_for(tmp_path, {"Controller.java": '''class Base {
+  void template() { privateHook(); staticHook(); }
+  private void privateHook() {} static void staticHook() {}
+}
+class Controller extends Base {
+  @PostMapping("/orders") void receive() { template(); }
+  void privateHook() { missing(); } static void staticHook() { missing(); }
+}'''})
+    assert not facts["gaps"]
+    assert [c["details"]["target"] for c in facts["calls"]] == [
+        "Base.template()", "Base.privateHook()", "Base.staticHook()"]
+
+
+def test_super_call_keeps_receiver_for_virtual_hook_inside_parent(tmp_path):
+    facts = facts_for(tmp_path, {"Controller.java": '''class Base {
+  void template() { hook(); } void hook() { missing(); }
+}
+class Controller extends Base {
+  @PostMapping("/orders") void receive() { super.template(); }
+  void template() { missing(); } void hook() {}
+}'''})
+    assert not facts["gaps"]
+    assert [c["details"]["target"] for c in facts["calls"]] == ["Base.template()", "Controller.hook()"]
+    assert facts["calls"][0]["details"]["receiver_type"] == "Controller"
+
+
+def test_inherited_callback_keeps_actual_receiver(tmp_path):
+    facts = facts_for(tmp_path, {"Controller.java": '''class Base {
+  void template() { hook(); } void hook() { missing(); }
+}
+class Controller extends Base {
+  @PostMapping("/orders") void receive() { execute(this::template); }
+  void execute(Runnable action) { action.run(); } void hook() {}
+}'''})
+    assert not facts["gaps"]
+    assert any(c["details"]["target"] == "Controller.hook()" for c in facts["calls"])
+
+
+def test_private_callback_keeps_lexical_owner(tmp_path):
+    facts = facts_for(tmp_path, {"Controller.java": '''class Base {
+  void template() { execute(this::hook); } private void hook() {}
+  void execute(Runnable action) { action.run(); }
+}
+class Controller extends Base {
+  @PostMapping("/orders") void receive() { template(); }
+  void hook() { missing(); }
+}'''})
+    assert not facts["gaps"]
+    assert any(c["details"]["target"] == "Base.hook()" for c in facts["calls"])
+    assert not any(c["details"]["target"] == "Controller.hook()" for c in facts["calls"])
+
+
+@pytest.mark.parametrize("initializer", ["static { missing(); }", "static int value = missing();"])
+def test_class_initialization_stays_blocked(tmp_path, initializer):
+    facts = facts_for(tmp_path, {"Controller.java": '''class Controller {
+  @PostMapping("/orders") void receive() { new Task(); }
+}
+class Task { ''' + initializer + " }"})
+    assert any(g["code"] == "OBJECT_INITIALIZATION_UNSUPPORTED" for g in facts["gaps"])
+
+
+@pytest.mark.parametrize("statement", [
+    "work(); after();", "boolean value = work(); after();", "recorded = work(); after();",
+    "new Task(work()); after();", "return work();", "if (work()) { after(); }",
+    "while (work()) { after(); }", "execute(() -> work()); after();",
+])
+def test_proven_throw_stops_normal_continuation_but_keeps_catch_and_cleanup(tmp_path, statement):
+    facts = facts_for(tmp_path, {"Controller.java": '''class Controller { boolean recorded;
+  @PostMapping("/orders") boolean receive() {
+    try { ''' + statement + ''' } catch (RuntimeException error) { recover(); }
+    finally { cleanup(); }
+    return false;
+  }
+  boolean work() { throw new IllegalArgumentException("failed"); }
+  void after() { missing(); } void recover() {} void cleanup() {}
+  void execute(Runnable action) { action.run(); }
+}
+class Task { Task(boolean value) { missing(); } }
+'''})
+    assert not facts["gaps"]
+    names = [c["details"]["method"] for c in facts["calls"]]
+    assert "after" not in names and "Task" not in names
+    assert "recover" in names and "cleanup" in names
+    assert not facts["effects"]
+    assert [o["details"]["expression"] for o in facts["outcomes"] if o["type"] == "entry_response"] == ["return false;"]
+
+
+def test_short_circuit_throw_cannot_claim_unguarded_success(tmp_path):
+    facts = facts_for(tmp_path, {"Controller.java": '''class Controller {
+  @PostMapping("/orders") boolean receive(boolean ready) {
+    try { boolean value = ready && work(); } catch (RuntimeException error) {}
+    return true;
+  }
+  boolean work() { throw new IllegalArgumentException("failed"); }
+}'''})
+    assert any(g["code"] == "CONTROL_EXIT_MERGE_UNSUPPORTED" for g in facts["gaps"])
+
+
+def test_mixed_switch_exit_cannot_claim_unguarded_success(tmp_path):
+    facts = facts_for(tmp_path, {"Controller.java": '''class Controller {
+  @PostMapping("/orders") int receive(int value) {
+    switch (value) { case 1: return 1; default: break; }
+    return 2;
+  }
+}'''})
+    assert any(g["code"] == "CONTROL_EXIT_MERGE_UNSUPPORTED" for g in facts["gaps"])
 
 
 @pytest.mark.parametrize("annotation", ["Table", "Column"])
@@ -207,6 +396,16 @@ def test_dependency_profile_resolves_local_parent_management_and_properties(tmp_
     facts = facts_for(tmp_path, files)
     assert not facts["gaps"]
     assert {"pom.xml", "module/pom.xml"} <= {s["file"] for s in facts["sources"]}
+
+
+def test_unresolved_parent_cannot_prove_effective_dependency_profile(tmp_path):
+    files = jpa_files()
+    files["module/pom.xml"] = files["module/pom.xml"].replace("<project>", """<project><parent>
+<groupId>external</groupId><artifactId>parent</artifactId><version>1</version>
+<relativePath/></parent>""")
+    facts = facts_for(tmp_path, files)
+    assert any(g["code"] == "LIBRARY_CONTRACT_VERSION_UNSUPPORTED" for g in facts["gaps"])
+    assert not facts["persistence_actions"]
 
 
 def test_version_lock_edit_during_task_is_rejected(prepared, monkeypatch):

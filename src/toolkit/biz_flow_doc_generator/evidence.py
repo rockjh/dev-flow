@@ -11,7 +11,7 @@ from ..core.artifacts import state_root, write_json
 from ..core.syntax import normalized, parser_versions
 from .git import source_view
 
-ADAPTER_VERSION = "5.1.0"
+ADAPTER_VERSION = "5.2.1"
 FACT_ARRAYS = ("calls", "branches", "persistence_actions", "effects", "outcomes")
 RESOURCE_TYPES = {"relational_table", "document_collection", "kv_namespace", "search_index", "object_storage", "file_resource"}
 

@@ -30,7 +30,7 @@ def prepared(tmp_path, monkeypatch):
     assert cli.init_command(["--project", str(project)]) == 0
     assert cli.discover_command(["--project", str(project)]) == 0
     assert cli.prepare_command(["--project", str(project), "--confirm"]) == 0
-    path = next(p for p in state.glob("biz-flow/*.json") if not p.name.endswith(".tasks.json"))
+    path = next(p for p in state.glob("biz-flow/*.json") if len(p.stem) == 32)
     manifest = json.loads(path.read_text(encoding="utf-8"))
     assert manifest["host_capability"] == "unknown"
     return project, path, manifest
@@ -433,7 +433,7 @@ def test_version_file_bytes_are_frozen_even_when_docs_are_git_ignored(prepared, 
     (project / ".gitignore").write_text("docs/\n", encoding="utf-8")
     assert cli.prepare_command(["--project", str(project), "--confirm"]) == 0
     state = host.state_root() / "biz-flow"
-    path = max((p for p in state.glob("*.json") if not p.name.endswith(".tasks.json")), key=lambda p: p.stat().st_mtime_ns)
+    path = max((p for p in state.glob("*.json") if len(p.stem) == 32), key=lambda p: p.stat().st_mtime_ns)
     manifest = json.loads(path.read_text(encoding="utf-8"))
     version = project / "docs/biz-flow/biz-flow-doc-generator-version.json"
     assert version.relative_to(project).as_posix() in manifest["protected_hashes"]

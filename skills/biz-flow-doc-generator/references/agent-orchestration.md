@@ -93,3 +93,7 @@ collect 拒绝后，已绑定本 run/task/input 的有效失败 attempt 保存�
 `collect` 重新校验运行身份、源码和映射指纹、逐入口覆盖、结果 schema、证据完整性及执行记录。失败保留诊断、提交和入口目录；可纠正交接错误不伪造完成或手改状态，不自动降级。成功生成模式复用同一业务分析校验、Mermaid 渲染和模块唯一写入；`audit` 只保存审核结果，不写最终文档。
 
 `check` 和每次 `verify` 都核验当前运行的提交事实与工件；同 target/fingerprint/adapter 可复用规范缓存，结果和文档逐次校验。只有相同事实、结果和文档哈希连续通过两次 verify，`accept` 才能按完整范围推进源码基线。使用 prepare --resume 时只重派 pending 入口，最终提交仍包含完整范围及未变的真实回执。
+
+## 分诊后执行
+
+启动当前包任务前读取 prepare/resume 的 behavior_report 和冻结 facts。无 gap 仍须独立分析提交快照中的全部可达行为；blocked 入口先按 behavior-evidence.md 核对精确补证或修复 adapter。其他完整模块可另建 --module 运行推进。新包全部必需任务使用真实新结果及回执；旧包的已完成子代理身份不成为新包执行证明。原生能力及可用槽位仅以当前会话工具为准。

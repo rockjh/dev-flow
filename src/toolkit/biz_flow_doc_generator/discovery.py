@@ -20,6 +20,7 @@ from typing import Callable
 
 from .git import source_view, git_info, _run
 from .models import EntryPoint, FunctionInfo, ScanResult
+from .paths import is_alias, normal_path
 
 _LOCAL_SYNTAX_NAMES = {"if", "else", "catch", "try", "for", "while", "input", "return"}
 
@@ -1097,10 +1098,10 @@ def _source_files(root: Path, project: Path | None = None) -> list[Path]:
     files = []
     for directory, children, names in os.walk(root, followlinks=False):
         children[:] = sorted(name for name in children if name.casefold() not in _EXCLUDED_DIRS_CASEFOLD
-                             and not (Path(directory) / name).is_symlink())
+                             and not is_alias(Path(directory) / name))
         for name in sorted(names):
             path = Path(directory) / name
-            if (not path.is_symlink() and path.suffix.casefold() not in {".log", ".trace", ".out"}
+            if (not is_alias(path) and path.suffix.casefold() not in {".log", ".trace", ".out"}
                     and not generated_docs(path) and readable_text(path)):
                 files.append(path)
     if project is not None and files:
@@ -1110,8 +1111,8 @@ def _source_files(root: Path, project: Path | None = None) -> list[Path]:
         git_dir = _run(project, "rev-parse", "--absolute-git-dir")
         payload = "\0".join(path.relative_to(root).as_posix() for path in files) + "\0"
         with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as error:
-            completed = subprocess.run(["git", "--git-dir=" + git_dir, "--work-tree=" + str(root),
-                "check-ignore", "--no-index", "-z", "--stdin"], cwd=root,
+            completed = subprocess.run(["git", "--git-dir=" + git_dir, "--work-tree=" + str(normal_path(root)),
+                "check-ignore", "--no-index", "-z", "--stdin"], cwd=normal_path(root),
                 input=payload.encode("utf-8"), stdout=output, stderr=error)
             output.seek(0)
             ignored = set(output.read().decode("utf-8").split("\0"))
@@ -1166,6 +1167,7 @@ def scan(project_root: Path, target: str | None = None, *, entry_only: bool = Fa
     """Cache immutable registration inventories by target and ignore policy."""
     from dataclasses import asdict
     from ..core.artifacts import state_root, write_json
+    from .evidence import ADAPTER_VERSION
     info = git_info(project_root, target)
     info.includes_uncommitted = False
     exclude = Path(_run(project_root, "rev-parse", "--git-path", "info/exclude"))
@@ -1173,7 +1175,7 @@ def scan(project_root: Path, target: str | None = None, *, entry_only: bool = Fa
         exclude = project_root / exclude
     identity = json.dumps([str(project_root.resolve()), info.target,
         exclude.read_text(encoding="utf-8", errors="replace") if exclude.is_file() else "",
-        "registration-v5"], ensure_ascii=False)
+        "registration-v5", ADAPTER_VERSION], ensure_ascii=False)
     cache = state_root() / "biz-flow" / "scan-cache" / (hashlib.sha256(identity.encode()).hexdigest() + ".json")
     result = None
     try:

@@ -30,6 +30,17 @@ interface:
     Reject unsupported run schema, host protocol, adapter or task-package domain;
     require a new prepare, never convert history or silently fall back to an older run.
     Report each gate's executed/passed status and partial module acceptance accurately.
+    Read the behavior_report returned by prepare/resume and diagnose each entry from
+    its exact frozen receiver, declaration signature, dependency version, configuration
+    and controls. Zero gaps still require real analysis; use only implemented evidence
+    semantics and reanalyze every required task in a replacement package. Unknown
+    executor scheduling/rejection policy remains critical.
+    Preserve receiver evaluation, local constructor delegation and instance initialization
+    order. Stop normal continuation after a proven throw while retaining catch and
+    cleanup. Unproven external constructors, class initialization and control merges
+    remain critical under references/behavior-evidence.md. Registration coverage gaps
+    block full delivery, and accepted modules never replace a full-scope run. Missing
+    Mermaid rendering blocks document acceptance; adjust timeout only after an actual timeout.
     Before generating, modifying or verifying any sequence diagram, read references/diagram-conventions.md, the shared contract owned by the sequence-diagram-generator Skill. Apply it within this domain and stop when common or domain validation fails.
 
 

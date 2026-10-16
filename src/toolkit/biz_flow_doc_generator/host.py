@@ -9,6 +9,7 @@ from ..core.artifacts import state_root, write_json
 from ..core.schema import BIZ_FLOW_SUBMISSION_SCHEMA, validate_schema
 from .validation import digest
 from .git import source_view
+from .paths import io_path, is_alias, snapshot_files
 
 PROTOCOL_VERSION = "5.0"
 
@@ -24,8 +25,7 @@ def source_path(run_id: str) -> Path:
     parent = run_path(run_id).parent
     run_root = parent / run_id
     source = run_root / "source"
-    if (any(path.is_symlink() or hasattr(path, "is_junction") and path.is_junction()
-            for path in (run_root, source))
+    if (any(is_alias(io_path(path)) for path in (run_root, source))
             or run_root.resolve().parent != parent.resolve()
             or source.resolve().parent != run_root.resolve()):
         raise ValueError("SOURCE_PATH_UNSAFE")
@@ -59,20 +59,23 @@ def protected_hashes(project: Path, docs_root: Path) -> dict[str, str]:
 
 def snapshot_sources(project: Path, commit: str, files: list[str], run_id: str) -> tuple[Path, str]:
     root = source_path(run_id)
+    filesystem_root = io_path(root)
+    if filesystem_root.exists():
+        snapshot_files(root)
     hashes = {}
     # One archive replaces one git subprocess per source file.  The snapshot
     # is the exact same export view used by discovery (including attributes).
     with source_view(project, commit) as (view, _):
         for relative in files:
-            destination = root / relative
-            if not destination.resolve().is_relative_to(root.resolve()):
+            destination = filesystem_root / relative
+            if not destination.resolve().is_relative_to(filesystem_root.resolve()):
                 raise ValueError("SOURCE_PATH_UNSAFE")
             content = (view / relative).read_bytes()
             destination.parent.mkdir(parents=True, exist_ok=True)
             if not destination.is_file() or destination.read_bytes() != content:
                 destination.write_bytes(content)
             hashes[relative] = hashlib.sha256(content).hexdigest()
-    write_json(root.parent / "source-hashes.json", hashes)
+    write_json(filesystem_root.parent / "source-hashes.json", hashes)
     return root, digest(hashes)
 
 
@@ -107,9 +110,10 @@ def validate_package(manifest: dict) -> list[str]:
         if key in checked_snapshots:
             continue
         checked_snapshots.add(key)
-        hashes = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-                  for p in root.rglob("*") if p.is_file()}
-        if any(p.is_symlink() for p in root.rglob("*")) or digest(hashes) != task["snapshot_hash"]:
+        files = snapshot_files(root)
+        hashes = {p.relative_to(io_path(root)).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                  for p in files}
+        if digest(hashes) != task["snapshot_hash"]:
             errors.append("SOURCE_SNAPSHOT_CHANGED")
     return errors
 

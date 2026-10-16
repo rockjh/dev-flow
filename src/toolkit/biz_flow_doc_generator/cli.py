@@ -25,6 +25,7 @@ from .evidence import ADAPTER_VERSION, digest
 from .models import EntryPoint, GitInfo, ScanResult
 from .orchestration import FileWriteGuard
 from .host import PROTOCOL_VERSION, run_path, source_path, snapshot_sources, protected_hashes, validate_package, validate_execution
+from .paths import io_path, is_alias, snapshot_files
 from .validation import validate_markdown_structure, validate_entry_analysis, validate_evidence_request, digest
 
 
@@ -582,6 +583,10 @@ def _validate_manifest(project, docs_root, manifest, *, gates=None):
         result, facts = _canonical(project, manifest)
         inventory_errors = validate_inventory(scan(project, manifest["source_commit"], entry_only=True),
             (docs_root / "业务流程覆盖总览.md").read_text(encoding="utf-8"), manifest["mapping"])
+        if manifest["module_filter"] is None:
+            inventory_errors.extend(
+                f"REGISTRATION_COVERAGE_UNRESOLVED: {item['file']}:{item['line']}: {item['reason']}"
+                for item in result.coverage_gaps)
         errors.extend(inventory_errors)
         concluded("input_contract", list(errors))
         concluded("entry_reconciliation", inventory_errors)
@@ -626,6 +631,8 @@ def _validate_manifest(project, docs_root, manifest, *, gates=None):
                 errors.extend(concluded("mermaid_render", diagram_errors))
             else:
                 reports[-1]["warning"] = "renderer unavailable; structural validation only"
+                reports[-1]["errors"] = ["MERMAID_RENDERER_UNAVAILABLE: install Mermaid CLI and repeat check/verify"]
+                errors.extend(reports[-1]["errors"])
                 print("WARNING: gate=mermaid_render executed=false; only structural validation", file=sys.stderr)
         else:
             reports[-2]["warning"] = "audit scope does not generate Markdown"
@@ -733,8 +740,38 @@ def _prepared_output(path, manifest):
                 if rejected.get("mode") == "serial" or any(r.get("status") == "success" and r.get("result_hash") == digest(response)
                         and r.get("task_id") == "entry:" + entry_id for r in rejected.get("execution", {}).get("receipts", [])):
                     reusable.add(entry_id)
+    modules = []
+    for module in manifest["mapping"]["modules"]:
+        entries = []
+        for entry_id in module["entry_ids"]:
+            if entry_id not in manifest["entry_facts"]:
+                continue
+            facts = manifest["entry_facts"][entry_id]
+            gaps = []
+            for gap in facts["gaps"]:
+                calls = [call["details"] for call in facts["calls"]
+                         if gap["target_id"] in {call["fact_id"], call["context_id"]}]
+                gaps.append({**gap, "call_bindings": calls,
+                    "sources": [source for source in facts["sources"] if source["evidence_id"] in gap["evidence_refs"]]})
+            entries.append({"entry_id": entry_id, "registration": facts["registration"],
+                "status": "blocked" if any(g["critical"] for g in gaps) else "reusable" if entry_id in reusable else "analysis_required",
+                "adapter_dependencies": facts.get("adapter_dependencies", {}), "gaps": gaps,
+                "recovery": "核对冻结来源、接收者、完整签名、版本和配置；仅提交已实现且精确匹配的补证，否则修复适配器并新建运行"
+                    if gaps else "继续分析全部可达行为；零 gap 不代表已验收"})
+        if entries:
+            codes = Counter(gap["code"] for entry in entries for gap in entry["gaps"])
+            modules.append({"name": module["name"], "file": module["file"], "selected_entries": len(entries),
+                "zero_gap_entries": sum(not entry["gaps"] for entry in entries),
+                "blocked_entries": sum(entry["status"] == "blocked" for entry in entries),
+                "gap_codes": dict(sorted(codes.items())), "entries": entries})
+    report = path.with_suffix(".diagnostics.json")
+    write_json(report, {"run_id": manifest["run_id"], "source_commit": manifest["source_commit"],
+        "source_fingerprint": manifest["source_fingerprint"], "adapter_version": manifest["adapter_version"],
+        "package_hash": manifest["package_hash"], "modules": modules})
     return {"run_id": manifest["run_id"], "status": manifest["status"], "manifest": str(path),
         "task_package": str(path.with_suffix(".tasks.json")), "package_hash": manifest["package_hash"],
+        "behavior_report": str(report),
+        "business_modules": [{key: value for key, value in module.items() if key != "entries"} for module in modules],
         "host_capability": "unknown", "supersedes_run_id": manifest["supersedes_run_id"],
         "source_status": manifest["source_status"], "comparison": manifest["comparison"],
         "behavior_gaps": sum(len(f["gaps"]) for f in manifest["entry_facts"].values()),
@@ -784,6 +821,8 @@ def _source_comparison(project, result, facts, *, module=None):
 
 def _delivery_summary(manifest):
     accepted = set()
+    full_accepted = False
+    required = {module["name"] for module in manifest["mapping"]["modules"]}
     docs = Path(manifest["docs_root"])
     for path in (state_root() / "biz-flow").glob("*.json"):
         if not re.fullmatch(r"[0-9a-f]{32}\.json", path.name):
@@ -792,18 +831,22 @@ def _delivery_summary(manifest):
         if (other.get("status") != "accepted" or other.get("project_root") != manifest["project_root"]
                 or other.get("docs_root") != manifest["docs_root"]
                 or other.get("source_commit") != manifest["source_commit"] or other.get("mapping_hash") != manifest["mapping_hash"]
+                or other.get("source_fingerprint") != manifest["source_fingerprint"]
                 or other.get("adapter_version") != ADAPTER_VERSION or validate_schema(BIZ_FLOW_HANDOFF_SCHEMA, other)):
             continue
+        matched = set()
         for module in manifest["mapping"]["modules"]:
             target = docs / module["file"]
             if (set(module["entry_ids"]) <= set(other.get("results", {})) and target.is_file()
                     and other.get("document_hashes", {}).get(target.name) == hashlib.sha256(target.read_bytes()).hexdigest()):
                 accepted.add(module["name"])
-    required = {module["name"] for module in manifest["mapping"]["modules"]}
+                matched.add(module["name"])
+        full_accepted |= other["module_filter"] is None and other["purpose"] == "generate" and matched == required
     blocked = [{"module": module["name"], "reason": "not accepted for this target and mapping",
                 "findings": [gap for i in module["entry_ids"] for gap in manifest["entry_facts"].get(i, {}).get("gaps", [])]}
                for module in manifest["mapping"]["modules"] if module["name"] not in accepted]
-    return {"overall_status": "success" if accepted == required else "partial",
+    return {"overall_status": "success" if accepted == required and full_accepted else "partial",
+            "full_scope_accepted": full_accepted,
             "accepted_modules": sorted(accepted), "blocked_modules": blocked}
 
 
@@ -1098,10 +1141,10 @@ def _accept(argv):
             raise ValueError("; ".join(errors))
         source_root = source_path(args.run_id)
         # Cleanup must succeed before changing the accepted source baseline.
-        if source_root.is_dir():
-            files = [p.relative_to(source_root).as_posix() for p in source_root.rglob("*") if p.is_file()]
+        if io_path(source_root).is_dir():
+            files = [p.relative_to(io_path(source_root)).as_posix() for p in snapshot_files(source_root)]
             try:
-                shutil.rmtree(source_root)
+                shutil.rmtree(io_path(source_root))
             except OSError:
                 # Restore a partially removed snapshot from its fixed commit for retry.
                 snapshot_sources(args.project.resolve(), manifest["source_commit"], files, args.run_id)
@@ -1150,11 +1193,11 @@ def clean_command(argv):
                if args.all else [root / args.run_id, root / (args.run_id + ".json"), *root.glob(args.run_id + ".*.json")])
     removed = 0
     for target in targets:
-        if target.is_symlink() or target.resolve().parent != root:
+        if is_alias(io_path(target)) or target.resolve().parent != root:
             print("ERROR: invalid run id", file=sys.stderr)
             return 8
         if target.is_dir():
-            shutil.rmtree(target)
+            shutil.rmtree(io_path(target))
             removed += 1
         elif target.is_file():
             target.unlink()

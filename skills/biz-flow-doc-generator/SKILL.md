@@ -8,7 +8,7 @@ Set the explicit project root with `--project`. Durable project assets are Markd
 under `<project>/docs/biz-flow` and the sole version file
 `docs/biz-flow/biz-flow-doc-generator-version.json`. Execution manifests live outside
 the project under `~/.local/state/devflow/artifacts/biz-flow/`. The `skill_version`
-is `5.1.0` (domain schema 6, host protocol 5.0). Preserve scope, locks,
+is `5.2.1` (domain schema 6, host protocol 5.0, adapter 5.2.1). Preserve scope, locks,
 ownership, redaction and source fingerprints.
 
 Read [analysis-policy.md](references/analysis-policy.md) for discovery and business
@@ -24,7 +24,7 @@ for analysis/delegation. Before acceptance or version changes read
 
 Run `init` when needed. Older version locks are unsupported; explicitly archive
 tool-owned old assets and locks, preserve user content, then initialize a new
-5.1.0 project. Do not reinterpret old receipts.
+5.2.1 project. Do not reinterpret old receipts.
 Then run `discover` and `check --stage entries`. The entry
 directory gate must pass independently before classification confirmation. Scan the whole project for registered
 business triggers, including supported platform receivers such as `doExecute` and
@@ -39,6 +39,8 @@ ownership. It does not expand full call chains, branches or persistence inventor
 and requires no agent executor. Every registered candidate must have exactly one
 business module or an evidence-backed exclusion. Unsupported/dynamic registration
 coverage must be reported; do not claim complete coverage when it is unproven.
+Unresolved registration coverage blocks full-scope check/verify/accept even when
+known entry counts reconcile. Module acceptance does not prove full delivery.
 
 `discover` puts business scope, the complete entry list, trigger/evidence and
 analysis status in the overview. Module Markdown skeletons contain only a title.
@@ -83,6 +85,10 @@ fully qualified package/class (including enclosing classes), method and paramete
 types, bound to the actual declaration source. Resolve supported `doExecute` and
 `doServe` receivers without treating bare method names or caller locations as
 capability identities; deduplicate layers of the same registered trigger.
+Keep receiver evaluation and local constructor delegation/instance initialization
+in execution order. A proven throw stops the normal continuation; preserve catch
+and cleanup. Unproven external constructors, class initialization and control
+merges remain blocking gaps under behavior-evidence.md.
 
 Every entry requires source-backed participants, ordered business actions, all
 result-affecting branches/loops, reads/writes, external side effects, outcomes and
@@ -112,6 +118,13 @@ renderer emits one ordered diagram per entry. Do not invent
 rules or replace unknown storage objects with generic participants. Follow user's
 explicit diagram requirements; Markdown sequence diagrams do not implicitly authorize
 Feishu publication or replacing editable boards with SVG.
+
+After prepare/resume, read the returned `behavior_report`: it records selected
+module/entry status, gap sources, receiver and declaration bindings, dependency
+profile and recovery action. Diagnose each exact binding under
+[behavior-evidence.md](references/behavior-evidence.md), never an entire gap code.
+Zero gaps still require actual source analysis. Unknown executor scheduling or
+rejection policy remains critical, including declared ExecutorService/pool types.
 
 Determine capability from the actual session tools and their responses. Do not
 probe brand CLIs or use `DEVFLOW_AGENT_EXECUTOR`; that removed configuration does
@@ -198,6 +211,10 @@ retaining source proofs and manifests. Snapshot paths must stay under the run's
 state directory without symlink/junction aliases; cleanup failure blocks baseline
 advancement. Clean old runs explicitly when no longer
 needed; cleaning recovery evidence means a new prepare is required.
+Missing rendering blocks document check/verify/accept; install the renderer and
+repeat both verify passes. Adjust the Mermaid timeout only after an actual timeout.
+Windows snapshot IO and recursive cleanup prefix even short roots, because their
+children may exceed MAX_PATH; internal aliases are rejected before hashing.
 
 The host coordination contract has three requirements:
 

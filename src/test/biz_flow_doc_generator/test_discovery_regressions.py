@@ -63,8 +63,8 @@ class Controller {
     private final OperatorApplication external;
     @GetMapping("/orders")
     public void run() {
-        service.submitOrder();
         external.getCapability();
+        service.submitOrder();
     }
 }
 class One {

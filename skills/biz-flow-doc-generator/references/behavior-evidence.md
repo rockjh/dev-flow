@@ -1,6 +1,6 @@
 # 行为事实与补证
 
-只支持领域 schema 6、宿主交接协议 5.0、Skill 5.1.0。字符串 outcomes、复制事实数组、review.steps 以及不符合当前 schema 的版本锁和回执一律拒绝。保留人工内容及失败诊断，按当前 init/discover/prepare 流程准备有效输入，不转换历史运行。
+只支持领域 schema 6、宿主交接协议 5.0、Skill 5.2.1。字符串 outcomes、复制事实数组、review.steps 以及不符合当前 schema 的版本锁和回执一律拒绝。保留人工内容及失败诊断，按当前 init/discover/prepare 流程准备有效输入，不转换历史运行。
 
 ## 事实、解释与运行
 
@@ -10,7 +10,9 @@ Agent 只读取任务指定的提交快照，不能从 dirty 工作区取得本�
 
 ## 静态适配范围
 
-Java 使用 tree-sitter，解析器版本写入 adapter_dependencies；行为适配器版本为 5.1.0。字段、参数、局部变量、唯一接口实现、继承方法、基本重载和链式返回按全限定类型绑定，精确重载优先于可证明的基本数值拓宽/Object；不能按类型短名跨包绑定。构造实参先于构造体执行，构造器歧义、未建模初始化器和构造链保留缺口。同步回调仅在形参实际调用处展开，保存回调不执行；集合 forEach 方法引用按参数数量绑定。已知 Executor 类型将提交、拒绝和后台分别记录；直线后续动作与正常返回受 accepted 条件约束，图中保留该条件。条件/循环提交的继续路径合并、拒绝的 catch 映射尚不能证明时阻断。动态派发、反射、复杂泛型、未知外部库、递归和预算耗尽不能宣称完整。
+Java 使用 tree-sitter，解析器版本写入 adapter_dependencies；行为适配器版本为 5.2.1。字段、参数、局部变量、唯一接口实现、继承方法、基本重载和链式返回按全限定类型绑定，精确重载优先于可证明的基本数值拓宽/Object；不能按类型短名跨包绑定。仓内继承调用及方法引用保留实际接收者，super 绑定父声明，private/static 调用按词法声明绑定；库外模板生命周期仍须具体契约。接收者先于实参求值；仓内普通类构造按实参、this/super 委托、父构造、实例字段/初始化块、构造体顺序展开，this 委托不重复初始化，初始化器不能读取构造参数。库外父构造器、静态初始化时机、生成构造器和 record/enum 生命周期未证明时继续阻断。
+
+已证明没有正常返回的仓内调用、构造或同步回调会终止当前直线继续路径；赋值与响应不能在实参/右值抛出后发生。catch 和 finally 仍保留；条件、循环、短路和 finally 覆盖需要未实现的出口合流语义时保留 critical gap。同步回调仅在形参实际调用处展开，保存回调不执行；集合 forEach 方法引用按参数数量绑定。已知 Executor 类型将提交、拒绝和候选后台阶段分别记录；接口及线程池声明类型均不能证明实际调度和拒绝策略，未证明时保留 EXECUTOR_SCHEDULING_UNRESOLVED；直线后续动作与正常返回受 accepted 条件约束，图中保留该条件。条件/循环提交的继续路径合并、拒绝的 catch 映射尚不能证明时阻断。动态派发、反射、复杂泛型、未知外部库、递归和预算耗尽不能宣称完整。
 
 JPA 支持直接或源码可追踪的泛型仓储、绑定到 JPA 的显式 Table/Column，以及源码实现的适配层；自定义同名注解不能证明映射。当前固定 API 版本为 spring-data-jpa 3.3.0、querydsl-jpa 5.1.0。从 API 所属源码模块的最近 Maven POM 解析直接依赖、本地父 POM、属性及 dependencyManagement；无关模块不参与版本证明。外部 BOM、激活 profile、其他版本、自定义物理命名、未解析 schema 和动态查询保留缺口。QueryDSL 支持可绑定 EntityPathBase 的 update/delete、set/where/execute；条件字段必须绑定实体和生成路径，保留 where、赋值和行数关联。默认命名仅接受下述补证。事务注解只构成声明证据；代理/容器激活、传播及回滚尚不能证明时产生 TRANSACTION_ACTIVATION_UNRESOLVED，不能宣称已提交。普通 execute/save/send、注释 SQL、内存 Map 和 Path 构造不因名称变成存储动作。
 
@@ -61,3 +63,11 @@ CLI 从相同提交重新验证并重建，事实变化才创建 B；A 标记 su
 关键未决只定位受影响入口；collect 对运行范围实行全覆盖和一次写入，范围内任一入口失败不生成该运行的最终文档，也不推进基线。可用 module 范围准备独立运行；局部验收不能推进整个项目的基线。新任务包重新分析所选范围全部入口；同一包可用 prepare --resume 复用校验通过的结果及其原始回执，仅重派 pending 入口，最终 collect 必须提交完整范围。任务包绑定 version_input_hash，分析期间修改版本锁会拒绝；accept 写入合法基线后保存 accepted_version_hash，后续 check/verify 仍独立核验。报告阶段一疑点、阶段二 gaps、待验证请求、最终验证结果及实际渲染范围。
 
 渲染空控制分支时保留条件并注明该条件内无业务动作。安装 Mermaid CLI 时除检查退出码，还解析输出 SVG 并拒绝无效 XML 或非有限几何坐标；退出码 0 不能单独证明图可用。没有 Mermaid CLI 时只能报告确定性语法子集与事实对账，不能宣称已完成浏览器渲染验证。
+
+## 逐入口分诊
+
+prepare/resume 返回 behavior_report 权威指针和选中模块摘要；报告绑定 target、fingerprint、adapter 及 package_hash，列出每入口状态、完整 gap、调用绑定、冻结来源和依赖配置。blocked 表示存在 critical gap；analysis_required 和零 gap 均不表示验收成功。仅同一任务包的有效结果及原回执可复用。报告位于核心共享工件目录，不在业务仓新增过程 JSON。
+
+必须按接收者、完整声明签名、依赖版本、配置、来源、controls 和路径核对补证语义；CALL_CONTRACT_UNSUPPORTED 可包含已实现的 Path 构造补证，不能整类判断可修复性。只有与已实现语义精确匹配时才实际取证并提交 evidence_request；缺证或未实现时保留阻塞，修复 adapter 后重建并重新分析全部必需任务，不空转最终注解任务。
+
+异步拒绝的 possible_handlers 只投影 schema 允许的 branch_id/handlers；内部异常类型绑定不泄漏到该字段。结构验证通过不证明拒绝异常已匹配或传播，原 critical gap 继续阻断。Windows 快照创建、枚举、读取、哈希及删除使用扩展路径；Git 参数保留普通本地路径。内部 symlink/junction 在读取前拒绝，删除沿用 shutil.rmtree 的平台保护，不手写递归删除。

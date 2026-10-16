@@ -13,6 +13,7 @@ from toolkit.biz_flow_doc_generator.discovery import scan, _fingerprint_files
 from toolkit.biz_flow_doc_generator.evidence import collect_evidence, digest
 from toolkit.biz_flow_doc_generator.supplement import fact_path
 from toolkit.biz_flow_doc_generator.validation import validate_entry_analysis
+from toolkit.biz_flow_doc_generator.paths import io_path
 from test_behavior_facts import project as create_project
 from test_native_handoff import fixture_submission
 
@@ -158,6 +159,48 @@ def test_target_is_unchanged_by_dirty_checkout_new_head_and_worktrees(tmp_path, 
     assert submit(root, state, manifest, fixture_submission(manifest)) == 0
     args = ["--project", str(root), "--run-id", manifest["run_id"]]
     assert cli.verify_command(args) == cli.verify_command(args) == cli.accept_command(args) == 0
+
+
+def test_java_construction_and_caught_failure_survive_full_fixture_lifecycle(tmp_path, monkeypatch):
+    root, state, path, manifest = setup_run(tmp_path, monkeypatch, {"Controller.java": '''class Controller {
+  // 接收订单
+  @PostMapping("/orders") void receive() {
+    try { new Task().process(); unreachable(); }
+    catch (RuntimeException error) { recover(); } finally { cleanup(); }
+  }
+  void unreachable() { missing(); } void recover() {} void cleanup() {}
+}
+class Base { Base() { initialize(); } void initialize() {} }
+class Task extends Base { int attempts = initialAttempts();
+  int initialAttempts() { return 1; }
+  void process() { throw new IllegalArgumentException("failed"); }
+}'''})
+    facts = next(iter(manifest["entry_facts"].values()))
+    assert not facts["gaps"]
+    assert [c["details"]["method"] for c in facts["calls"]] == [
+        "Task", "Base", "initialize", "initialAttempts", "process", "recover", "cleanup"]
+    assert submit(root, state, manifest, fixture_submission(manifest)) == 0
+    args = ["--project", str(root), "--run-id", manifest["run_id"]]
+    assert cli.check_command(args) == cli.verify_command(args) == cli.verify_command(args) == cli.accept_command(args) == 0
+    accepted = json.loads(path.read_text(encoding="utf-8"))
+    assert accepted["status"] == "accepted" and accepted["snapshot_cleaned"]
+
+
+def test_delivery_summary_requires_same_source_fingerprint(tmp_path, monkeypatch):
+    files = {**SOURCES["python"], "unused.py": "def helper(): return 0\n"}
+    root, state, _, manifest = setup_run(tmp_path, monkeypatch, files)
+    assert submit(root, state, manifest, fixture_submission(manifest)) == 0
+    args = ["--project", str(root), "--run-id", manifest["run_id"]]
+    assert cli.verify_command(args) == cli.verify_command(args) == cli.accept_command(args) == 0
+    assert cli._delivery_summary(manifest)["overall_status"] == "success"
+    # The fixed commit and entry mapping stay the same, but the evidence scope changes.
+    (root / ".git/info/exclude").write_text("unused.py\n", encoding="utf-8")
+    current = copy.deepcopy(manifest)
+    current["source_fingerprint"] = scan(root, manifest["source_commit"]).source_fingerprint
+    assert current["source_fingerprint"] != manifest["source_fingerprint"]
+    result = cli._delivery_summary(current)
+    assert result["overall_status"] == "partial" and not result["full_scope_accepted"]
+    assert not result["accepted_modules"]
 
 
 def test_text_fingerprints_normalize_line_endings(tmp_path):
@@ -322,6 +365,73 @@ def test_module_filter_never_advances_baseline_even_when_it_covers_all_entries(t
     assert cli.verify_command(selected_args) == cli.verify_command(selected_args) == cli.accept_command(selected_args) == 0
     lock = root / "docs/biz-flow/biz-flow-doc-generator-version.json"
     assert json.loads(lock.read_text(encoding="utf-8"))["source"]["git_commit"] is None
+    summary = cli._delivery_summary(selected)
+    assert summary["overall_status"] == "partial" and not summary["full_scope_accepted"]
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_registration_gap_blocks_full_acceptance_but_keeps_module_delivery(tmp_path, monkeypatch, partial):
+    root, state, _, manifest = setup_run(tmp_path, monkeypatch, {
+        "app.py": "from fastapi import FastAPI\napp=FastAPI()\n# 查询订单\n@app.get('/orders')\ndef orders(): return []\n",
+        "registrations.yaml": "jobs: ${runtime.jobs}\n",
+    })
+    assert scan(root, entry_only=True).coverage_gaps
+    if partial:
+        assert cli.prepare_command(["--project", str(root), "--module", manifest["mapping"]["modules"][0]["name"]]) == 0
+        path = max((p for p in (state / "biz-flow").glob("*.json") if len(p.stem) == 32), key=lambda p: p.stat().st_mtime_ns)
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    assert submit(root, state, manifest, fixture_submission(manifest)) == 0
+    args = ["--project", str(root), "--run-id", manifest["run_id"]]
+    assert cli.check_command(args) == (0 if partial else 1)
+    assert cli.verify_command(args) == cli.verify_command(args) == (0 if partial else 1)
+    assert cli.accept_command(args) == (0 if partial else 8)
+    lock = root / "docs/biz-flow/biz-flow-doc-generator-version.json"
+    assert json.loads(lock.read_text(encoding="utf-8"))["source"]["git_commit"] is None
+
+
+def test_prepare_diagnostics_bind_blocked_entries_to_sources_and_receiver(tmp_path, monkeypatch):
+    root, _, path, manifest = setup_run(tmp_path, monkeypatch, {"Controller.java": '''
+import java.util.concurrent.ExecutorService;
+class Controller { ExecutorService executor;
+  // 后台处理订单
+  @PostMapping("/orders") void orders() {
+    try { executor.submit(() -> work()); } catch (RuntimeException e) {}
+  }
+  void work() {}
+}'''})
+    package = path.with_suffix(".tasks.json").read_bytes()
+    output = cli._prepared_output(path, manifest)
+    report = json.loads(Path(output["behavior_report"]).read_text(encoding="utf-8"))
+    assert report["package_hash"] == manifest["package_hash"] and report["source_commit"] == manifest["source_commit"]
+    module = report["modules"][0]
+    assert module["blocked_entries"] == 1 and module["zero_gap_entries"] == 0
+    entry = module["entries"][0]
+    assert entry["status"] == "blocked" and entry["entry_id"] in manifest["entry_facts"]
+    gap = next(g for g in entry["gaps"] if g["code"] == "EXECUTOR_SCHEDULING_UNRESOLVED")
+    assert gap["sources"][0]["file"] == "Controller.java"
+    assert gap["call_bindings"][0]["receiver_type"] == "java.util.concurrent.ExecutorService"
+    assert gap["call_bindings"][0]["method"] == "submit"
+    assert cli.prepare_command(["--project", str(root), "--resume", manifest["run_id"]]) == 0
+    assert path.with_suffix(".tasks.json").read_bytes() == package
+
+
+def test_missing_renderer_blocks_verification_and_baseline(tmp_path, monkeypatch, capsys):
+    root, state, _, manifest = setup_run(tmp_path, monkeypatch, SOURCES["python"])
+    assert submit(root, state, manifest, fixture_submission(manifest)) == 0
+    args = ["--project", str(root), "--run-id", manifest["run_id"]]
+    assert cli.verify_command(args) == cli.verify_command(args) == 0
+    capsys.readouterr()
+    with monkeypatch.context() as patch:
+        patch.setattr(cli.shutil, "which", lambda name: None)
+        assert cli.verify_command(args) == 1
+        report = json.loads(capsys.readouterr().out)
+        gate = next(g for g in report["gates"] if g["gate"] == "mermaid_render")
+        assert not gate["executed"] and not gate["passed"]
+        assert "MERMAID_RENDERER_UNAVAILABLE" in gate["errors"][0]
+        assert cli.accept_command(args) == 8
+    lock = root / "docs/biz-flow/biz-flow-doc-generator-version.json"
+    assert json.loads(lock.read_text(encoding="utf-8"))["source"]["git_commit"] is None
+    assert cli.verify_command(args) == cli.verify_command(args) == cli.accept_command(args) == 0
 
 
 @pytest.mark.parametrize("damaged", ["document", "package"])
@@ -397,7 +507,7 @@ def test_snapshot_cleanup_failure_does_not_advance_baseline(tmp_path, monkeypatc
     source = Path(manifest["tasks"][0]["source_snapshot"])
     remove = cli.shutil.rmtree
     def fail_cleanup(target, *positional, **kwargs):
-        if Path(target) == source:
+        if Path(target) == io_path(source):
             if partial:
                 (source / "app.py").unlink()
             raise PermissionError("fixture: source cleanup denied")

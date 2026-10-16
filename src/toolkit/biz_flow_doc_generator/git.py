@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import shutil
 import re
 import sys
 import tempfile
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .models import GitInfo
+from .paths import io_path
 
 
 def _run(root: Path, *args: str) -> str:
@@ -72,12 +74,16 @@ def source_view(root: Path, target: str | None = None) -> Iterator[tuple[Path, G
 
     info = git_info(root, target)
     info.includes_uncommitted = False
-    with tempfile.TemporaryDirectory(prefix="devflow-biz-flow-") as temporary:
-        archive = Path(temporary) / "source.zip"
-        subprocess.run(["git", "archive", "--format=zip", "-o", str(archive), info.target], cwd=root, check=True)
+    temporary = Path(tempfile.mkdtemp(prefix="devflow-biz-flow-"))
+    view = io_path(temporary)
+    try:
+        archive = view / "source.zip"
+        subprocess.run(["git", "archive", "--format=zip", "-o", str(temporary / "source.zip"), info.target], cwd=root, check=True)
         with zipfile.ZipFile(archive) as zipped:
-            zipped.extractall(temporary)
-        yield Path(temporary), info
+            zipped.extractall(view)
+        yield view, info
+    finally:
+        shutil.rmtree(io_path(temporary))
 
 
 def changed_paths(root: Path, old: str, new: str) -> tuple[list[str], str | None]:

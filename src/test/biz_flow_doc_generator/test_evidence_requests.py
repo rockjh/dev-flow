@@ -28,7 +28,7 @@ class Controller {
     for command in (cli.init_command, cli.discover_command):
         assert command(["--project", str(project)]) == 0
     assert cli.prepare_command(["--project", str(project), "--confirm"]) == 0
-    path = next(p for p in state.glob("biz-flow/*.json") if not p.name.endswith(".tasks.json"))
+    path = next(p for p in state.glob("biz-flow/*.json") if len(p.stem) == 32)
     manifest = json.loads(path.read_text(encoding="utf-8"))
     task = manifest["tasks"][0]
     facts = manifest["entry_facts"][task["entry_id"]]
